@@ -1,0 +1,47 @@
+{
+  "name": "vertex",
+  "version": "0.1.0",
+  "private": true,
+  "description": "IMU cycling data analysis platform",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "next": "^15.0.0",
+    "@clerk/nextjs": "^6.12.0",
+    "@supabase/supabase-js": "^2.47.0",
+    "@tanstack/react-query": "^5.64.0",
+    "inngest": "^3.24.0",
+    "papaparse": "^5.4.1",
+    "fit-file-parser": "^1.11.0",
+    "simple-statistics": "^7.8.8",
+    "fili": "^2.0.2",
+    "recharts": "^2.13.0",
+    "plotly.js-dist": "^2.35.0",
+    "react-dropzone": "^14.3.5",
+    "zustand": "^5.0.2",
+    "clsx": "^2.1.1",
+    "class-variance-authority": "^0.7.1",
+    "tailwind-merge": "^2.6.0",
+    "lucide-react": "^0.468.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/react": "^18.3.1",
+    "@types/react-dom": "^18.3.1",
+    "@types/papaparse": "^5.3.15",
+    "typescript": "^5.7.0",
+    "tailwindcss": "^3.4.0",
+    "tailwindcss-animate": "^1.0.7",
+    "postcss": "^8.4.49",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^15.0.0"
+  }
+}
+
