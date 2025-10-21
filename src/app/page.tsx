@@ -199,7 +199,7 @@ export default function Home() {
               <h3 className="text-3xl font-light mb-8 text-center">Why Vertex Exists</h3>
               <p className="text-xl text-stone-600 leading-relaxed text-center mb-12">
                 Standard cycling computers track speed, cadence, and heart rate. 
-                But they can't measure how you actually ride: cornering forces, braking technique, 
+                But they can&apos;t measure how you actually ride: cornering forces, braking technique, 
                 body position stability, or how equipment changes affect your comfort and performance.
               </p>
               
@@ -310,7 +310,7 @@ export default function Home() {
                 </div>
                 <h4 className="text-lg font-medium mb-2">Traction Circle</h4>
                 <p className="text-stone-600 text-sm leading-relaxed">
-                  See exact lateral and longitudinal G-forces plotted in real-time. Understand your bike's grip limits.
+                  See exact lateral and longitudinal G-forces plotted in real-time. Understand your bike&apos;s grip limits.
                 </p>
               </div>
 
@@ -323,7 +323,7 @@ export default function Home() {
                 </div>
                 <h4 className="text-lg font-medium mb-2">Lean Angle Timeline</h4>
                 <p className="text-stone-600 text-sm leading-relaxed">
-                  Track your maximum lean angle by corner. Identify which turns you're pushing hard vs. riding conservatively.
+                  Track your maximum lean angle by corner. Identify which turns you&apos;re pushing hard vs. riding conservatively.
                 </p>
               </div>
 
@@ -524,15 +524,15 @@ export default function Home() {
                   <svg className="w-12 h-12 mx-auto mb-3 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  <p className="text-lg font-medium mb-2">You're on the list!</p>
+                  <p className="text-lg font-medium mb-2">You&apos;re on the list!</p>
                   <p className="text-stone-400 text-sm">
-                    We'll email you when Vertex launches and when hardware pre-orders open.
+                    We&apos;ll email you when Vertex launches and when hardware pre-orders open.
                   </p>
                 </div>
               )}
               
               <p className="text-xs text-stone-400 mt-6">
-                We'll only email you about Vertex updates. No spam, unsubscribe anytime.
+                We&apos;ll only email you about Vertex updates. No spam, unsubscribe anytime.
               </p>
             </div>
           </div>
