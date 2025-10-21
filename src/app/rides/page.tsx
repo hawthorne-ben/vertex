@@ -1,0 +1,170 @@
+import Link from 'next/link'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import mockData from '@/lib/mock-data.json'
+
+export default function RidesPage() {
+  const { rides } = mockData
+
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    })
+  }
+
+  const formatTime = (dateString: string) => {
+    return new Date(dateString).toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
+
+  const formatDuration = (seconds: number) => {
+    const hours = Math.floor(seconds / 3600)
+    const minutes = Math.floor((seconds % 3600) / 60)
+    return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`
+  }
+
+  // Sort rides by date (most recent first)
+  const sortedRides = [...rides].sort((a, b) => 
+    new Date(b.date).getTime() - new Date(a.date).getTime()
+  )
+
+  // Group by bike type
+  const bikeGroups = rides.reduce((acc, ride) => {
+    if (!acc[ride.bike]) acc[ride.bike] = []
+    acc[ride.bike].push(ride)
+    return acc
+  }, {} as Record<string, typeof rides>)
+
+  return (
+    <div className="container mx-auto p-6">
+      <h1 className="text-3xl font-serif font-normal mb-8">All Rides</h1>
+
+      <Tabs defaultValue="all" className="space-y-6">
+        <TabsList>
+          <TabsTrigger value="all">All Rides</TabsTrigger>
+          <TabsTrigger value="by-bike">By Bike</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="all">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-xl font-serif">
+                All Rides ({sortedRides.length})
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
+                {/* Table Header */}
+                <div className="grid grid-cols-12 gap-4 px-4 py-3 bg-stone-50 rounded-md text-sm font-medium text-stone-600">
+                  <div className="col-span-3">Ride</div>
+                  <div className="col-span-2">Date</div>
+                  <div className="col-span-2">Location</div>
+                  <div className="col-span-1 text-right">Distance</div>
+                  <div className="col-span-1 text-right">Duration</div>
+                  <div className="col-span-1 text-right">Max Speed</div>
+                  <div className="col-span-2 text-right">Max Lean</div>
+                </div>
+
+                {/* Ride Rows */}
+                {sortedRides.map((ride) => (
+                  <Link
+                    key={ride.id}
+                    href={`/rides/${ride.id}`}
+                    className="grid grid-cols-12 gap-4 px-4 py-4 border border-stone-200 rounded-md hover:bg-stone-50 transition-colors"
+                  >
+                    <div className="col-span-3">
+                      <div className="font-medium">{ride.name}</div>
+                      <div className="text-sm text-stone-500">{formatTime(ride.date)}</div>
+                    </div>
+                    <div className="col-span-2 text-stone-600">
+                      {formatDate(ride.date)}
+                    </div>
+                    <div className="col-span-2 text-stone-600 truncate">
+                      {ride.location}
+                    </div>
+                    <div className="col-span-1 text-right text-stone-900">
+                      {ride.distance} mi
+                    </div>
+                    <div className="col-span-1 text-right text-stone-900">
+                      {formatDuration(ride.duration)}
+                    </div>
+                    <div className="col-span-1 text-right text-stone-900">
+                      {ride.stats.maxSpeed} mph
+                    </div>
+                    <div className="col-span-2 text-right">
+                      <span className="font-medium text-stone-900">
+                        {ride.stats.maxLeanAngle}°
+                      </span>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="by-bike">
+          <div className="space-y-6">
+            {Object.entries(bikeGroups).map(([bike, bikeRides]) => (
+              <Card key={bike}>
+                <CardHeader>
+                  <CardTitle className="text-xl font-serif">
+                    {bike} ({bikeRides.length} rides)
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {bikeRides
+                      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+                      .map((ride) => (
+                        <Link
+                          key={ride.id}
+                          href={`/rides/${ride.id}`}
+                          className="block px-4 py-3 border border-stone-200 rounded-md hover:bg-stone-50 transition-colors"
+                        >
+                          <div className="flex justify-between items-start mb-2">
+                            <div>
+                              <div className="font-medium">{ride.name}</div>
+                              <div className="text-sm text-stone-500">
+                                {formatDate(ride.date)} at {formatTime(ride.date)}
+                              </div>
+                            </div>
+                            <div className="text-sm text-stone-600">
+                              {ride.location}
+                            </div>
+                          </div>
+                          <div className="flex gap-6 text-sm">
+                            <div>
+                              <span className="text-stone-500">Distance: </span>
+                              <span className="font-medium">{ride.distance} mi</span>
+                            </div>
+                            <div>
+                              <span className="text-stone-500">Duration: </span>
+                              <span className="font-medium">{formatDuration(ride.duration)}</span>
+                            </div>
+                            <div>
+                              <span className="text-stone-500">Max Lean: </span>
+                              <span className="font-medium">{ride.stats.maxLeanAngle}°</span>
+                            </div>
+                            <div>
+                              <span className="text-stone-500">Max Speed: </span>
+                              <span className="font-medium">{ride.stats.maxSpeed} mph</span>
+                            </div>
+                          </div>
+                        </Link>
+                      ))}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        </TabsContent>
+      </Tabs>
+    </div>
+  )
+}
+

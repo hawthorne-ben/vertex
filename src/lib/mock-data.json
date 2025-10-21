@@ -1,0 +1,104 @@
+{
+  "user": {
+    "id": "mock-user-1",
+    "email": "demo@ridevertex.com",
+    "full_name": "Demo Rider"
+  },
+  "stats": {
+    "totalRides": 23,
+    "totalHours": 47.5,
+    "totalDistance": 892,
+    "maxLeanAngle": 48.2,
+    "storageUsed": 1.8,
+    "storageUnit": "GB"
+  },
+  "rides": [
+    {
+      "id": "ride-001",
+      "name": "Morning Canyon Run",
+      "date": "2025-10-18T08:30:00Z",
+      "duration": 3600,
+      "distance": 45.2,
+      "location": "Mulholland Highway",
+      "bike": "Sport Bike",
+      "conditions": "Clear, 72°F",
+      "stats": {
+        "avgSpeed": 45.2,
+        "maxSpeed": 89.5,
+        "avgLeanAngle": 28.3,
+        "maxLeanAngle": 48.2,
+        "maxGForce": 1.4,
+        "corners": 127,
+        "brakingEvents": 34
+      },
+      "imuData": {
+        "sampleRate": 100,
+        "dataPoints": 360000,
+        "gyroX": [-15.2, -12.8, -8.4, 0, 8.4, 12.8, 15.2],
+        "gyroY": [-5.1, -3.2, 0, 3.2, 5.1],
+        "gyroZ": [-2.1, 0, 2.1],
+        "accelX": [-0.5, 0, 0.5, 1.0, 1.2],
+        "accelY": [-0.8, -0.4, 0, 0.4, 0.8],
+        "accelZ": [0.8, 0.9, 1.0, 1.1]
+      },
+      "powerData": {
+        "avgPower": 185,
+        "maxPower": 320,
+        "avgHeartRate": 142,
+        "maxHeartRate": 178,
+        "calories": 890
+      },
+      "gpsData": {
+        "startLat": 34.0522,
+        "startLng": -118.2437,
+        "endLat": 34.0889,
+        "endLng": -118.3974,
+        "elevation": {
+          "gain": 1240,
+          "loss": 980,
+          "max": 2450,
+          "min": 420
+        }
+      }
+    },
+    {
+      "id": "ride-002",
+      "name": "Evening Commute",
+      "date": "2025-10-17T17:45:00Z",
+      "duration": 1800,
+      "distance": 18.5,
+      "location": "City Route",
+      "bike": "Sport Bike",
+      "conditions": "Partly cloudy, 68°F",
+      "stats": {
+        "avgSpeed": 37.0,
+        "maxSpeed": 65.0,
+        "avgLeanAngle": 18.5,
+        "maxLeanAngle": 32.1,
+        "maxGForce": 0.9,
+        "corners": 42,
+        "brakingEvents": 28
+      }
+    },
+    {
+      "id": "ride-003",
+      "name": "Weekend Track Day",
+      "date": "2025-10-15T09:00:00Z",
+      "duration": 7200,
+      "distance": 120.0,
+      "location": "Willow Springs",
+      "bike": "Sport Bike",
+      "conditions": "Clear, 78°F",
+      "stats": {
+        "avgSpeed": 60.0,
+        "maxSpeed": 142.5,
+        "avgLeanAngle": 35.8,
+        "maxLeanAngle": 52.3,
+        "maxGForce": 1.8,
+        "corners": 234,
+        "brakingEvents": 89
+      }
+    }
+  ]
+}
+
