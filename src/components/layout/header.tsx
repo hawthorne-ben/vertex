@@ -16,14 +16,14 @@ export function Header() {
   
   return (
     <header className="border-b border-stone-200 bg-white sticky top-0 z-50">
-      <div className="container mx-auto px-6">
+      <div className="container mx-auto px-4 md:px-6">
         {/* Top bar with logo and user */}
         <div className="flex items-center justify-between py-4">
-          <Link href="/dashboard" className="text-2xl font-serif font-normal">
+          <Link href="/dashboard" className="text-xl md:text-2xl font-serif font-normal">
             VERTEX
           </Link>
           
-          <nav className="flex items-center gap-6">
+          <nav className="flex items-center gap-3 md:gap-6">
             <Link 
               href="/dashboard" 
               className="text-sm text-stone-600 hover:text-stone-900 transition-colors"
@@ -36,7 +36,7 @@ export function Header() {
             >
               Upload
             </Link>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1 md:gap-2">
               <UserButton />
               <button
                 onClick={async () => {
@@ -45,7 +45,7 @@ export function Header() {
                   await supabase.auth.signOut()
                   window.location.href = '/'
                 }}
-                className="text-sm text-stone-600 hover:text-stone-900 transition-colors"
+                className="text-sm text-stone-600 hover:text-stone-900 transition-colors hidden sm:block"
               >
                 Sign Out
               </button>

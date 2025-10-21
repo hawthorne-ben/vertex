@@ -25,49 +25,49 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
   }
   
   return (
-    <div className="container mx-auto p-6">
+    <div className="container mx-auto p-4 md:p-6">
       {/* Ride Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-serif font-normal mb-2">{ride.name}</h1>
-        <div className="flex gap-4 text-stone-600">
+      <div className="mb-6 md:mb-8">
+        <h1 className="text-2xl md:text-3xl font-serif font-normal mb-2">{ride.name}</h1>
+        <div className="flex flex-wrap gap-2 md:gap-4 text-sm md:text-base text-stone-600">
           <span>{formatDate(ride.date)}</span>
-          <span>•</span>
+          <span className="hidden sm:inline">•</span>
           <span>{ride.location}</span>
-          <span>•</span>
+          <span className="hidden sm:inline">•</span>
           <span>{ride.bike}</span>
         </div>
       </div>
 
       {/* Quick Stats */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 md:gap-4 mb-8">
         <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm text-stone-500 mb-1">Distance</div>
-            <div className="text-2xl font-bold">{ride.distance} mi</div>
+          <CardContent className="pt-4 md:pt-6">
+            <div className="text-xs md:text-sm text-stone-500 mb-1">Distance</div>
+            <div className="text-xl md:text-2xl font-bold">{ride.distance} mi</div>
           </CardContent>
         </Card>
         <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm text-stone-500 mb-1">Duration</div>
-            <div className="text-2xl font-bold">{Math.round(ride.duration / 60)} min</div>
+          <CardContent className="pt-4 md:pt-6">
+            <div className="text-xs md:text-sm text-stone-500 mb-1">Duration</div>
+            <div className="text-xl md:text-2xl font-bold">{Math.round(ride.duration / 60)} min</div>
           </CardContent>
         </Card>
         <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm text-stone-500 mb-1">Avg Speed</div>
-            <div className="text-2xl font-bold">{ride.stats.avgSpeed} mph</div>
+          <CardContent className="pt-4 md:pt-6">
+            <div className="text-xs md:text-sm text-stone-500 mb-1">Avg Speed</div>
+            <div className="text-xl md:text-2xl font-bold">{ride.stats.avgSpeed} mph</div>
           </CardContent>
         </Card>
         <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm text-stone-500 mb-1">Max Lean</div>
-            <div className="text-2xl font-bold">{ride.stats.maxLeanAngle}°</div>
+          <CardContent className="pt-4 md:pt-6">
+            <div className="text-xs md:text-sm text-stone-500 mb-1">Max Lean</div>
+            <div className="text-xl md:text-2xl font-bold">{ride.stats.maxLeanAngle}°</div>
           </CardContent>
         </Card>
         <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm text-stone-500 mb-1">Corners</div>
-            <div className="text-2xl font-bold">{ride.stats.corners}</div>
+          <CardContent className="pt-4 md:pt-6">
+            <div className="text-xs md:text-sm text-stone-500 mb-1">Corners</div>
+            <div className="text-xl md:text-2xl font-bold">{ride.stats.corners}</div>
           </CardContent>
         </Card>
       </div>

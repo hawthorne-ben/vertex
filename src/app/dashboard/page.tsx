@@ -7,11 +7,11 @@ export default function DashboardPage() {
   const recentRides = rides.slice(0, 3) // Show 3 most recent
 
   return (
-    <div className="container mx-auto p-6">
-      <h1 className="text-3xl font-serif font-normal mb-8">Dashboard</h1>
+    <div className="container mx-auto p-4 md:p-6">
+      <h1 className="text-2xl md:text-3xl font-serif font-normal mb-6 md:mb-8">Dashboard</h1>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-6 md:mb-8">
         <Card>
           <CardHeader>
             <CardTitle className="text-sm font-medium text-stone-600">Total Rides</CardTitle>
@@ -46,65 +46,112 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* Recent Rides */}
-      <Card className="mb-8">
-        <CardHeader>
-          <CardTitle className="text-xl font-serif">Recent Rides</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {recentRides.map((ride) => (
-              <Link 
-                key={ride.id}
-                href={`/rides/${ride.id}`}
-                className="block p-4 border border-stone-200 rounded-md hover:bg-stone-50 transition-colors"
-              >
-                <div className="flex justify-between items-start mb-2">
-                  <div>
-                    <h3 className="font-medium text-lg">{ride.name}</h3>
-                    <p className="text-sm text-stone-600">{ride.location}</p>
+      {/* Two Column Layout */}
+      <div className="grid md:grid-cols-2 gap-6 mb-8">
+        {/* Recent Rides - Left Column */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-xl font-serif">Recent Rides</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {recentRides.map((ride) => (
+                <Link 
+                  key={ride.id}
+                  href={`/rides/${ride.id}`}
+                  className="block p-3 border border-stone-200 rounded-md hover:bg-stone-50 transition-colors"
+                >
+                  <div className="flex justify-between gap-4 mb-2">
+                    <h3 className="font-medium text-base">{ride.name}</h3>
+                    <span className="text-sm text-stone-500 flex-shrink-0">
+                      {new Date(ride.date).toLocaleDateString('en-US', { 
+                        month: 'short', 
+                        day: 'numeric'
+                      })}
+                    </span>
                   </div>
-                  <span className="text-sm text-stone-500">
-                    {new Date(ride.date).toLocaleDateString('en-US', { 
-                      month: 'short', 
-                      day: 'numeric',
-                      year: 'numeric'
-                    })}
-                  </span>
-                </div>
-                <div className="grid grid-cols-4 gap-4 text-sm">
-                  <div>
-                    <span className="text-stone-500">Distance</span>
-                    <p className="font-medium">{ride.distance} mi</p>
+                  <p className="text-sm text-stone-600 mb-2">{ride.location}</p>
+                  
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                    <div className="flex justify-between">
+                      <span className="text-stone-500">Distance</span>
+                      <span className="font-medium">{ride.distance} mi</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-stone-500">Duration</span>
+                      <span className="font-medium">{Math.round(ride.duration / 60)} min</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-stone-500">Max Speed</span>
+                      <span className="font-medium">{ride.stats.maxSpeed} mph</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-stone-500">Max Lean</span>
+                      <span className="font-medium">{ride.stats.maxLeanAngle}°</span>
+                    </div>
                   </div>
-                  <div>
-                    <span className="text-stone-500">Duration</span>
-                    <p className="font-medium">{Math.round(ride.duration / 60)} min</p>
-                  </div>
-                  <div>
-                    <span className="text-stone-500">Max Speed</span>
-                    <p className="font-medium">{ride.stats.maxSpeed} mph</p>
-                  </div>
-                  <div>
-                    <span className="text-stone-500">Max Lean</span>
-                    <p className="font-medium">{ride.stats.maxLeanAngle}°</p>
-                  </div>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+                </Link>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
 
-      {/* Timeline View - Placeholder */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-xl font-serif">Activity Timeline</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-stone-600">Calendar heatmap showing ride frequency and intensity.</p>
-        </CardContent>
-      </Card>
+        {/* Activity Calendar - Right Column */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-xl font-serif">Activity Overview</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-6">
+              {/* Calendar Heatmap Placeholder */}
+              <div>
+                <h3 className="text-sm font-medium mb-3">This Month</h3>
+                <div className="h-32 bg-stone-100 rounded-md flex items-center justify-center">
+                  <p className="text-stone-500 text-sm">Calendar heatmap</p>
+                </div>
+              </div>
+
+              {/* Quick Stats */}
+              <div>
+                <h3 className="text-sm font-medium mb-3">Last 30 Days</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-stone-600">Rides</span>
+                    <span className="font-medium">12</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-stone-600">Total Distance</span>
+                    <span className="font-medium">284 mi</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-stone-600">Total Time</span>
+                    <span className="font-medium">18.5 h</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-stone-600">Avg Lean Angle</span>
+                    <span className="font-medium">32.4°</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Milestones */}
+              <div>
+                <h3 className="text-sm font-medium mb-3">Recent Milestones</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center gap-2 text-stone-600">
+                    <span className="text-lg">🏆</span>
+                    <span>First track day completed</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-stone-600">
+                    <span className="text-lg">📊</span>
+                    <span>20+ rides logged</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }
