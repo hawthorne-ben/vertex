@@ -17,6 +17,7 @@ const jetbrainsMono = JetBrains_Mono({
 export const metadata: Metadata = {
   title: "Vertex - The Point of Performance",
   description: "IMU cycling data analysis platform for detailed riding dynamics insights",
+  metadataBase: new URL('https://ridevertex.com'),
   icons: {
     icon: [
       { url: '/favicon.svg', type: 'image/svg+xml' },

@@ -82,3 +82,5 @@ Vertex distinguishes itself through a **subtle editorial aesthetic** inspired by
 ---
 
 **Status**: In development. Vertex is currently in the planning and early implementation phase.
+
+**Live Site**: [ridevertex.com](https://ridevertex.com) (coming soon)
