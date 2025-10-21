@@ -2,6 +2,7 @@ import type { Metadata } from "next"
 import { Crimson_Pro, JetBrains_Mono } from "next/font/google"
 import "./globals.css"
 import { Header } from "@/components/layout/header"
+import { Analytics } from '@vercel/analytics/react'
 
 const crimsonPro = Crimson_Pro({
   subsets: ["latin"],
@@ -38,6 +39,7 @@ export default function RootLayout({
       <body suppressHydrationWarning>
         <Header />
         <main>{children}</main>
+        <Analytics />
       </body>
     </html>
   )
