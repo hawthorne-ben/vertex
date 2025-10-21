@@ -23,20 +23,20 @@ export function Header() {
             VERTEX
           </Link>
           
-          <nav className="flex items-center gap-3 md:gap-6">
+          <nav className="flex items-center gap-1 text-sm">
             <Link 
               href="/dashboard" 
-              className="text-sm text-stone-600 hover:text-stone-900 transition-colors"
+              className="px-3 py-2 text-stone-600 hover:text-stone-900 hover:bg-stone-50 transition-colors rounded-md"
             >
               Dashboard
             </Link>
             <Link 
               href="/upload" 
-              className="text-sm text-stone-600 hover:text-stone-900 transition-colors"
+              className="px-3 py-2 text-stone-600 hover:text-stone-900 hover:bg-stone-50 transition-colors rounded-md"
             >
               Upload
             </Link>
-            <div className="flex items-center gap-1 md:gap-2">
+            <div className="flex items-center gap-1 ml-2 pl-4 border-l border-stone-200">
               <UserButton />
               <button
                 onClick={async () => {
@@ -45,7 +45,7 @@ export function Header() {
                   await supabase.auth.signOut()
                   window.location.href = '/'
                 }}
-                className="text-sm text-stone-600 hover:text-stone-900 transition-colors hidden sm:block"
+                className="px-3 py-2 text-stone-600 hover:text-stone-900 hover:bg-stone-50 transition-colors rounded-md hidden sm:block"
               >
                 Sign Out
               </button>
