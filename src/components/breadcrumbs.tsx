@@ -16,10 +16,24 @@ export function Breadcrumbs() {
   
   const breadcrumbLabels: Record<string, string> = {
     'dashboard': 'Dashboard',
+    'data': 'Data',
     'upload': 'Upload',
     'rides': 'Rides',
     'create': 'Create Ride',
     'settings': 'Settings',
+  }
+  
+  // Function to get label for dynamic segments (UUIDs, etc)
+  const getSegmentLabel = (segment: string, index: number) => {
+    // If it's a UUID (looks like a data ID), use "View Data" 
+    if (segment.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)) {
+      // Check parent segment to determine context
+      const parentSegment = segments[index - 1]
+      if (parentSegment === 'data') return 'View Data'
+      if (parentSegment === 'rides') return 'Ride Details'
+      return segment.slice(0, 8) + '...'
+    }
+    return breadcrumbLabels[segment] || segment
   }
   
   return (
@@ -33,7 +47,7 @@ export function Breadcrumbs() {
       
       {segments.map((segment, index) => {
         const href = '/' + segments.slice(0, index + 1).join('/')
-        const label = breadcrumbLabels[segment] || segment
+        const label = getSegmentLabel(segment, index)
         const isLast = index === segments.length - 1
         
         return (

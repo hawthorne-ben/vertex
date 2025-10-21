@@ -1,9 +1,8 @@
 # Local planning and documentation files
 APP.md
 BUILD.md
-plan.txt
-LANDING_PAGE_RECOMMENDATIONS.md
-HARDWARE_VISUALIZATION_PROMPTS.md
+SAVE_STATE.md
+fix_imu_files_rls.sql
 
 # Dependencies
 node_modules
@@ -53,4 +52,8 @@ next-env.d.ts
 **/public/sw.js.map
 **/public/workbox-*.js.map
 **/public/worker-*.js.map
+
+# Generated test data
+tools/*.csv
+tools/__pycache__
 
