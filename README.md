@@ -29,6 +29,47 @@ Vertex delivers sophisticated analytics typically found in professional racing t
 - Summary statistics across all rides
 - Export functionality for processed data and charts
 
+## Local Development
+
+### First Time Setup
+```bash
+npm install
+```
+
+### Run Development Server
+```bash
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) to see the app.
+
+### Build for Production
+```bash
+npm run build
+npm start
+```
+
+## Project Structure
+
+```
+vertex/
+├── src/
+│   ├── app/              # Next.js App Router pages
+│   │   ├── layout.tsx    # Root layout with fonts
+│   │   ├── page.tsx      # Landing page
+│   │   └── globals.css   # Global styles
+│   ├── components/
+│   │   └── ui/           # shadcn/ui components
+│   └── lib/
+│       └── utils.ts      # Utility functions
+├── public/               # Static assets
+├── package.json          # Dependencies
+├── next.config.ts        # Next.js configuration
+├── tailwind.config.ts    # Tailwind configuration
+├── tsconfig.json         # TypeScript configuration
+└── vercel.json           # Vercel deployment configuration
+```
+
 ## Technology Stack
 
 **Frontend & Hosting**
