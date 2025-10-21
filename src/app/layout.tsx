@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 import { Crimson_Pro, JetBrains_Mono } from "next/font/google"
 import "./globals.css"
+import { Header } from "@/components/layout/header"
 
 const crimsonPro = Crimson_Pro({
   subsets: ["latin"],
@@ -34,7 +35,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${crimsonPro.variable} ${jetbrainsMono.variable}`} suppressHydrationWarning>
-      <body suppressHydrationWarning>{children}</body>
+      <body suppressHydrationWarning>
+        <Header />
+        <main>{children}</main>
+      </body>
     </html>
   )
 }
