@@ -58,8 +58,8 @@ export default function RidesPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-2">
-                {/* Table Header */}
-                <div className="grid grid-cols-12 gap-4 px-4 py-3 bg-stone-50 rounded-md text-sm font-medium text-stone-600">
+                {/* Table Header - Hidden on mobile */}
+                <div className="hidden md:grid grid-cols-12 gap-4 px-4 py-3 bg-stone-50 rounded-md text-sm font-medium text-stone-600">
                   <div className="col-span-3">Ride</div>
                   <div className="col-span-2">Date</div>
                   <div className="col-span-2">Location</div>
@@ -74,31 +74,55 @@ export default function RidesPage() {
                   <Link
                     key={ride.id}
                     href={`/rides/${ride.id}`}
-                    className="grid grid-cols-12 gap-4 px-4 py-4 border border-stone-200 rounded-md hover:bg-stone-50 transition-colors"
+                    className="block md:grid md:grid-cols-12 gap-4 px-4 py-4 border border-stone-200 rounded-md hover:bg-stone-50 transition-colors"
                   >
-                    <div className="col-span-3">
-                      <div className="font-medium">{ride.name}</div>
-                      <div className="text-sm text-stone-500">{formatTime(ride.date)}</div>
+                    {/* Mobile layout */}
+                    <div className="md:hidden space-y-2">
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <div className="font-medium">{ride.name}</div>
+                          <div className="text-sm text-stone-500">{formatDate(ride.date)} • {formatTime(ride.date)}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="font-medium">{ride.stats.maxLeanAngle}°</div>
+                          <div className="text-xs text-stone-500">max lean</div>
+                        </div>
+                      </div>
+                      <div className="flex gap-4 text-sm text-stone-600">
+                        <span>{ride.distance} mi</span>
+                        <span>•</span>
+                        <span>{formatDuration(ride.duration)}</span>
+                        <span>•</span>
+                        <span>{ride.stats.maxSpeed} mph</span>
+                      </div>
                     </div>
-                    <div className="col-span-2 text-stone-600">
-                      {formatDate(ride.date)}
-                    </div>
-                    <div className="col-span-2 text-stone-600 truncate">
-                      {ride.location}
-                    </div>
-                    <div className="col-span-1 text-right text-stone-900">
-                      {ride.distance} mi
-                    </div>
-                    <div className="col-span-1 text-right text-stone-900">
-                      {formatDuration(ride.duration)}
-                    </div>
-                    <div className="col-span-1 text-right text-stone-900">
-                      {ride.stats.maxSpeed} mph
-                    </div>
-                    <div className="col-span-2 text-right">
-                      <span className="font-medium text-stone-900">
-                        {ride.stats.maxLeanAngle}°
-                      </span>
+
+                    {/* Desktop layout */}
+                    <div className="hidden md:contents">
+                      <div className="col-span-3">
+                        <div className="font-medium">{ride.name}</div>
+                        <div className="text-sm text-stone-500">{formatTime(ride.date)}</div>
+                      </div>
+                      <div className="col-span-2 text-stone-600">
+                        {formatDate(ride.date)}
+                      </div>
+                      <div className="col-span-2 text-stone-600 truncate">
+                        {ride.location}
+                      </div>
+                      <div className="col-span-1 text-right text-stone-900">
+                        {ride.distance} mi
+                      </div>
+                      <div className="col-span-1 text-right text-stone-900">
+                        {formatDuration(ride.duration)}
+                      </div>
+                      <div className="col-span-1 text-right text-stone-900">
+                        {ride.stats.maxSpeed} mph
+                      </div>
+                      <div className="col-span-2 text-right">
+                        <span className="font-medium text-stone-900">
+                          {ride.stats.maxLeanAngle}°
+                        </span>
+                      </div>
                     </div>
                   </Link>
                 ))}
