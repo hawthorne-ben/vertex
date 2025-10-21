@@ -31,6 +31,12 @@ export function Header() {
               Dashboard
             </Link>
             <Link 
+              href="/data" 
+              className="px-3 py-2 text-stone-600 hover:text-stone-900 hover:bg-stone-50 transition-colors rounded-md"
+            >
+              Data
+            </Link>
+            <Link 
               href="/upload" 
               className="px-3 py-2 text-stone-600 hover:text-stone-900 hover:bg-stone-50 transition-colors rounded-md"
             >
