@@ -68,40 +68,42 @@ export default function Home() {
     <div className="min-h-screen flex flex-col">
       {/* Navigation */}
       <header className="border-b border-stone-200 bg-white sticky top-0 z-50">
-        <div className="container mx-auto px-6 py-4">
+        <div className="container mx-auto px-4 sm:px-6 py-3 sm:py-4">
           <div className="flex items-center justify-between">
-            <Link href={user ? "/dashboard" : "/"} className="text-2xl font-normal tracking-tight hover:text-stone-700 transition-colors">
+            <Link href={user ? "/dashboard" : "/"} className="text-xl sm:text-2xl font-normal tracking-tight hover:text-stone-700 transition-colors">
               VERTEX
             </Link>
             <nav className="flex items-center gap-1 text-sm">
-              <a href="#features" className="px-3 py-2 text-stone-600 hover:text-stone-900 hover:bg-stone-50 transition-colors rounded-md">
-                Features
-              </a>
-              <a href="#how-it-works" className="px-3 py-2 text-stone-600 hover:text-stone-900 hover:bg-stone-50 transition-colors rounded-md">
-                How It Works
-              </a>
-              <a href="#hardware" className="px-3 py-2 text-stone-600 hover:text-stone-900 hover:bg-stone-50 transition-colors rounded-md">
-                Hardware
-              </a>
-              <a href="#faq" className="px-3 py-2 text-stone-600 hover:text-stone-900 hover:bg-stone-50 transition-colors rounded-md">
-                FAQ
-              </a>
+              {/* Hide navigation links on mobile, show on md+ */}
+              <div className="hidden md:flex items-center gap-1">
+                <a href="#features" className="px-3 py-2 text-stone-600 hover:text-stone-900 hover:bg-stone-50 transition-colors rounded-md">
+                  Features
+                </a>
+                <a href="#how-it-works" className="px-3 py-2 text-stone-600 hover:text-stone-900 hover:bg-stone-50 transition-colors rounded-md">
+                  How It Works
+                </a>
+                <a href="#hardware" className="px-3 py-2 text-stone-600 hover:text-stone-900 hover:bg-stone-50 transition-colors rounded-md">
+                  Hardware
+                </a>
+                <a href="#faq" className="px-3 py-2 text-stone-600 hover:text-stone-900 hover:bg-stone-50 transition-colors rounded-md">
+                  FAQ
+                </a>
+              </div>
               
               {/* Dynamic auth section */}
               {loading ? (
-                // Loading placeholder - matches "Log In" + "Sign Up" widths
-                // px-4 = 32px padding, text-sm ≈ 50px ("Log In"), 58px ("Sign Up")
-                <div className="flex items-center gap-1 ml-2 pl-4 border-l border-stone-200">
+                // Loading placeholder
+                <div className="flex items-center gap-1 md:ml-2 md:pl-4 md:border-l border-stone-200">
                   <div className="h-9 rounded-md bg-stone-100 animate-pulse" style={{ width: '82px' }}></div>
                   <div className="h-9 rounded-md bg-stone-100 animate-pulse" style={{ width: '90px' }}></div>
                 </div>
               ) : (
                 user ? (
                   // Logged in: show dashboard link and profile button
-                  <div className="flex items-center gap-1 ml-2 pl-4 border-l border-stone-200">
+                  <div className="flex items-center gap-1 md:ml-2 md:pl-4 md:border-l border-stone-200">
                     <Link 
                       href="/dashboard"
-                      className="px-4 py-2 text-stone-900 hover:bg-stone-50 transition-colors rounded-md whitespace-nowrap"
+                      className="px-3 sm:px-4 py-2 text-stone-900 hover:bg-stone-50 transition-colors rounded-md whitespace-nowrap text-xs sm:text-sm"
                     >
                       Dashboard
                     </Link>
@@ -115,16 +117,16 @@ export default function Home() {
                   </div>
                 ) : (
                   // Logged out: show login/signup
-                  <div className="flex items-center gap-1 ml-2 pl-4 border-l border-stone-200">
+                  <div className="flex items-center gap-1 md:ml-2 md:pl-4 md:border-l border-stone-200">
                     <Link 
                       href="/login"
-                      className="px-4 py-2 text-stone-900 hover:bg-stone-50 transition-colors rounded-md whitespace-nowrap"
+                      className="px-3 sm:px-4 py-2 text-stone-900 hover:bg-stone-50 transition-colors rounded-md whitespace-nowrap text-xs sm:text-sm"
                     >
                       Log In
                     </Link>
                     <Link 
                       href="/signup"
-                      className="px-4 py-2 bg-stone-900 text-white hover:bg-stone-800 transition-colors rounded-md whitespace-nowrap"
+                      className="px-3 sm:px-4 py-2 bg-stone-900 text-white hover:bg-stone-800 transition-colors rounded-md whitespace-nowrap text-xs sm:text-sm"
                     >
                       Sign Up
                     </Link>
@@ -138,7 +140,7 @@ export default function Home() {
 
       <main className="flex-1">
         {/* Hero Section */}
-        <section className="relative min-h-[600px] md:min-h-[700px] flex items-end">
+        <section className="relative min-h-[500px] sm:min-h-[600px] md:min-h-[700px] flex items-end">
           {/* Background Image */}
           <div className="absolute inset-0">
             <Image
@@ -153,36 +155,36 @@ export default function Home() {
           </div>
 
           {/* Content Overlay */}
-          <div className="container mx-auto px-6 pb-12 md:pb-16 relative z-10">
+          <div className="container mx-auto px-4 sm:px-6 pb-8 sm:pb-12 md:pb-16 relative z-10">
             <div className="max-w-xl">
-              <div className="bg-white/95 backdrop-blur-sm rounded-lg p-6 md:p-8 shadow-2xl">
-                <h2 className="text-3xl md:text-4xl lg:text-5xl font-light tracking-tight leading-tight mb-4">
+              <div className="bg-white/95 backdrop-blur-sm rounded-lg p-5 sm:p-6 md:p-8 shadow-2xl">
+                <h2 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-light tracking-tight leading-tight mb-3 sm:mb-4">
                   The Point of Performance
                 </h2>
-                <p className="text-base md:text-lg text-stone-600 leading-relaxed mb-6">
+                <p className="text-sm sm:text-base md:text-lg text-stone-600 leading-relaxed mb-5 sm:mb-6">
                   Measure how you actually ride. Understand cornering forces, braking smoothness, 
                   body position stability, and how your equipment affects comfort—with objective data 
                   from IMU motion analysis.
                 </p>
-                <div className="flex flex-col sm:flex-row gap-3">
+                <div className="flex flex-col sm:flex-row gap-2.5 sm:gap-3">
                   {user ? (
                     <Link 
                       href="/dashboard"
-                      className="px-6 py-2.5 bg-stone-900 text-white hover:bg-stone-800 transition-colors rounded-md text-center text-sm font-medium"
+                      className="px-5 sm:px-6 py-2.5 bg-stone-900 text-white hover:bg-stone-800 transition-colors rounded-md text-center text-xs sm:text-sm font-medium"
                     >
                       Go to Dashboard
                     </Link>
                   ) : (
                     <a 
                       href="#waitlist"
-                      className="px-6 py-2.5 bg-stone-900 text-white hover:bg-stone-800 transition-colors rounded-md text-center text-sm font-medium"
+                      className="px-5 sm:px-6 py-2.5 bg-stone-900 text-white hover:bg-stone-800 transition-colors rounded-md text-center text-xs sm:text-sm font-medium"
                     >
                       Join Beta Waitlist
                     </a>
                   )}
                   <a 
                     href="#why"
-                    className="px-6 py-2.5 border border-stone-300 text-stone-900 hover:bg-stone-50 transition-colors rounded-md text-center text-sm font-medium"
+                    className="px-5 sm:px-6 py-2.5 border border-stone-300 text-stone-900 hover:bg-stone-50 transition-colors rounded-md text-center text-xs sm:text-sm font-medium"
                   >
                     Learn More
                   </a>
@@ -194,22 +196,22 @@ export default function Home() {
 
         {/* Problem Statement */}
         <section id="why" className="bg-stone-50 border-y border-stone-200">
-          <div className="container mx-auto px-6 py-20">
+          <div className="container mx-auto px-4 sm:px-6 py-12 sm:py-16 md:py-20">
             <div className="max-w-4xl mx-auto">
-              <h3 className="text-3xl font-light mb-8 text-center">Why Vertex Exists</h3>
-              <p className="text-xl text-stone-600 leading-relaxed text-center mb-12">
+              <h3 className="text-2xl sm:text-3xl font-light mb-6 sm:mb-8 text-center">Why Vertex Exists</h3>
+              <p className="text-base sm:text-lg md:text-xl text-stone-600 leading-relaxed text-center mb-8 sm:mb-12">
                 Standard cycling computers track speed, cadence, and heart rate. 
                 But they can&apos;t measure how you actually ride: cornering forces, braking technique, 
                 body position stability, or how equipment changes affect your comfort and performance.
               </p>
               
               {/* Comparison */}
-              <div className="grid md:grid-cols-2 gap-8">
-                <div className="bg-white p-8 rounded-lg border border-stone-200">
-                  <h4 className="font-medium mb-4 text-stone-500 uppercase text-sm tracking-wide">
+              <div className="grid md:grid-cols-2 gap-4 sm:gap-6 md:gap-8">
+                <div className="bg-white p-5 sm:p-6 md:p-8 rounded-lg border border-stone-200">
+                  <h4 className="font-medium mb-3 sm:mb-4 text-stone-500 uppercase text-xs sm:text-sm tracking-wide">
                     Standard Cycling Computer
                   </h4>
-                  <ul className="space-y-2 text-stone-600">
+                  <ul className="space-y-1.5 sm:space-y-2 text-stone-600 text-sm sm:text-base">
                     <li>• Speed & Cadence</li>
                     <li>• Heart Rate</li>
                     <li>• Power Output</li>
@@ -219,11 +221,11 @@ export default function Home() {
                     <li className="text-stone-400">• Cornering Analysis: ❌</li>
                   </ul>
                 </div>
-                <div className="bg-stone-900 text-white p-8 rounded-lg">
-                  <h4 className="font-medium mb-4 uppercase text-sm tracking-wide text-stone-300">
+                <div className="bg-stone-900 text-white p-5 sm:p-6 md:p-8 rounded-lg">
+                  <h4 className="font-medium mb-3 sm:mb-4 uppercase text-xs sm:text-sm tracking-wide text-stone-300">
                     Vertex + IMU Logger
                   </h4>
-                  <ul className="space-y-2">
+                  <ul className="space-y-1.5 sm:space-y-2 text-sm sm:text-base">
                     <li>• All Standard Metrics</li>
                     <li>• + Lean Angle & Cornering Forces</li>
                     <li>• + Braking Smoothness Analysis</li>
@@ -239,53 +241,53 @@ export default function Home() {
         </section>
 
         {/* How It Works */}
-        <section id="how-it-works" className="container mx-auto px-6 py-20">
-          <h3 className="text-3xl font-light mb-16 text-center">How It Works</h3>
-          <div className="grid md:grid-cols-3 gap-12 max-w-5xl mx-auto">
+        <section id="how-it-works" className="container mx-auto px-4 sm:px-6 py-12 sm:py-16 md:py-20">
+          <h3 className="text-2xl sm:text-3xl font-light mb-10 sm:mb-12 md:mb-16 text-center">How It Works</h3>
+          <div className="grid md:grid-cols-3 gap-8 sm:gap-10 md:gap-12 max-w-5xl mx-auto">
             {/* Step 1 */}
             <div className="text-center">
-              <div className="bg-stone-100 rounded-lg aspect-square mb-6 flex items-center justify-center">
+              <div className="bg-stone-100 rounded-lg aspect-square mb-4 sm:mb-6 flex items-center justify-center">
                 <div className="text-stone-400">
-                  <svg className="w-20 h-20 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-16 sm:w-20 h-16 sm:h-20 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
                   </svg>
                 </div>
               </div>
-              <div className="text-sm text-stone-500 font-medium mb-2">STEP 1</div>
-              <h4 className="text-xl font-medium mb-3">Collect Data</h4>
-              <p className="text-stone-600 leading-relaxed">
+              <div className="text-xs sm:text-sm text-stone-500 font-medium mb-2">STEP 1</div>
+              <h4 className="text-lg sm:text-xl font-medium mb-2 sm:mb-3">Collect Data</h4>
+              <p className="text-sm sm:text-base text-stone-600 leading-relaxed">
                 Install the IMU logger on your bike via Garmin mount. Records 100Hz motion data to SD card during your ride.
               </p>
             </div>
 
             {/* Step 2 */}
             <div className="text-center">
-              <div className="bg-stone-100 rounded-lg aspect-square mb-6 flex items-center justify-center">
+              <div className="bg-stone-100 rounded-lg aspect-square mb-4 sm:mb-6 flex items-center justify-center">
                 <div className="text-stone-400">
-                  <svg className="w-20 h-20 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-16 sm:w-20 h-16 sm:h-20 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                   </svg>
                 </div>
               </div>
-              <div className="text-sm text-stone-500 font-medium mb-2">STEP 2</div>
-              <h4 className="text-xl font-medium mb-3">Upload Files</h4>
-              <p className="text-stone-600 leading-relaxed">
+              <div className="text-xs sm:text-sm text-stone-500 font-medium mb-2">STEP 2</div>
+              <h4 className="text-lg sm:text-xl font-medium mb-2 sm:mb-3">Upload Files</h4>
+              <p className="text-sm sm:text-base text-stone-600 leading-relaxed">
                 Drag and drop your IMU CSV file and optional FIT file from your cycling computer. Automatic ride detection and parsing.
               </p>
             </div>
 
             {/* Step 3 */}
             <div className="text-center">
-              <div className="bg-stone-100 rounded-lg aspect-square mb-6 flex items-center justify-center">
+              <div className="bg-stone-100 rounded-lg aspect-square mb-4 sm:mb-6 flex items-center justify-center">
                 <div className="text-stone-400">
-                  <svg className="w-20 h-20 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-16 sm:w-20 h-16 sm:h-20 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                   </svg>
                 </div>
               </div>
-              <div className="text-sm text-stone-500 font-medium mb-2">STEP 3</div>
-              <h4 className="text-xl font-medium mb-3">Analyze Your Riding</h4>
-              <p className="text-stone-600 leading-relaxed">
+              <div className="text-xs sm:text-sm text-stone-500 font-medium mb-2">STEP 3</div>
+              <h4 className="text-lg sm:text-xl font-medium mb-2 sm:mb-3">Analyze Your Riding</h4>
+              <p className="text-sm sm:text-base text-stone-600 leading-relaxed">
                 View cornering forces, braking smoothness, road surface quality, and body position stability. Test equipment changes with objective data.
               </p>
             </div>
@@ -294,61 +296,61 @@ export default function Home() {
 
         {/* Features */}
         <section id="features" className="bg-stone-50 border-y border-stone-200">
-          <div className="container mx-auto px-6 py-20">
-            <h3 className="text-3xl font-light mb-16 text-center">What You Can Measure</h3>
-            <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-8 max-w-6xl mx-auto">
+          <div className="container mx-auto px-4 sm:px-6 py-12 sm:py-16 md:py-20">
+            <h3 className="text-2xl sm:text-3xl font-light mb-10 sm:mb-12 md:mb-16 text-center">What You Can Measure</h3>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 md:gap-8 max-w-6xl mx-auto">
               {/* Feature 1 */}
-              <div className="bg-white p-6 rounded-lg border border-stone-200">
-                <div className="bg-stone-100 rounded-lg aspect-square mb-4 flex items-center justify-center">
+              <div className="bg-white p-4 sm:p-5 md:p-6 rounded-lg border border-stone-200">
+                <div className="bg-stone-100 rounded-lg aspect-square mb-3 sm:mb-4 flex items-center justify-center">
                   <div className="text-center">
-                    <svg className="w-16 h-16 mx-auto text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-12 sm:w-14 md:w-16 h-12 sm:h-14 md:h-16 mx-auto text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <circle cx="12" cy="12" r="10" strokeWidth={1.5} />
                       <circle cx="12" cy="12" r="6" strokeWidth={1.5} />
                       <circle cx="12" cy="12" r="2" strokeWidth={1.5} />
                     </svg>
                   </div>
                 </div>
-                <h4 className="text-lg font-medium mb-2">Traction Circle</h4>
-                <p className="text-stone-600 text-sm leading-relaxed">
+                <h4 className="text-base sm:text-lg font-medium mb-1.5 sm:mb-2">Traction Circle</h4>
+                <p className="text-stone-600 text-xs sm:text-sm leading-relaxed">
                   See exact lateral and longitudinal G-forces plotted in real-time. Understand your bike&apos;s grip limits.
                 </p>
               </div>
 
               {/* Feature 2 */}
-              <div className="bg-white p-6 rounded-lg border border-stone-200">
-                <div className="bg-stone-100 rounded-lg aspect-square mb-4 flex items-center justify-center">
-                  <svg className="w-16 h-16 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="bg-white p-4 sm:p-5 md:p-6 rounded-lg border border-stone-200">
+                <div className="bg-stone-100 rounded-lg aspect-square mb-3 sm:mb-4 flex items-center justify-center">
+                  <svg className="w-12 sm:w-14 md:w-16 h-12 sm:h-14 md:h-16 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
                   </svg>
                 </div>
-                <h4 className="text-lg font-medium mb-2">Lean Angle Timeline</h4>
-                <p className="text-stone-600 text-sm leading-relaxed">
+                <h4 className="text-base sm:text-lg font-medium mb-1.5 sm:mb-2">Lean Angle Timeline</h4>
+                <p className="text-stone-600 text-xs sm:text-sm leading-relaxed">
                   Track your maximum lean angle by corner. Identify which turns you&apos;re pushing hard vs. riding conservatively.
                 </p>
               </div>
 
               {/* Feature 3 */}
-              <div className="bg-white p-6 rounded-lg border border-stone-200">
-                <div className="bg-stone-100 rounded-lg aspect-square mb-4 flex items-center justify-center">
-                  <svg className="w-16 h-16 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="bg-white p-4 sm:p-5 md:p-6 rounded-lg border border-stone-200">
+                <div className="bg-stone-100 rounded-lg aspect-square mb-3 sm:mb-4 flex items-center justify-center">
+                  <svg className="w-12 sm:w-14 md:w-16 h-12 sm:h-14 md:h-16 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                   </svg>
                 </div>
-                <h4 className="text-lg font-medium mb-2">Braking Analysis</h4>
-                <p className="text-stone-600 text-sm leading-relaxed">
+                <h4 className="text-base sm:text-lg font-medium mb-1.5 sm:mb-2">Braking Analysis</h4>
+                <p className="text-stone-600 text-xs sm:text-sm leading-relaxed">
                   Identify heavy vs. smooth braking patterns. See deceleration events and optimize your brake points.
                 </p>
               </div>
 
               {/* Feature 4 */}
-              <div className="bg-white p-6 rounded-lg border border-stone-200">
-                <div className="bg-stone-100 rounded-lg aspect-square mb-4 flex items-center justify-center">
-                  <svg className="w-16 h-16 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className="bg-white p-4 sm:p-5 md:p-6 rounded-lg border border-stone-200">
+                <div className="bg-stone-100 rounded-lg aspect-square mb-3 sm:mb-4 flex items-center justify-center">
+                  <svg className="w-12 sm:w-14 md:w-16 h-12 sm:h-14 md:h-16 text-stone-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                   </svg>
                 </div>
-                <h4 className="text-lg font-medium mb-2">Road Surface & Equipment</h4>
-                <p className="text-stone-600 text-sm leading-relaxed">
+                <h4 className="text-base sm:text-lg font-medium mb-1.5 sm:mb-2">Road Surface & Equipment</h4>
+                <p className="text-stone-600 text-xs sm:text-sm leading-relaxed">
                   Measure road vibration objectively. Test if tire pressure, handlebar, or saddle changes actually improve comfort.
                 </p>
               </div>
@@ -357,91 +359,91 @@ export default function Home() {
         </section>
 
         {/* Product Preview */}
-        <section className="container mx-auto px-6 py-20">
-          <h3 className="text-3xl font-light mb-8 text-center">Dashboard Preview</h3>
-          <p className="text-center text-stone-600 mb-12 max-w-2xl mx-auto">
+        <section className="container mx-auto px-4 sm:px-6 py-12 sm:py-16 md:py-20">
+          <h3 className="text-2xl sm:text-3xl font-light mb-6 sm:mb-8 text-center">Dashboard Preview</h3>
+          <p className="text-center text-sm sm:text-base text-stone-600 mb-8 sm:mb-12 max-w-2xl mx-auto px-4">
             View your ride data in an intuitive interface designed for quick analysis and deep insights.
           </p>
           <div className="bg-stone-100 rounded-lg aspect-video max-w-5xl mx-auto flex items-center justify-center border-2 border-stone-200">
-            <div className="text-center p-12">
-              <svg className="w-24 h-24 mx-auto text-stone-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div className="text-center p-6 sm:p-8 md:p-12">
+              <svg className="w-16 sm:w-20 md:w-24 h-16 sm:h-20 md:h-24 mx-auto text-stone-400 mb-3 sm:mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
               </svg>
-              <p className="text-stone-500 font-medium">Dashboard Screenshot</p>
-              <p className="text-sm text-stone-400 mt-2">Full interface preview with ride detail page</p>
+              <p className="text-sm sm:text-base text-stone-500 font-medium">Dashboard Screenshot</p>
+              <p className="text-xs sm:text-sm text-stone-400 mt-1 sm:mt-2">Full interface preview with ride detail page</p>
             </div>
           </div>
         </section>
 
         {/* Hardware Section */}
         <section id="hardware" className="bg-stone-50 border-y border-stone-200">
-          <div className="container mx-auto px-6 py-20">
+          <div className="container mx-auto px-4 sm:px-6 py-12 sm:py-16 md:py-20">
             <div className="max-w-5xl mx-auto">
-              <div className="grid md:grid-cols-2 gap-12 items-center">
+              <div className="grid md:grid-cols-2 gap-8 sm:gap-10 md:gap-12 items-center">
                 {/* Left: Image Placeholder */}
                 <div className="bg-stone-200 rounded-lg aspect-[4/3] flex items-center justify-center">
-                  <div className="text-center p-8">
-                    <svg className="w-20 h-20 mx-auto text-stone-400 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <div className="text-center p-6 sm:p-8">
+                    <svg className="w-16 sm:w-20 h-16 sm:h-20 mx-auto text-stone-400 mb-3 sm:mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
                     </svg>
-                    <p className="text-sm text-stone-500">IMU Logger on Bike</p>
-                    <p className="text-xs text-stone-400 mt-2">Product photo placeholder</p>
+                    <p className="text-xs sm:text-sm text-stone-500">IMU Logger on Bike</p>
+                    <p className="text-xs text-stone-400 mt-1 sm:mt-2">Product photo placeholder</p>
                   </div>
                 </div>
 
                 {/* Right: Text */}
                 <div>
-                  <h3 className="text-3xl font-light mb-6">Custom IMU Data Logger</h3>
-                  <p className="text-stone-600 mb-6 leading-relaxed">
+                  <h3 className="text-2xl sm:text-3xl font-light mb-4 sm:mb-6">Custom IMU Data Logger</h3>
+                  <p className="text-sm sm:text-base text-stone-600 mb-5 sm:mb-6 leading-relaxed">
                     Vertex works with a custom IMU data logger designed specifically for cycling motion analysis.
                   </p>
                   
-                  <div className="space-y-3 mb-8">
-                    <div className="flex items-start gap-3">
-                      <div className="text-stone-400 mt-1">•</div>
+                  <div className="space-y-2.5 sm:space-y-3 mb-6 sm:mb-8">
+                    <div className="flex items-start gap-2 sm:gap-3">
+                      <div className="text-stone-400 mt-1 text-sm sm:text-base">•</div>
                       <div>
-                        <span className="font-medium">BNO055 9-axis IMU sensor</span>
-                        <p className="text-sm text-stone-500">Accelerometer, gyroscope, and magnetometer</p>
+                        <span className="font-medium text-sm sm:text-base">BNO055 9-axis IMU sensor</span>
+                        <p className="text-xs sm:text-sm text-stone-500">Accelerometer, gyroscope, and magnetometer</p>
                       </div>
                     </div>
-                    <div className="flex items-start gap-3">
-                      <div className="text-stone-400 mt-1">•</div>
+                    <div className="flex items-start gap-2 sm:gap-3">
+                      <div className="text-stone-400 mt-1 text-sm sm:text-base">•</div>
                       <div>
-                        <span className="font-medium">100Hz sampling rate</span>
-                        <p className="text-sm text-stone-500">High-frequency capture for precise analysis</p>
+                        <span className="font-medium text-sm sm:text-base">100Hz sampling rate</span>
+                        <p className="text-xs sm:text-sm text-stone-500">High-frequency capture for precise analysis</p>
                       </div>
                     </div>
-                    <div className="flex items-start gap-3">
-                      <div className="text-stone-400 mt-1">•</div>
+                    <div className="flex items-start gap-2 sm:gap-3">
+                      <div className="text-stone-400 mt-1 text-sm sm:text-base">•</div>
                       <div>
-                        <span className="font-medium">SD card data storage</span>
-                        <p className="text-sm text-stone-500">Hours of ride data on a single card</p>
+                        <span className="font-medium text-sm sm:text-base">SD card data storage</span>
+                        <p className="text-xs sm:text-sm text-stone-500">Hours of ride data on a single card</p>
                       </div>
                     </div>
-                    <div className="flex items-start gap-3">
-                      <div className="text-stone-400 mt-1">•</div>
+                    <div className="flex items-start gap-2 sm:gap-3">
+                      <div className="text-stone-400 mt-1 text-sm sm:text-base">•</div>
                       <div>
-                        <span className="font-medium">Garmin mount compatible</span>
-                        <p className="text-sm text-stone-500">Mounts to any bike via standard seatpost adapter</p>
+                        <span className="font-medium text-sm sm:text-base">Garmin mount compatible</span>
+                        <p className="text-xs sm:text-sm text-stone-500">Mounts to any bike via standard seatpost adapter</p>
                       </div>
                     </div>
-                    <div className="flex items-start gap-3">
-                      <div className="text-stone-400 mt-1">•</div>
+                    <div className="flex items-start gap-2 sm:gap-3">
+                      <div className="text-stone-400 mt-1 text-sm sm:text-base">•</div>
                       <div>
-                        <span className="font-medium">10-15 hour battery life</span>
-                        <p className="text-sm text-stone-500">USB-C rechargeable</p>
+                        <span className="font-medium text-sm sm:text-base">10-15 hour battery life</span>
+                        <p className="text-xs sm:text-sm text-stone-500">USB-C rechargeable</p>
                       </div>
                     </div>
                   </div>
 
-                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-6">
-                    <div className="flex items-start gap-3">
-                      <svg className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 sm:p-4 mb-5 sm:mb-6">
+                    <div className="flex items-start gap-2 sm:gap-3">
+                      <svg className="w-4 sm:w-5 h-4 sm:h-5 text-amber-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                       </svg>
                       <div>
-                        <p className="font-medium text-amber-900 text-sm mb-1">Hardware Status: In Development</p>
-                        <p className="text-sm text-amber-800">
+                        <p className="font-medium text-amber-900 text-xs sm:text-sm mb-1">Hardware Status: In Development</p>
+                        <p className="text-xs sm:text-sm text-amber-800">
                           The IMU logger hardware is currently in development. Join the waitlist to be notified when pre-orders open.
                         </p>
                       </div>
@@ -450,12 +452,12 @@ export default function Home() {
 
                   <a 
                     href="#waitlist"
-                    className="inline-block px-6 py-3 bg-stone-900 text-white hover:bg-stone-800 transition-colors rounded-md"
+                    className="inline-block px-5 sm:px-6 py-2.5 sm:py-3 bg-stone-900 text-white hover:bg-stone-800 transition-colors rounded-md text-xs sm:text-sm font-medium"
                   >
                     Join Hardware Waitlist
                   </a>
 
-                  <p className="text-sm text-stone-500 mt-4">
+                  <p className="text-xs sm:text-sm text-stone-500 mt-3 sm:mt-4">
                     Already have IMU data? Upload any CSV format with accelerometer and gyroscope data.
                   </p>
                 </div>
@@ -465,26 +467,26 @@ export default function Home() {
         </section>
 
         {/* FAQ Section */}
-        <section id="faq" className="container mx-auto px-6 py-20">
+        <section id="faq" className="container mx-auto px-4 sm:px-6 py-12 sm:py-16 md:py-20">
           <div className="max-w-3xl mx-auto">
-            <h3 className="text-3xl font-light mb-12 text-center">Frequently Asked Questions</h3>
-            <div className="space-y-4">
+            <h3 className="text-2xl sm:text-3xl font-light mb-8 sm:mb-10 md:mb-12 text-center">Frequently Asked Questions</h3>
+            <div className="space-y-3 sm:space-y-4">
               {faqs.map((faq, index) => (
                 <div key={index} className="border border-stone-200 rounded-lg overflow-hidden">
                   <button
                     onClick={() => setOpenFaq(openFaq === index ? null : index)}
-                    className="w-full px-6 py-4 text-left flex items-center justify-between hover:bg-stone-50 transition-colors"
+                    className="w-full px-4 sm:px-6 py-3 sm:py-4 text-left flex items-center justify-between hover:bg-stone-50 transition-colors"
                   >
-                    <span className="font-medium">{faq.question}</span>
+                    <span className="font-medium text-sm sm:text-base pr-3">{faq.question}</span>
                     <ChevronDown 
-                      className={`w-5 h-5 text-stone-400 transition-transform ${
+                      className={`w-4 sm:w-5 h-4 sm:h-5 text-stone-400 transition-transform flex-shrink-0 ${
                         openFaq === index ? 'transform rotate-180' : ''
                       }`}
                     />
                   </button>
                   {openFaq === index && (
-                    <div className="px-6 py-4 bg-stone-50 border-t border-stone-200">
-                      <p className="text-stone-600 leading-relaxed">{faq.answer}</p>
+                    <div className="px-4 sm:px-6 py-3 sm:py-4 bg-stone-50 border-t border-stone-200">
+                      <p className="text-stone-600 leading-relaxed text-sm sm:text-base">{faq.answer}</p>
                     </div>
                   )}
                 </div>
@@ -495,43 +497,43 @@ export default function Home() {
 
         {/* Email Waitlist */}
         <section id="waitlist" className="bg-stone-900 text-white">
-          <div className="container mx-auto px-6 py-20">
+          <div className="container mx-auto px-4 sm:px-6 py-12 sm:py-16 md:py-20">
             <div className="max-w-2xl mx-auto text-center">
-              <h3 className="text-3xl font-light mb-4">Join the Beta Waitlist</h3>
-              <p className="text-stone-300 mb-8 leading-relaxed">
+              <h3 className="text-2xl sm:text-3xl font-light mb-3 sm:mb-4">Join the Beta Waitlist</h3>
+              <p className="text-sm sm:text-base text-stone-300 mb-6 sm:mb-8 leading-relaxed px-4">
                 Get early access to Vertex when we launch. Be the first to know when hardware pre-orders open.
               </p>
               
               {!subscribed ? (
-                <form onSubmit={handleWaitlistSignup} className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto">
+                <form onSubmit={handleWaitlistSignup} className="flex flex-col sm:flex-row gap-2.5 sm:gap-3 max-w-md mx-auto">
                   <input
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="your@email.com"
                     required
-                    className="flex-1 px-4 py-3 rounded-md bg-white text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-stone-400"
+                    className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 rounded-md bg-white text-stone-900 placeholder-stone-400 focus:outline-none focus:ring-2 focus:ring-stone-400 text-sm sm:text-base"
                   />
                   <button
                     type="submit"
-                    className="px-6 py-3 bg-white text-stone-900 hover:bg-stone-100 transition-colors rounded-md font-medium"
+                    className="px-5 sm:px-6 py-2.5 sm:py-3 bg-white text-stone-900 hover:bg-stone-100 transition-colors rounded-md font-medium text-sm sm:text-base"
                   >
                     Join Waitlist
                   </button>
                 </form>
               ) : (
-                <div className="bg-stone-800 border border-stone-700 rounded-lg p-6 max-w-md mx-auto">
-                  <svg className="w-12 h-12 mx-auto mb-3 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div className="bg-stone-800 border border-stone-700 rounded-lg p-5 sm:p-6 max-w-md mx-auto">
+                  <svg className="w-10 sm:w-12 h-10 sm:h-12 mx-auto mb-2 sm:mb-3 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  <p className="text-lg font-medium mb-2">You&apos;re on the list!</p>
-                  <p className="text-stone-400 text-sm">
+                  <p className="text-base sm:text-lg font-medium mb-1.5 sm:mb-2">You&apos;re on the list!</p>
+                  <p className="text-stone-400 text-xs sm:text-sm">
                     We&apos;ll email you when Vertex launches and when hardware pre-orders open.
                   </p>
                 </div>
               )}
               
-              <p className="text-xs text-stone-400 mt-6">
+              <p className="text-xs text-stone-400 mt-5 sm:mt-6 px-4">
                 We&apos;ll only email you about Vertex updates. No spam, unsubscribe anytime.
               </p>
             </div>
@@ -540,43 +542,43 @@ export default function Home() {
 
         {/* Technology Section (Condensed) */}
         <section className="border-t border-stone-200 bg-white">
-          <div className="container mx-auto px-6 py-16">
+          <div className="container mx-auto px-4 sm:px-6 py-12 sm:py-14 md:py-16">
             <div className="max-w-4xl mx-auto">
-              <h3 className="text-2xl font-light mb-8 text-center">Built With</h3>
-              <div className="grid md:grid-cols-3 gap-8 text-center">
+              <h3 className="text-xl sm:text-2xl font-light mb-6 sm:mb-8 text-center">Built With</h3>
+              <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-6 sm:gap-8 text-center">
                 <div>
-                  <h4 className="text-sm font-medium text-stone-500 uppercase tracking-wide mb-3">
+                  <h4 className="text-xs sm:text-sm font-medium text-stone-500 uppercase tracking-wide mb-2 sm:mb-3">
                     Frontend
                   </h4>
-                  <p className="text-sm text-stone-600">
+                  <p className="text-xs sm:text-sm text-stone-600">
                     Next.js 15, TypeScript, Tailwind CSS, Recharts, Plotly.js
                   </p>
                 </div>
                 <div>
-                  <h4 className="text-sm font-medium text-stone-500 uppercase tracking-wide mb-3">
+                  <h4 className="text-xs sm:text-sm font-medium text-stone-500 uppercase tracking-wide mb-2 sm:mb-3">
                     Backend
                   </h4>
-                  <p className="text-sm text-stone-600">
+                  <p className="text-xs sm:text-sm text-stone-600">
                     Supabase PostgreSQL, Supabase Auth, Inngest, AWS S3
                   </p>
                 </div>
-                <div>
-                  <h4 className="text-sm font-medium text-stone-500 uppercase tracking-wide mb-3">
+                <div className="sm:col-span-2 md:col-span-1">
+                  <h4 className="text-xs sm:text-sm font-medium text-stone-500 uppercase tracking-wide mb-2 sm:mb-3">
                     Hardware
                   </h4>
-                  <p className="text-sm text-stone-600">
+                  <p className="text-xs sm:text-sm text-stone-600">
                     ESP32, BNO055 IMU, SD Storage, 3D Printed Enclosure
                   </p>
                 </div>
               </div>
-              <div className="mt-8 pt-8 border-t border-stone-200 text-center">
+              <div className="mt-6 sm:mt-8 pt-6 sm:pt-8 border-t border-stone-200 text-center">
                 <a 
                   href="https://github.com/hawthorne-ben/vertex" 
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 text-sm text-stone-600 hover:text-stone-900 transition-colors"
+                  className="inline-flex items-center gap-2 text-xs sm:text-sm text-stone-600 hover:text-stone-900 transition-colors"
                 >
-                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-4 sm:w-5 h-4 sm:h-5" fill="currentColor" viewBox="0 0 24 24">
                     <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
                   </svg>
                   View on GitHub
@@ -589,10 +591,10 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="border-t border-stone-200 bg-white">
-        <div className="container mx-auto px-6 py-8">
-          <div className="flex flex-col md:flex-row justify-between items-center gap-4 text-sm text-stone-600">
-            <p>© {new Date().getFullYear()} Vertex. Beta platform in development.</p>
-            <div className="flex gap-6">
+        <div className="container mx-auto px-4 sm:px-6 py-6 sm:py-8">
+          <div className="flex flex-col md:flex-row justify-between items-center gap-3 sm:gap-4 text-xs sm:text-sm text-stone-600">
+            <p className="text-center md:text-left">© {new Date().getFullYear()} Vertex. Beta platform in development.</p>
+            <div className="flex gap-4 sm:gap-6">
               <a href="#faq" className="hover:text-stone-900 transition-colors">FAQ</a>
               <a href="https://github.com/hawthorne-ben/vertex" target="_blank" rel="noopener noreferrer" className="hover:text-stone-900 transition-colors">
                 GitHub
