@@ -184,7 +184,13 @@
   
   /* Common Patterns */
   .card-interactive {
-    @apply bg-card border border-border hover-bg hover-border transition-colors;
+    @apply bg-card/80 backdrop-blur-sm border border-border hover-bg hover-border transition-all duration-300;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  }
+  
+  .dark .card-interactive {
+    @apply bg-card/60;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
   }
   
   .form-input {
@@ -209,6 +215,24 @@
   
   .status-badge-info {
     @apply bg-info text-info border-info;
+  }
+  
+  /* Apple Liquid Glass Effects */
+  .glass-surface {
+    @apply backdrop-blur-md;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    box-shadow: 
+      0 8px 32px rgba(0, 0, 0, 0.1),
+      inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  }
+  
+  .dark .glass-surface {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    box-shadow: 
+      0 8px 32px rgba(0, 0, 0, 0.3),
+      inset 0 1px 0 rgba(255, 255, 255, 0.05);
   }
 }
 

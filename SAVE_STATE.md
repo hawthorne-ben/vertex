@@ -315,7 +315,7 @@
    - How to handle sensor drift over long rides?
 
 2. **Performance at Scale**
-   - Current: 5500 samples process in ~8 seconds
+   - Current: unknown
    - At 100 Hz for 2-hour ride: 720,000 samples
    - Will bulk insert still be fast enough? (estimate: ~2 minutes)
    - Consider: Keep PostgreSQL for MVP, monitor performance, migrate to Parquet if needed

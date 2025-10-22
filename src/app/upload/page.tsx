@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Upload, FileText } from 'lucide-react'
 import { ConfirmationModal, UploadProgressModal } from '@/components/upload-modals'
+import { FileChunker } from '@/lib/upload/chunking'
+import { useToast } from '@/components/ui/toast-context'
 
 interface FileToUpload {
   file: File
@@ -17,18 +19,20 @@ export default function UploadPage() {
   const [showConfirmation, setShowConfirmation] = useState(false)
   const [showUploadProgress, setShowUploadProgress] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
+  const [lastProgress, setLastProgress] = useState(0)
   const [currentFileIndex, setCurrentFileIndex] = useState(0)
   const [currentFileName, setCurrentFileName] = useState('')
   const router = useRouter()
+  const { addToast } = useToast()
 
   const handleFileSelection = useCallback((acceptedFiles: File[]) => {
-    // Check file size limits
-    const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB limit
+    // Check file size limits - now support up to 200MB with chunking
+    const MAX_FILE_SIZE = 200 * 1024 * 1024 // 200MB limit
     const oversizedFiles = acceptedFiles.filter(file => file.size > MAX_FILE_SIZE)
     
     if (oversizedFiles.length > 0) {
       const fileNames = oversizedFiles.map(f => f.name).join(', ')
-      alert(`Files too large (max 50MB): ${fileNames}\n\nPlease reduce file size or contact support for larger files.`)
+      alert(`Files too large (max 200MB): ${fileNames}\n\nPlease reduce file size or contact support for larger files.`)
       return
     }
 
@@ -41,69 +45,101 @@ export default function UploadPage() {
     setShowConfirmation(true)
   }, [])
 
-  const uploadFileWithProgress = useCallback((
-    file: File, 
-    storagePath: string, 
-    supabase: any,
+  const uploadFileDirect = useCallback(async (
+    file: File,
     onProgress: (progress: number) => void
   ) => {
-    return new Promise<void>(async (resolve, reject) => {
-      try {
-        // Get upload URL from Supabase
-        const { data: { session } } = await supabase.auth.getSession()
-        if (!session) {
-          reject(new Error('Not authenticated'))
-          return
+    // Original direct upload method for small files
+    const supabase = createClient()
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      throw new Error('Not authenticated')
+    }
+
+    const timestamp = Date.now()
+    const storagePath = `${session.user.id}/${timestamp}_${file.name}`
+
+    return new Promise<string>((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) {
+          const progress = (e.loaded / e.total) * 100
+          onProgress(progress)
         }
-        
-        const xhr = new XMLHttpRequest()
-        
-        // Track upload progress
-        xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable) {
-            const progress = (e.loaded / e.total) * 100
-            onProgress(progress)
-          }
-        }
-        
-        // Handle completion
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve()
-          } else {
-            reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`))
-          }
-        }
-        
-        // Handle errors
-        xhr.onerror = () => {
-          reject(new Error('Upload failed: Network error'))
-        }
-        
-        // Build the upload URL
-        const uploadUrl = `${supabase.supabaseUrl}/storage/v1/object/uploads/${storagePath}`
-        
-        // Set up the request
-        xhr.open('POST', uploadUrl, true)
-        xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`)
-        xhr.setRequestHeader('Cache-Control', '3600')
-        
-        // Send the file
-        const formData = new FormData()
-        formData.append('file', file)
-        xhr.send(formData)
-      } catch (error) {
-        reject(error)
       }
+      
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(storagePath)
+        } else {
+          reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`))
+        }
+      }
+      
+      xhr.onerror = () => {
+        reject(new Error('Upload failed: Network error'))
+      }
+      
+      const uploadUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/uploads/${storagePath}`
+      
+      xhr.open('POST', uploadUrl, true)
+      xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`)
+      xhr.setRequestHeader('Cache-Control', '3600')
+      
+      const formData = new FormData()
+      formData.append('file', file)
+      xhr.send(formData)
     })
   }, [])
+
+  const uploadFileChunked = useCallback(async (
+    file: File,
+    onProgress: (progress: number) => void,
+    onChunkComplete?: (chunkIndex: number, success: boolean) => void
+  ) => {
+    try {
+      // Check if file needs chunking
+      if (!FileChunker.shouldChunk(file)) {
+        // Small file - use original upload method
+        return await uploadFileDirect(file, onProgress)
+      }
+
+      // Large file - use chunked upload
+      console.log(`📦 File ${file.name} (${Math.round(file.size / 1024 / 1024)}MB) requires chunking`)
+      
+      // Create chunks
+      const { chunks, metadata } = await FileChunker.createChunks(file)
+      console.log(`📦 Created ${chunks.length} chunks for ${file.name}`)
+
+      // Upload chunks sequentially
+      await FileChunker.uploadChunks(
+        chunks,
+        metadata,
+        onProgress,
+        onChunkComplete
+      )
+
+      // Complete the chunked upload
+      await FileChunker.completeChunkedUpload(metadata)
+      
+      console.log(`✅ Chunked upload completed for ${file.name}`)
+      return metadata.fileId
+
+    } catch (error) {
+      console.error('Chunked upload failed:', error)
+      throw error
+    }
+  }, [uploadFileDirect])
 
   const handleConfirmUpload = useCallback(async () => {
     if (selectedFiles.length === 0) return
 
+    console.log(`🚀 Starting upload for ${selectedFiles.length} files`)
     setShowConfirmation(false)
     setShowUploadProgress(true)
     setUploadProgress(0)
+    setLastProgress(0)
     setCurrentFileIndex(0)
 
     const supabase = createClient()
@@ -130,50 +166,77 @@ export default function UploadPage() {
         const fileStartProgress = (i / selectedFiles.length) * 100
         const fileEndProgress = ((i + 1) / selectedFiles.length) * 100
         
-        // 1. Upload to Supabase Storage with progress tracking
-        const timestamp = Date.now()
-        const storagePath = `${user.id}/${timestamp}_${file.name}`
+        console.log(`📁 Processing file ${i + 1}/${selectedFiles.length}: ${file.name}`)
+        console.log(`📁 File progress range: ${fileStartProgress.toFixed(1)}% - ${fileEndProgress.toFixed(1)}%`)
         
-        await uploadFileWithProgress(file, storagePath, supabase, (fileProgress) => {
+        // Upload file (chunked or direct)
+        const uploadResult = await uploadFileChunked(file, (fileProgress) => {
           // Map file progress (0-100) to overall progress range for this file
           const overallProgress = fileStartProgress + (fileProgress / 100) * (fileEndProgress - fileStartProgress)
-          setUploadProgress(overallProgress)
+          
+          console.log(`📊 Progress Update:`)
+          console.log(`  File: ${file.name}`)
+          console.log(`  File Progress: ${fileProgress.toFixed(1)}%`)
+          console.log(`  Overall Progress: ${overallProgress.toFixed(1)}%`)
+          console.log(`  Last Progress: ${lastProgress.toFixed(1)}%`)
+          
+          // Always update progress if it's greater than the last progress
+          if (overallProgress > lastProgress) {
+            console.log(`✅ Updating progress from ${lastProgress.toFixed(1)}% to ${overallProgress.toFixed(1)}%`)
+            setUploadProgress(overallProgress)
+            setLastProgress(overallProgress)
+          } else {
+            console.log(`⏭️ Skipping progress update: ${overallProgress.toFixed(1)}% <= ${lastProgress.toFixed(1)}%`)
+          }
         })
 
-        // 2. Create metadata record in database
-        const { data: fileRecord, error: dbError } = await supabase
-          .from('imu_data_files')
-          .insert({
-            user_id: user.id,
-            filename: file.name,
-            storage_path: storagePath,
-            file_size_bytes: file.size,
-            status: 'uploaded'
+        // For chunked uploads, the fileId is returned directly
+        // For direct uploads, we need to create the database record
+        if (typeof uploadResult === 'string' && uploadResult.startsWith('file_')) {
+          // Chunked upload - fileId returned
+          uploadedFileIds.push(uploadResult)
+        } else {
+          // Direct upload - create database record
+          const storagePath = uploadResult as string
+          const { data: fileRecord, error: dbError } = await supabase
+            .from('imu_data_files')
+            .insert({
+              user_id: user.id,
+              filename: file.name,
+              storage_path: storagePath,
+              file_size_bytes: file.size,
+              status: 'uploaded'
+            })
+            .select()
+            .single()
+
+          if (dbError) {
+            throw new Error(`Database insert failed: ${dbError.message}`)
+          }
+
+          uploadedFileIds.push(fileRecord.id)
+
+          // Trigger parse job for direct uploads
+          // Use streaming processing for large files (>50MB), regular processing for small files
+          const useStreaming = file.size > 50 * 1024 * 1024 // 50MB threshold
+          const endpoint = useStreaming ? '/api/imu/parse-streaming' : '/api/imu/parse'
+          
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fileId: fileRecord.id })
           })
-          .select()
-          .single()
 
-        if (dbError) {
-          throw new Error(`Database insert failed: ${dbError.message}`)
-        }
-
-        uploadedFileIds.push(fileRecord.id)
-
-        // 3. Trigger parse job
-        const response = await fetch('/api/imu/parse', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fileId: fileRecord.id })
-        })
-
-        if (!response.ok) {
-          const errorData = await response.json()
-          throw new Error(`Parse trigger failed: ${errorData.error || response.statusText}`)
+          if (!response.ok) {
+            const errorData = await response.json()
+            throw new Error(`Parse trigger failed: ${errorData.error || response.statusText}`)
+          }
         }
       }
 
       // Upload complete - show success briefly then redirect
       setUploadProgress(100)
+      setLastProgress(100)
       
       // Immediate redirect after showing 100% completion
       setShowUploadProgress(false)
@@ -183,9 +246,15 @@ export default function UploadPage() {
     } catch (err) {
       console.error('Upload error:', err)
       setShowUploadProgress(false)
-      alert(`Upload failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      
+      // Show error toast
+      addToast({
+        type: 'error',
+        title: 'Upload failed',
+        message: err instanceof Error ? err.message : 'Unknown error occurred during upload'
+      })
     }
-  }, [selectedFiles, router, uploadFileWithProgress])
+  }, [selectedFiles, router, uploadFileChunked, lastProgress, addToast])
 
   const handleCancelUpload = useCallback(() => {
     setShowConfirmation(false)
@@ -273,6 +342,8 @@ export default function UploadPage() {
           <li>• Accelerometer units: m/s²</li>
           <li>• Gyroscope units: rad/s</li>
           <li>• Magnetometer units: µT (microtesla)</li>
+          <li>• <strong>File size limit: 200MB</strong> (large files automatically split into chunks)</li>
+          <li>• Supports 2+ hour rides at 100Hz sampling rate</li>
         </ul>
       </div>
     </div>

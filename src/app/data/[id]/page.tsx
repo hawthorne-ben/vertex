@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect, notFound } from 'next/navigation'
 import { IMUDataCharts } from '@/components/imu-data-charts'
+import { Loader2 } from 'lucide-react'
 
 export default async function DataDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -108,7 +109,7 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
         <IMUDataCharts samples={samples} />
       ) : fileData.status === 'parsing' ? (
         <div className="text-center py-12 border border-border rounded-lg bg-muted">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <Loader2 className="w-8 h-8 text-info animate-spin mx-auto mb-4" />
           <p className="text-secondary">Processing data...</p>
         </div>
       ) : fileData.status === 'failed' ? (

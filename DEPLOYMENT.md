@@ -135,6 +135,29 @@ vercel env pull .env.local
 - **Deploy to Prod**: Apply same changes to production
 - **Version Control**: Keep schema changes in git
 
+#### Schema Migrations with Supabase CLI
+
+The Supabase CLI is configured and can apply schema migrations directly:
+
+```bash
+# Apply schema changes to linked project
+npx supabase db push --file schema-enhancements-phase1.sql
+
+# Apply streaming enhancements
+npx supabase db push --file schema-streaming-enhancements.sql
+
+# Apply RLS policy fixes
+npx supabase db push --file fix-rls-policies-corrected.sql
+```
+
+**Benefits:**
+- ✅ **Direct application** - No manual copy/paste in dashboard
+- ✅ **Version controlled** - Schema changes tracked in git
+- ✅ **Consistent** - Same changes applied to dev and prod
+- ✅ **Automated** - Can be integrated into deployment scripts
+
+**Note:** The AI assistant can create and apply schema migrations for debugging and enhancements.
+
 ### Troubleshooting
 
 **Common Issues:**

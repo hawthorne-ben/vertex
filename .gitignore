@@ -53,7 +53,7 @@ next-env.d.ts
 **/public/workbox-*.js.map
 **/public/worker-*.js.map
 
-# Generated test data
-tools/*.csv
-tools/__pycache__
+# Generated test data and tools
+tools/
+!tools/README.md
 

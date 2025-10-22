@@ -4,6 +4,65 @@ import { useState, useEffect } from 'react'
 import { FileText, CheckCircle2, AlertCircle, Loader2, Trash2, Clock } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
+import { useToast } from '@/components/ui/toast-context'
+import { ConfirmationModal } from '@/components/ui/confirmation-modal'
+
+// Client-side component for dynamic time display to prevent hydration issues
+function ProcessingTimeDisplay({ uploadedAt }: { uploadedAt: string }) {
+  const [timeElapsed, setTimeElapsed] = useState('Processing...')
+
+  useEffect(() => {
+    const updateTime = () => {
+      try {
+        const uploadTime = new Date(uploadedAt)
+        const processingTime = new Date().getTime() - uploadTime.getTime()
+        const minutes = Math.floor(processingTime / 60000)
+        const seconds = Math.floor((processingTime % 60000) / 1000)
+        setTimeElapsed(`Processing... (${minutes}m ${seconds}s)`)
+      } catch (error) {
+        setTimeElapsed('Processing...')
+      }
+    }
+
+    // Update immediately
+    updateTime()
+    
+    // Update every second
+    const interval = setInterval(updateTime, 1000)
+    
+    return () => clearInterval(interval)
+  }, [uploadedAt])
+
+  return <span className="text-info">{timeElapsed}</span>
+}
+
+// Client-side component for progress bar time display
+function ProgressTimeDisplay({ uploadedAt }: { uploadedAt: string }) {
+  const [timeElapsed, setTimeElapsed] = useState('Processing...')
+
+  useEffect(() => {
+    const updateTime = () => {
+      try {
+        const uploadTime = new Date(uploadedAt)
+        const processingTime = new Date().getTime() - uploadTime.getTime()
+        const minutes = Math.floor(processingTime / 60000)
+        setTimeElapsed(`${minutes}m elapsed`)
+      } catch (error) {
+        setTimeElapsed('Processing...')
+      }
+    }
+
+    // Update immediately
+    updateTime()
+    
+    // Update every second
+    const interval = setInterval(updateTime, 1000)
+    
+    return () => clearInterval(interval)
+  }, [uploadedAt])
+
+  return <span className="text-info">{timeElapsed}</span>
+}
 
 interface IMUDataFile {
   id: string
@@ -28,7 +87,10 @@ interface DataFilesListProps {
 export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
   const [files, setFiles] = useState(initialFiles)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
+  const [fileToDelete, setFileToDelete] = useState<IMUDataFile | null>(null)
   const router = useRouter()
+  const { addToast } = useToast()
 
   // Poll for status updates on processing files
   useEffect(() => {
@@ -52,27 +114,37 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
       if (updatedFiles) {
         setFiles(prev => prev.map(file => {
           const updated = updatedFiles.find(f => f.id === file.id)
+          if (updated && updated.status !== file.status) {
+            console.log(`📊 File ${file.filename} status changed: ${file.status} → ${updated.status}`)
+            if (updated.status === 'failed' && updated.error_message) {
+              console.error(`❌ File ${file.filename} failed: ${updated.error_message}`)
+            }
+          }
           return updated || file
         }))
       }
     }, 3000) // Poll every 3 seconds
 
     return () => clearInterval(interval)
-  }, []) // Empty dependency array - only run once on mount
+  }, [files]) // Include files in dependency array
 
-  const handleDelete = async (fileId: string) => {
-    if (!confirm('Are you sure you want to delete this data segment? This will permanently remove all samples in this time range.')) {
-      return
-    }
+  const handleDeleteClick = (file: IMUDataFile) => {
+    setFileToDelete(file)
+    setShowDeleteModal(true)
+  }
 
-    setDeleting(fileId)
+  const handleDeleteConfirm = async () => {
+    if (!fileToDelete || deleting) return
+
+    setDeleting(fileToDelete.id)
+    setShowDeleteModal(false)
 
     try {
       // Use the admin API endpoint for proper deletion
       const response = await fetch('/api/admin/delete-file', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileId })
+        body: JSON.stringify({ fileId: fileToDelete.id })
       })
 
       if (!response.ok) {
@@ -84,13 +156,32 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
       console.log('Delete successful:', result.message)
 
       // Remove from UI
-      setFiles(prev => prev.filter(f => f.id !== fileId))
+      setFiles(prev => prev.filter(f => f.id !== fileToDelete.id))
+      
+      // Show success toast
+      addToast({
+        type: 'success',
+        title: 'File deleted',
+        message: `${fileToDelete.filename} has been successfully deleted.`
+      })
     } catch (err) {
       console.error('Delete error:', err)
-      alert(`Failed to delete data segment: ${err instanceof Error ? err.message : 'Unknown error'}`)
+      
+      // Show error toast
+      addToast({
+        type: 'error',
+        title: 'Delete failed',
+        message: `Failed to delete file: ${err instanceof Error ? err.message : 'Unknown error'}`
+      })
     } finally {
       setDeleting(null)
+      setFileToDelete(null)
     }
+  }
+
+  const handleDeleteCancel = () => {
+    setShowDeleteModal(false)
+    setFileToDelete(null)
   }
 
   const formatDate = (dateString: string) => {
@@ -144,8 +235,9 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
   }
 
   return (
-    <div className="space-y-4">
-      {files.map((file) => (
+    <>
+      <div className="space-y-4">
+        {files.map((file) => (
         <a
           key={file.id}
           href={`/data/${file.id}`}
@@ -155,21 +247,7 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
             {/* Status icon */}
             <div className="flex-shrink-0 mt-1">
               {file.status === 'parsing' && (
-                <div className="relative">
-                  <Loader2 className="w-6 h-6 text-info animate-spin" />
-                  {/* Show warning if processing for more than 5 minutes */}
-                  {(() => {
-                    try {
-                      const uploadTime = new Date(file.uploaded_at)
-                      const processingTime = new Date().getTime() - uploadTime.getTime()
-                      return processingTime > 5 * 60 * 1000 ? (
-                        <div className="absolute -top-1 -right-1 w-3 h-3 bg-warning rounded-full animate-pulse" title="Processing longer than expected" />
-                      ) : null
-                    } catch (error) {
-                      return null
-                    }
-                  })()}
-                </div>
+                <Loader2 className="w-6 h-6 text-info animate-spin" />
               )}
               {file.status === 'ready' && (
                 <CheckCircle2 className="w-6 h-6 text-success" />
@@ -184,7 +262,7 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
 
             {/* Data segment info */}
             <div className="flex-grow min-w-0">
-              <div className="flex items-baseline gap-3 mb-2">
+              <div className="flex items-center justify-between mb-2">
                 <h3 className="text-lg font-medium text-primary">
                   {file.start_time && file.end_time ? (
                     <>
@@ -211,6 +289,13 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
                         }
                       })()}
                     </>
+                  ) : file.status === 'parsing' ? (
+                    // For small files, show simple processing text (detailed progress shown below)
+                    file.file_size_bytes && file.file_size_bytes <= 10 * 1024 * 1024 ? (
+                      <span className="text-tertiary">Processing...</span>
+                    ) : (
+                      <ProcessingTimeDisplay uploadedAt={file.uploaded_at} />
+                    )
                   ) : (
                     <span className="text-tertiary">Processing...</span>
                   )}
@@ -222,7 +307,7 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
                   ${file.status === 'failed' ? 'status-badge-error' : ''}
                   ${file.status === 'uploaded' ? 'bg-muted text-muted-foreground' : ''}
                 `}>
-                  {file.status}
+                  {file.status === 'parsing' ? 'parsing' : file.status}
                 </span>
               </div>
 
@@ -259,6 +344,46 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
                 </div>
               )}
 
+              {/* Processing progress indicator */}
+              {file.status === 'parsing' && (
+                <div className="mt-4">
+                  {file.file_size_bytes && file.file_size_bytes > 10 * 1024 * 1024 ? (
+                    // Large file processing (>10MB)
+                    <>
+                      <div className="text-sm text-tertiary mb-2">
+                        Processing large file...
+                      </div>
+                      <div className="w-full bg-muted rounded-full h-2">
+                        <div 
+                          className="bg-info h-2 rounded-full transition-all duration-1000 animate-pulse"
+                          style={{ 
+                            width: file.file_size_bytes > 50 * 1024 * 1024 ? '60%' : '40%' // Estimate based on file size
+                          }}
+                        />
+                      </div>
+                      <div className="text-xs text-tertiary mt-1">
+                        Large files may take several minutes to process completely
+                      </div>
+                    </>
+                  ) : (
+                    // Small file processing (≤10MB) - explanatory text
+                    <div className="text-sm text-tertiary">
+                      <div className="mb-2">
+                        <strong className="text-info">Processing IMU data...</strong>
+                      </div>
+                      <div className="text-xs space-y-1">
+                        <div>• Parsing sensor readings (accelerometer, gyroscope, magnetometer)</div>
+                        <div>• Validating data format and timestamps</div>
+                        <div>• Storing samples in database</div>
+                        <div className="text-info mt-2">
+                          <strong>Expected time:</strong> 30-60 seconds for files under 10MB
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Error message */}
               {file.status === 'failed' && file.error_message && (
                 <div className="mt-3 p-3 bg-error text-error border-error rounded text-sm">
@@ -272,7 +397,7 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
               <button
                 onClick={(e) => {
                   e.preventDefault()
-                  handleDelete(file.id)
+                  handleDeleteClick(file)
                 }}
                 disabled={deleting === file.id}
                 className="p-2 text-tertiary hover:text-error hover:bg-error/10 transition-colors rounded-md disabled:opacity-50"
@@ -288,7 +413,41 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
           </div>
         </a>
       ))}
-    </div>
+      </div>
+      
+      {/* Confirmation Modal */}
+      <ConfirmationModal
+        isOpen={showDeleteModal}
+        onClose={handleDeleteCancel}
+        onConfirm={handleDeleteConfirm}
+        type="delete"
+        title="Delete Data Segment"
+        message={fileToDelete ? (() => {
+          if (fileToDelete.start_time && fileToDelete.end_time) {
+            const startDate = new Date(fileToDelete.start_time).toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              year: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit'
+            })
+            const endDate = new Date(fileToDelete.end_time).toLocaleDateString('en-US', {
+              month: 'short',
+              day: 'numeric',
+              year: 'numeric',
+              hour: 'numeric',
+              minute: '2-digit'
+            })
+            return `Are you sure you want to delete sensor data from ${startDate} to ${endDate}? This will permanently remove all samples in this time range.`
+          } else {
+            return `Are you sure you want to delete this sensor data? This will permanently remove all samples.`
+          }
+        })() : ''}
+        confirmText="Delete"
+        cancelText="Cancel"
+        isLoading={deleting === fileToDelete?.id}
+      />
+    </>
   )
 }
 

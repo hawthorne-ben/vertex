@@ -57,7 +57,11 @@ export const parseIMU = inngest.createFunction(
     await step.run('update-status-parsing', async () => {
       const { error } = await supabaseAdmin
         .from('imu_data_files')
-        .update({ status: 'parsing' })
+        .update({ 
+          status: 'parsing',
+          processing_started_at: new Date().toISOString(),
+          error_message: null // Clear any previous error messages
+        })
         .eq('id', fileId)
 
       if (error) {
@@ -67,41 +71,41 @@ export const parseIMU = inngest.createFunction(
     })
 
     try {
-      // Step 3: Download and parse CSV
-      const parsedData = await step.run('download-and-parse-csv', async () => {
-        // Download CSV from storage with timeout
-        const downloadTimeout = 30000 // 30 seconds
-        const downloadPromise = supabaseAdmin.storage
-          .from('uploads')
-          .download(file.storage_path)
-        
-        const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('Storage download timeout after 30 seconds')), downloadTimeout)
-        })
-
-        const { data: fileData, error: downloadError } = await Promise.race([
-          downloadPromise,
-          timeoutPromise
-        ]) as any
-
-        if (downloadError) {
-          console.error(`❌ Storage download failed for ${fileId}:`, downloadError)
-          throw new Error(`Failed to download file: ${downloadError.message}`)
-        }
-        if (!fileData) {
-          console.error(`❌ File data is empty for ${fileId}`)
-          throw new Error('File data is empty')
-        }
-
-        const csvText = await fileData.text()
-        
-        // Check file size before parsing
-        if (csvText.length > 100 * 1024 * 1024) { // 100MB limit
-          throw new Error(`File too large for processing: ${Math.round(csvText.length / 1024 / 1024)}MB (max 100MB)`)
-        }
-
-        // Parse CSV with timeout and yield control to prevent blocking
+      // Step 3: Download, parse and insert CSV in one step to avoid large data transfer
+      const result = await step.run('download-parse-insert', async () => {
         try {
+          // Download CSV from storage with timeout
+          const downloadTimeout = 30000 // 30 seconds
+          const downloadPromise = supabaseAdmin.storage
+            .from('uploads')
+            .download(file.storage_path)
+          
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Storage download timeout after 30 seconds')), downloadTimeout)
+          })
+
+          const { data: fileData, error: downloadError } = await Promise.race([
+            downloadPromise,
+            timeoutPromise
+          ]) as any
+
+          if (downloadError) {
+            console.error(`❌ Storage download failed for ${fileId}:`, downloadError)
+            throw new Error(`Failed to download file: ${downloadError.message}`)
+          }
+          if (!fileData) {
+            console.error(`❌ File data is empty for ${fileId}`)
+            throw new Error('File data is empty')
+          }
+
+          const csvText = await fileData.text()
+          
+          // Check file size before parsing
+          if (csvText.length > 100 * 1024 * 1024) { // 100MB limit
+            throw new Error(`File too large for processing: ${Math.round(csvText.length / 1024 / 1024)}MB (max 100MB)`)
+          }
+
+          // Parse CSV with timeout and yield control to prevent blocking
           const parseTimeout = 300000 // 5 minutes for parsing large files
           
           // Yield control to prevent blocking the main thread
@@ -115,29 +119,66 @@ export const parseIMU = inngest.createFunction(
           const parsed = await Promise.race([parsePromise, parseTimeoutPromise]) as ParsedIMUData
           console.log(`✅ CSV parsing completed for ${fileId}: ${parsed.sampleCount} samples`)
           
-          // Convert to serializable format (Inngest serializes data between steps)
+          // Insert samples in batches immediately to avoid large data transfer
+          let insertedCount = 0
+          const insertTimeout = 300000 // 5 minutes for database inserts
+          
+          for (let i = 0; i < parsed.samples.length; i += BATCH_SIZE) {
+            // Yield control every batch to prevent blocking
+            if (i > 0) {
+              await new Promise(resolve => setImmediate(resolve))
+            }
+            
+            const batch = parsed.samples.slice(i, i + BATCH_SIZE)
+            
+            const rows = batch.map(sample => ({
+              user_id: userId,
+              imu_file_id: fileId,
+              timestamp: sample.timestamp.toISOString(),
+              accel_x: sample.accel_x,
+              accel_y: sample.accel_y,
+              accel_z: sample.accel_z,
+              gyro_x: sample.gyro_x,
+              gyro_y: sample.gyro_y,
+              gyro_z: sample.gyro_z,
+              mag_x: sample.mag_x,
+              mag_y: sample.mag_y,
+              mag_z: sample.mag_z,
+              quat_w: sample.quat_w,
+              quat_x: sample.quat_x,
+              quat_y: sample.quat_y,
+              quat_z: sample.quat_z
+            }))
+
+            // Insert with timeout
+            const insertPromise = supabaseAdmin
+              .from('imu_samples')
+              .insert(rows)
+            
+            const insertTimeoutPromise = new Promise((_, reject) => {
+              setTimeout(() => reject(new Error(`Database insert timeout for batch ${Math.floor(i / BATCH_SIZE) + 1}`)), insertTimeout)
+            })
+
+            const { error } = await Promise.race([insertPromise, insertTimeoutPromise]) as any
+
+            if (error) {
+              console.error(`❌ Batch insert failed for ${fileId}, batch ${Math.floor(i / BATCH_SIZE) + 1}:`, error)
+              throw new Error(`Failed to insert batch ${Math.floor(i / BATCH_SIZE) + 1}: ${error.message}`)
+            }
+
+            insertedCount += rows.length
+          }
+
+          console.log(`✅ All samples inserted for ${fileId}: ${insertedCount} total`)
+          
+          // Return only essential metadata to avoid "output_too_large" error
           return {
-            samples: parsed.samples.map(s => ({
-              timestamp: s.timestamp.toISOString(),
-              accel_x: s.accel_x,
-              accel_y: s.accel_y,
-              accel_z: s.accel_z,
-              gyro_x: s.gyro_x,
-              gyro_y: s.gyro_y,
-              gyro_z: s.gyro_z,
-              mag_x: s.mag_x || null,
-              mag_y: s.mag_y || null,
-              mag_z: s.mag_z || null,
-              quat_w: s.quat_w || null,
-              quat_x: s.quat_x || null,
-              quat_y: s.quat_y || null,
-              quat_z: s.quat_z || null
-            })),
             startTime: parsed.startTime.toISOString(),
             endTime: parsed.endTime.toISOString(),
             sampleCount: parsed.sampleCount,
             sampleRate: parsed.sampleRate,
-            duration: parsed.duration
+            duration: parsed.duration,
+            insertedCount
           }
         } catch (err) {
           console.error(`❌ CSV parsing failed for ${fileId}:`, err)
@@ -146,75 +187,58 @@ export const parseIMU = inngest.createFunction(
           }
           throw new Error(`Parse error: ${err instanceof Error ? err.message : 'Unknown error'}`)
         }
-      })
-
-      // Step 4: Insert samples in batches with timeout
-      await step.run('insert-samples', async () => {
-        const { samples } = parsedData
-        let insertedCount = 0
-        const insertTimeout = 300000 // 5 minutes for database inserts (large files)
+      }).catch(async (stepError) => {
+        // Handle errors within the step, especially "output_too_large"
+        const errorMessage = stepError instanceof Error ? stepError.message : 'Unknown step error'
+        console.error(`❌ Step error for file ${fileId}:`, errorMessage)
+        console.error(`❌ Step error type:`, typeof stepError)
+        console.error(`❌ Step error details:`, stepError)
         
-        for (let i = 0; i < samples.length; i += BATCH_SIZE) {
-          // Yield control every batch to prevent blocking
-          if (i > 0) {
-            await new Promise(resolve => setImmediate(resolve))
+        // Check if it's an "output_too_large" error
+        if (errorMessage.includes('output_too_large') || errorMessage.includes('too large')) {
+          console.error(`❌ OUTPUT_TOO_LARGE detected for file ${fileId} - updating status to failed`)
+          
+          // Update database status immediately
+          try {
+            const { error: updateError } = await supabaseAdmin
+              .from('imu_data_files')
+              .update({
+                status: 'failed',
+                error_message: 'File too large for processing (output_too_large)',
+                processing_completed_at: new Date().toISOString()
+              })
+              .eq('id', fileId)
+
+            if (updateError) {
+              console.error('Failed to update error status:', updateError)
+            } else {
+              console.log(`✅ Error status updated for file ${fileId}`)
+            }
+          } catch (updateErr) {
+            console.error(`❌ CRITICAL: Failed to update error status for ${fileId}:`, updateErr)
           }
-          
-          const batch = samples.slice(i, i + BATCH_SIZE)
-          
-          const rows = batch.map(sample => ({
-            user_id: userId,
-            imu_file_id: fileId,
-            timestamp: sample.timestamp,
-            accel_x: sample.accel_x,
-            accel_y: sample.accel_y,
-            accel_z: sample.accel_z,
-            gyro_x: sample.gyro_x,
-            gyro_y: sample.gyro_y,
-            gyro_z: sample.gyro_z,
-            mag_x: sample.mag_x,
-            mag_y: sample.mag_y,
-            mag_z: sample.mag_z,
-            quat_w: sample.quat_w,
-            quat_x: sample.quat_x,
-            quat_y: sample.quat_y,
-            quat_z: sample.quat_z
-          }))
-
-          // Insert with timeout
-          const insertPromise = supabaseAdmin
-            .from('imu_samples')
-            .insert(rows)
-          
-          const insertTimeoutPromise = new Promise((_, reject) => {
-            setTimeout(() => reject(new Error(`Database insert timeout for batch ${Math.floor(i / BATCH_SIZE) + 1}`)), insertTimeout)
-          })
-
-          const { error } = await Promise.race([insertPromise, insertTimeoutPromise]) as any
-
-          if (error) {
-            console.error(`❌ Batch insert failed for ${fileId}, batch ${Math.floor(i / BATCH_SIZE) + 1}:`, error)
-            throw new Error(`Failed to insert batch ${Math.floor(i / BATCH_SIZE) + 1}: ${error.message}`)
-          }
-
-          insertedCount += rows.length
         }
-
-        console.log(`✅ All samples inserted for ${fileId}: ${insertedCount} total`)
-        return insertedCount
+        
+        // Always throw a proper Error object to avoid deserialization issues
+        const properError = stepError instanceof Error 
+          ? stepError 
+          : new Error(typeof stepError === 'string' ? stepError : 'Unknown step error')
+        
+        throw properError
       })
 
-      // Step 5: Update file metadata with success
+      // Step 4: Update file metadata with success
       await step.run('update-metadata', async () => {
         const { error } = await supabaseAdmin
           .from('imu_data_files')
           .update({
             status: 'ready',
-            start_time: parsedData.startTime,
-            end_time: parsedData.endTime,
-            sample_count: parsedData.sampleCount,
-            sample_rate: Math.round(parsedData.sampleRate), // Round to nearest integer
-            parsed_at: new Date().toISOString()
+            start_time: result.startTime,
+            end_time: result.endTime,
+            sample_count: result.sampleCount,
+            sample_rate: Math.round(result.sampleRate), // Round to nearest integer
+            parsed_at: new Date().toISOString(),
+            processing_completed_at: new Date().toISOString()
           })
           .eq('id', fileId)
 
@@ -224,9 +248,9 @@ export const parseIMU = inngest.createFunction(
       return {
         success: true,
         fileId,
-        sampleCount: parsedData.sampleCount,
-        duration: parsedData.duration,
-        sampleRate: parsedData.sampleRate
+        sampleCount: result.sampleCount,
+        duration: result.duration,
+        sampleRate: result.sampleRate
       }
 
     } catch (err) {
@@ -234,26 +258,34 @@ export const parseIMU = inngest.createFunction(
       const errorMessage = err instanceof Error ? err.message : 'Unknown error'
       
       console.error(`❌ Parse failed for file ${fileId}:`, errorMessage)
+      console.error(`❌ Error type:`, typeof err)
+      console.error(`❌ Error details:`, err)
       
       try {
         const { error: updateError } = await supabaseAdmin
           .from('imu_data_files')
           .update({
             status: 'failed',
-            error_message: errorMessage
+            error_message: errorMessage,
+            processing_completed_at: new Date().toISOString()
           })
           .eq('id', fileId)
 
         if (updateError) {
           console.error('Failed to update error status:', updateError)
         } else {
-          console.log(`✅ Error status updated for file ${fileId}`)
+          console.log(`✅ Error status updated for file ${fileId}: ${errorMessage}`)
         }
       } catch (updateErr) {
         console.error(`❌ CRITICAL: Failed to update error status for ${fileId}:`, updateErr)
       }
 
-      throw err
+      // Always throw a proper Error object to avoid Inngest deserialization issues
+      const properError = err instanceof Error 
+        ? err 
+        : new Error(typeof err === 'string' ? err : errorMessage)
+      
+      throw properError
     }
   }
 )
