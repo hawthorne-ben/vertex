@@ -1,6 +1,7 @@
 import { serve } from 'inngest/next'
 import { inngest } from '@/inngest/client'
 import { testFunction } from '@/inngest/functions/test-function'
+import { importTest } from '@/inngest/functions/import-test'
 
 // Debug: Try importing parseIMU with error handling
 let parseIMU;
@@ -22,7 +23,7 @@ try {
   console.error('❌ Failed to import parseIMUTest:', error);
 }
 
-const functions = [testFunction];
+const functions = [testFunction, importTest];
 if (parseIMU) {
   functions.push(parseIMU);
   console.log('✅ parseIMU added to functions array');
