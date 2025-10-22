@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { FileText, CheckCircle2, AlertCircle, Loader2, Trash2, Clock } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useRouter } from 'next/navigation'
@@ -29,6 +29,36 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
   const [files, setFiles] = useState(initialFiles)
   const [deleting, setDeleting] = useState<string | null>(null)
   const router = useRouter()
+
+  // Poll for status updates on processing files
+  useEffect(() => {
+    const processingFiles = files.filter(f => f.status === 'uploaded' || f.status === 'parsing')
+    if (processingFiles.length === 0) return
+
+    const interval = setInterval(async () => {
+      const supabase = createClient()
+      const fileIds = processingFiles.map(f => f.id)
+      
+      const { data: updatedFiles, error } = await supabase
+        .from('imu_data_files')
+        .select('*')
+        .in('id', fileIds)
+      
+      if (error) {
+        console.error('Failed to poll file status:', error)
+        return
+      }
+      
+      if (updatedFiles) {
+        setFiles(prev => prev.map(file => {
+          const updated = updatedFiles.find(f => f.id === file.id)
+          return updated || file
+        }))
+      }
+    }, 3000) // Poll every 3 seconds
+
+    return () => clearInterval(interval)
+  }, [files.filter(f => f.status === 'uploaded' || f.status === 'parsing').length])
 
   const handleDelete = async (fileId: string) => {
     if (!confirm('Are you sure you want to delete this data segment? This will permanently remove all samples in this time range.')) {

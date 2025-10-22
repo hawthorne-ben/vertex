@@ -22,15 +22,20 @@ function getSupabaseAdmin() {
 export const parseIMU = inngest.createFunction(
   { 
     id: 'parse-imu-file',
-    name: 'Parse IMU CSV File'
+    name: 'Parse IMU CSV File',
+    timeout: '10m', // Increase timeout for large files
+    retries: 3 // Limit retries to 3
   },
   { event: 'imu/parse' },
   async ({ event, step }) => {
     const { fileId, userId } = event.data
     const supabaseAdmin = getSupabaseAdmin()
+    
+    console.log(`🚀 Starting IMU parse for file ${fileId}, user ${userId}`)
 
     // Step 1: Get file metadata
     const file = await step.run('get-file-metadata', async () => {
+      console.log(`📁 Getting file metadata for ${fileId}`)
       const { data, error } = await supabaseAdmin
         .from('imu_data_files')
         .select('*')
@@ -40,6 +45,7 @@ export const parseIMU = inngest.createFunction(
       if (error) throw new Error(`Failed to get file: ${error.message}`)
       if (!data) throw new Error('File not found')
       
+      console.log(`✅ File metadata retrieved: ${data.filename} (${data.file_size_bytes} bytes)`)
       return data
     })
 
@@ -172,6 +178,8 @@ export const parseIMU = inngest.createFunction(
       // Step 6: Update status to error
       await step.run('update-status-error', async () => {
         const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+        
+        console.error(`❌ Parse failed for file ${fileId}:`, errorMessage)
         
         const { error: updateError } = await supabaseAdmin
           .from('imu_data_files')
