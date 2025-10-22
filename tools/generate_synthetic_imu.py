@@ -378,23 +378,129 @@ def generate_test_ride(sample_rate: float = 100.0) -> List[IMUSample]:
     return all_samples
 
 
+def generate_custom_ride(scenarios: List[Tuple[str, dict]], sample_rate: float = 100.0) -> List[IMUSample]:
+    """Generate a custom ride from a list of scenario specifications
+    
+    Args:
+        scenarios: List of (scenario_type, params) tuples
+        sample_rate: Hz
+        
+    Example:
+        scenarios = [
+            ('stationary', {'duration': 5.0}),
+            ('acceleration', {'duration': 8.0, 'target_speed': 12.0, 'accel_rate': 1.5}),
+            ('cornering', {'duration': 10.0, 'speed': 12.0, 'radius': 15.0, 'direction': 'left'}),
+            ('braking', {'duration': 6.0, 'initial_speed': 12.0, 'decel_rate': 2.0})
+        ]
+    """
+    all_samples = []
+    current_time = 0.0
+    
+    for i, (scenario_type, params) in enumerate(scenarios):
+        print(f"Generating: {scenario_type} ({params.get('duration', 'unknown')}s)")
+        
+        # Add duration to params if not specified
+        if 'duration' not in params:
+            params['duration'] = 5.0  # Default duration
+            
+        # Create scenario based on type
+        if scenario_type == 'stationary':
+            scenario = StationaryScenario(params['duration'], sample_rate)
+        elif scenario_type == 'acceleration':
+            scenario = AccelerationScenario(
+                params['duration'], sample_rate,
+                target_speed=params.get('target_speed', 10.0),
+                accel_rate=params.get('accel_rate', 2.0)
+            )
+        elif scenario_type == 'cornering':
+            scenario = CornerScenario(
+                params['duration'], sample_rate,
+                speed=params.get('speed', 10.0),
+                radius=params.get('radius', 20.0),
+                direction=params.get('direction', 'left')
+            )
+        elif scenario_type == 'braking':
+            scenario = BrakingScenario(
+                params['duration'], sample_rate,
+                initial_speed=params.get('initial_speed', 10.0),
+                decel_rate=params.get('decel_rate', 2.5)
+            )
+        else:
+            print(f"Warning: Unknown scenario type '{scenario_type}', using stationary")
+            scenario = StationaryScenario(params['duration'], sample_rate)
+        
+        # Generate samples for this scenario
+        samples = scenario.generate(current_time)
+        all_samples.extend(samples)
+        current_time += params['duration']
+    
+    return all_samples
+
+
 def main():
     parser = argparse.ArgumentParser(description='Generate synthetic IMU data for Vertex')
     parser.add_argument('--output', '-o', default='synthetic_ride.csv',
                         help='Output CSV filename')
     parser.add_argument('--sample-rate', '-r', type=float, default=100.0,
                         help='Sample rate in Hz (default: 100)')
+    parser.add_argument('--duration', '-d', type=float,
+                        help='Total duration in seconds (overrides individual scenario durations)')
     parser.add_argument('--noise', '-n', type=float, default=0.05,
                         help='Noise level (default: 0.05 m/s²)')
     parser.add_argument('--no-noise', action='store_true',
                         help='Disable noise (perfect data)')
     
+    # Scenario-specific options
+    parser.add_argument('--scenarios', '-s', nargs='+', 
+                        choices=['stationary', 'acceleration', 'cornering', 'braking'],
+                        help='Specific scenarios to include (default: all)')
+    
+    # Acceleration parameters
+    parser.add_argument('--target-speed', type=float, default=10.0,
+                        help='Target speed for acceleration (m/s, default: 10)')
+    parser.add_argument('--accel-rate', type=float, default=2.0,
+                        help='Acceleration rate (m/s², default: 2.0)')
+    
+    # Cornering parameters
+    parser.add_argument('--corner-speed', type=float, default=10.0,
+                        help='Speed during cornering (m/s, default: 10)')
+    parser.add_argument('--corner-radius', type=float, default=20.0,
+                        help='Corner radius (m, default: 20)')
+    parser.add_argument('--corner-direction', choices=['left', 'right'], default='left',
+                        help='Corner direction (default: left)')
+    
+    # Braking parameters
+    parser.add_argument('--initial-speed', type=float, default=10.0,
+                        help='Initial speed for braking (m/s, default: 10)')
+    parser.add_argument('--decel-rate', type=float, default=2.5,
+                        help='Deceleration rate (m/s², default: 2.5)')
+    
+    # Preset ride types
+    parser.add_argument('--preset', choices=['short', 'medium', 'long', 'aggressive', 'endurance'],
+                        help='Use a preset ride configuration')
+    
     args = parser.parse_args()
     
     print(f"Generating synthetic IMU data at {args.sample_rate} Hz...")
     
+    # Determine scenarios to generate
+    if args.preset:
+        scenarios = get_preset_scenarios(args.preset, args.duration)
+    elif args.scenarios:
+        # Use specified scenarios with default durations
+        scenarios = []
+        for scenario_type in args.scenarios:
+            duration = 5.0 if args.duration is None else args.duration / len(args.scenarios)
+            scenarios.append((scenario_type, {'duration': duration}))
+    else:
+        # Use default test ride
+        scenarios = None
+    
     # Generate ride
-    samples = generate_test_ride(sample_rate=args.sample_rate)
+    if scenarios is not None:
+        samples = generate_custom_ride(scenarios, sample_rate=args.sample_rate)
+    else:
+        samples = generate_test_ride(sample_rate=args.sample_rate)
     
     # Add noise unless disabled
     if not args.no_noise:
@@ -410,6 +516,79 @@ def main():
     print(f"File: {args.output}")
     print(f"Sample rate: {args.sample_rate} Hz")
     print(f"File size: ~{len(samples) * 100 / 1024:.1f} KB")
+
+
+def get_preset_scenarios(preset: str, total_duration: float = None) -> List[Tuple[str, dict]]:
+    """Get predefined scenario configurations"""
+    
+    if preset == 'short':
+        scenarios = [
+            ('stationary', {'duration': 2.0}),
+            ('acceleration', {'duration': 3.0, 'target_speed': 8.0, 'accel_rate': 2.5}),
+            ('cornering', {'duration': 4.0, 'speed': 8.0, 'radius': 15.0, 'direction': 'left'}),
+            ('braking', {'duration': 3.0, 'initial_speed': 8.0, 'decel_rate': 2.5}),
+            ('stationary', {'duration': 2.0})
+        ]
+    elif preset == 'medium':
+        scenarios = [
+            ('stationary', {'duration': 5.0}),
+            ('acceleration', {'duration': 8.0, 'target_speed': 12.0, 'accel_rate': 1.5}),
+            ('stationary', {'duration': 10.0}),  # Cruise
+            ('cornering', {'duration': 8.0, 'speed': 12.0, 'radius': 20.0, 'direction': 'left'}),
+            ('stationary', {'duration': 5.0}),  # Straight
+            ('cornering', {'duration': 8.0, 'speed': 12.0, 'radius': 25.0, 'direction': 'right'}),
+            ('stationary', {'duration': 5.0}),  # Straight
+            ('braking', {'duration': 6.0, 'initial_speed': 12.0, 'decel_rate': 2.0}),
+            ('stationary', {'duration': 5.0})
+        ]
+    elif preset == 'long':
+        scenarios = [
+            ('stationary', {'duration': 10.0}),
+            ('acceleration', {'duration': 15.0, 'target_speed': 15.0, 'accel_rate': 1.0}),
+            ('stationary', {'duration': 30.0}),  # Long cruise
+            ('cornering', {'duration': 12.0, 'speed': 15.0, 'radius': 30.0, 'direction': 'left'}),
+            ('stationary', {'duration': 20.0}),  # Straight
+            ('cornering', {'duration': 12.0, 'speed': 15.0, 'radius': 25.0, 'direction': 'right'}),
+            ('stationary', {'duration': 20.0}),  # Straight
+            ('cornering', {'duration': 10.0, 'speed': 15.0, 'radius': 20.0, 'direction': 'left'}),
+            ('stationary', {'duration': 15.0}),  # Straight
+            ('braking', {'duration': 10.0, 'initial_speed': 15.0, 'decel_rate': 1.5}),
+            ('stationary', {'duration': 10.0})
+        ]
+    elif preset == 'aggressive':
+        scenarios = [
+            ('stationary', {'duration': 2.0}),
+            ('acceleration', {'duration': 4.0, 'target_speed': 15.0, 'accel_rate': 3.5}),
+            ('cornering', {'duration': 6.0, 'speed': 15.0, 'radius': 12.0, 'direction': 'left'}),
+            ('cornering', {'duration': 6.0, 'speed': 15.0, 'radius': 12.0, 'direction': 'right'}),
+            ('cornering', {'duration': 6.0, 'speed': 15.0, 'radius': 10.0, 'direction': 'left'}),
+            ('braking', {'duration': 4.0, 'initial_speed': 15.0, 'decel_rate': 3.5}),
+            ('stationary', {'duration': 2.0})
+        ]
+    elif preset == 'endurance':
+        scenarios = [
+            ('stationary', {'duration': 5.0}),
+            ('acceleration', {'duration': 20.0, 'target_speed': 8.0, 'accel_rate': 0.4}),
+            ('stationary', {'duration': 60.0}),  # Long steady cruise
+            ('cornering', {'duration': 15.0, 'speed': 8.0, 'radius': 40.0, 'direction': 'left'}),
+            ('stationary', {'duration': 30.0}),  # Straight
+            ('cornering', {'duration': 15.0, 'speed': 8.0, 'radius': 35.0, 'direction': 'right'}),
+            ('stationary', {'duration': 30.0}),  # Straight
+            ('braking', {'duration': 20.0, 'initial_speed': 8.0, 'decel_rate': 0.4}),
+            ('stationary', {'duration': 5.0})
+        ]
+    else:
+        # Default to medium
+        scenarios = get_preset_scenarios('medium', total_duration)
+    
+    # Scale durations if total_duration is specified
+    if total_duration is not None:
+        current_total = sum(params['duration'] for _, params in scenarios)
+        scale_factor = total_duration / current_total
+        for _, params in scenarios:
+            params['duration'] *= scale_factor
+    
+    return scenarios
 
 
 if __name__ == '__main__':
