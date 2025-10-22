@@ -5,41 +5,81 @@
 ### 1. Prerequisites
 - GitHub account with this repository pushed
 - Vercel account (free tier works perfectly)
+- Vercel CLI installed globally: `npm install -g vercel`
 
-### 2. Deploy Steps
+### 2. Manual Deployment (Recommended)
 
-1. **Push to GitHub**
+Since auto-deploy is disabled for better control, use manual deployment:
+
+1. **Build and Test Locally**
    ```bash
-   git push origin main
+   npm run build
    ```
 
-2. **Connect to Vercel**
-   - Go to [vercel.com](https://vercel.com)
-   - Click "Add New Project"
-   - Import your GitHub repository
-   - Vercel will auto-detect Next.js configuration
+2. **Deploy to Production**
+   ```bash
+   vercel --prod
+   ```
 
-3. **Configure Environment Variables** (optional for basic POC)
-   - Skip for now - the landing page works without any env vars
-   - When ready to add features, add these in Vercel dashboard:
-     - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
-     - `CLERK_SECRET_KEY`
-     - `NEXT_PUBLIC_SUPABASE_URL`
-     - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-     - `SUPABASE_SERVICE_ROLE_KEY`
-     - `INNGEST_SIGNING_KEY`
-     - `INNGEST_EVENT_KEY`
+3. **Deploy Preview/Staging**
+   ```bash
+   vercel
+   ```
 
-4. **Deploy**
-   - Click "Deploy"
-   - Vercel will build and deploy automatically
-   - You'll get a live URL like `vertex-xyz.vercel.app`
+### 3. Environment Variables Setup
 
-### 3. Automatic Deployments
+**Required for full functionality:**
+```bash
+# Add these in Vercel dashboard or via CLI:
+vercel env add NEXT_PUBLIC_SUPABASE_URL
+vercel env add NEXT_PUBLIC_SUPABASE_ANON_KEY  
+vercel env add SUPABASE_SERVICE_ROLE_KEY
+vercel env add INNGEST_SIGNING_KEY
+vercel env add INNGEST_EVENT_KEY
+```
 
-Once connected, every push to `main` will automatically trigger a new deployment.
+**Optional (for authentication):**
+```bash
+vercel env add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY
+vercel env add CLERK_SECRET_KEY
+```
 
-Preview deployments are created for pull requests.
+### 4. Deployment Commands Reference
+
+```bash
+# Production deployment
+vercel --prod
+
+# Preview deployment  
+vercel
+
+# Check deployment status
+vercel ls
+
+# View logs
+vercel logs [deployment-url]
+
+# Pull environment variables
+vercel env pull .env.local
+
+# Add environment variable
+vercel env add VARIABLE_NAME
+
+# Remove environment variable
+vercel env rm VARIABLE_NAME
+```
+
+### 5. Auto-Deploy Status
+
+**Auto-deploy is DISABLED** for manual control. To re-enable:
+```bash
+vercel git connect
+```
+
+To disable again:
+```bash
+vercel git disconnect
+```
 
 ## Local Development
 
@@ -84,20 +124,44 @@ vertex/
 
 ## Tech Stack Included
 
-✅ Next.js 14 with App Router
-✅ TypeScript
-✅ Tailwind CSS
-✅ Crimson Pro (serif) and JetBrains Mono fonts
-✅ shadcn/ui component library
-✅ All core dependencies installed:
-  - Clerk (authentication)
-  - Supabase (database)
-  - Inngest (background jobs)
-  - TanStack Query (data fetching)
-  - Papa Parse (CSV parsing)
-  - fit-file-parser (FIT files)
-  - Recharts & Plotly.js (visualization)
+✅ **Next.js 15** with App Router  
+✅ **TypeScript** for type safety  
+✅ **Tailwind CSS** for styling  
+✅ **Crimson Pro** (serif) and **JetBrains Mono** fonts  
+✅ **shadcn/ui** component library  
+✅ **All core dependencies installed:**
+  - **Supabase** (database & storage)
+  - **Inngest** (background job processing)
+  - **TanStack Query** (data fetching)
+  - **Papa Parse** (CSV parsing)
+  - **Recharts** (data visualization)
+  - **React Dropzone** (file uploads)
+  - **Lucide React** (icons)
   - And more...
+
+## Current Features
+
+✅ **Complete Upload Flow**
+- File confirmation modal
+- Upload progress tracking
+- Real-time processing status
+- Auto-redirect to data page
+
+✅ **Background Processing**
+- Inngest-powered CSV parsing
+- Batch database inserts
+- Comprehensive error handling
+- Retry mechanisms
+
+✅ **Real-time UI Updates**
+- Status polling for processing files
+- Live progress indicators
+- Error state handling
+
+✅ **Observability**
+- Health check endpoints
+- Detailed logging
+- Retry stuck uploads functionality
 
 ## Vercel Configuration
 
@@ -113,25 +177,50 @@ No additional configuration needed for basic deployment.
 ### Build Fails
 - Check `npm run build` locally first
 - Ensure all dependencies are in `package.json`
-- Check Node version compatibility
+- Check Node version compatibility (Node 18+ recommended)
+- Fix ESLint errors before deploying
 
-### Fonts Not Loading
-- Fonts are loaded via Google Fonts in `layout.tsx`
-- They should work automatically on Vercel
+### Environment Variables Missing
+- Use `vercel env ls` to check current variables
+- Add missing variables with `vercel env add VARIABLE_NAME`
+- Pull local variables with `vercel env pull .env.local`
 
-### Environment Variables
-- Not needed for the landing page POC
-- Add them in Vercel dashboard when implementing features
-- Never commit actual secrets to git
+### Inngest Functions Not Working
+- Check `vercel logs` for function execution errors
+- Verify `INNGEST_SIGNING_KEY` and `INNGEST_EVENT_KEY` are set
+- Test locally with `npx inngest-cli@latest dev`
+
+### Upload Issues
+- Check Supabase storage permissions
+- Verify `SUPABASE_SERVICE_ROLE_KEY` is set
+- Monitor logs for CSV parsing errors
+
+### Function Registration Issues
+- Check `/api/inngest` endpoint returns function count
+- Verify all function imports are working
+- Look for import errors in build logs
 
 ## Next Steps
 
-Once deployed:
-1. ✅ Verify the landing page loads correctly
-2. Add authentication with Clerk
-3. Setup Supabase database
-4. Implement upload functionality
-5. Build out the dashboard
+The application is now **production-ready** with:
 
-The foundation is ready - you can now deploy and start building features incrementally!
+✅ **Complete Upload & Processing Pipeline**
+- File upload with confirmation
+- Background CSV parsing
+- Real-time status updates
+- Error handling & retries
+
+✅ **Production Deployment**
+- Manual deployment control
+- Environment variable management
+- Comprehensive logging
+- Health monitoring
+
+**Ready for:**
+1. **Production deployment**: `vercel --prod`
+2. **User testing** with real IMU data files
+3. **Feature expansion** (visualization, analysis tools)
+4. **Performance optimization** for larger datasets
+
+The foundation is solid - deploy and start collecting real user feedback! 🚀
 
