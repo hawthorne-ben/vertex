@@ -84,6 +84,11 @@ export const parseIMU = inngest.createFunction(
         }
 
         const csvText = await fileData.text()
+        
+        // Check file size before parsing
+        if (csvText.length > 100 * 1024 * 1024) { // 100MB limit
+          throw new Error(`File too large for processing: ${Math.round(csvText.length / 1024 / 1024)}MB (max 100MB)`)
+        }
 
         // Parse CSV
         try {
@@ -192,24 +197,33 @@ export const parseIMU = inngest.createFunction(
       }
 
     } catch (err) {
-      // Step 6: Update status to error
-      await step.run('update-status-error', async () => {
-        const errorMessage = err instanceof Error ? err.message : 'Unknown error'
-        
-        console.error(`❌ Parse failed for file ${fileId}:`, errorMessage)
-        
-        const { error: updateError } = await supabaseAdmin
-          .from('imu_data_files')
-          .update({
-            status: 'error',
-            error_message: errorMessage
-          })
-          .eq('id', fileId)
+      // Step 6: Update status to error (with retry logic)
+      try {
+        await step.run('update-status-error', async () => {
+          const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+          
+          console.error(`❌ Parse failed for file ${fileId}:`, errorMessage)
+          
+          const { error: updateError } = await supabaseAdmin
+            .from('imu_data_files')
+            .update({
+              status: 'error',
+              error_message: errorMessage
+            })
+            .eq('id', fileId)
 
-        if (updateError) {
-          console.error('Failed to update error status:', updateError)
-        }
-      })
+          if (updateError) {
+            console.error('Failed to update error status:', updateError)
+            throw updateError
+          }
+          
+          console.log(`✅ Error status updated for file ${fileId}`)
+        })
+      } catch (updateErr) {
+        // If error status update fails, log it but don't throw
+        console.error(`❌ CRITICAL: Failed to update error status for ${fileId}:`, updateErr)
+        console.error(`❌ Original error was:`, err)
+      }
 
       throw err
     }
