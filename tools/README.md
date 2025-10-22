@@ -10,16 +10,60 @@ Utilities for generating test data and developing the Vertex data pipeline.
 
 ```bash
 # Generate a test ride at 100 Hz (default)
-python tools/generate_synthetic_imu.py -o test_ride.csv
+python3 tools/generate_synthetic_imu.py -o test_ride.csv
 
 # Generate at 10 Hz (lower sample rate for quick testing)
-python tools/generate_synthetic_imu.py -o test_ride_10hz.csv --sample-rate 10
+python3 tools/generate_synthetic_imu.py -o test_ride_10hz.csv --sample-rate 10
 
 # Generate perfect data (no noise)
-python tools/generate_synthetic_imu.py -o perfect_ride.csv --no-noise
+python3 tools/generate_synthetic_imu.py -o perfect_ride.csv --no-noise
 
 # Adjust noise level
-python tools/generate_synthetic_imu.py -o noisy_ride.csv --noise 0.1
+python3 tools/generate_synthetic_imu.py -o noisy_ride.csv --noise 0.1
+```
+
+### Advanced Usage
+
+#### Preset Ride Types
+
+```bash
+# Short ride (~14 seconds)
+python3 tools/generate_synthetic_imu.py --preset short -o short_ride.csv
+
+# Medium ride (~60 seconds) - default
+python3 tools/generate_synthetic_imu.py --preset medium -o medium_ride.csv
+
+# Long ride (~3 minutes)
+python3 tools/generate_synthetic_imu.py --preset long -o long_ride.csv
+
+# Aggressive riding (high speeds, tight corners)
+python3 tools/generate_synthetic_imu.py --preset aggressive -o aggressive_ride.csv
+
+# Endurance riding (steady pace, gentle corners)
+python3 tools/generate_synthetic_imu.py --preset endurance -o endurance_ride.csv
+```
+
+#### Custom Duration
+
+```bash
+# Generate a 2-minute ride using medium preset
+python3 tools/generate_synthetic_imu.py --preset medium --duration 120 -o custom_ride.csv
+
+# Generate specific scenarios only
+python3 tools/generate_synthetic_imu.py --scenarios acceleration cornering braking --duration 30 -o custom_ride.csv
+```
+
+#### Scenario-Specific Parameters
+
+```bash
+# High-speed cornering
+python3 tools/generate_synthetic_imu.py --scenarios cornering --corner-speed 15 --corner-radius 10 --corner-direction left -o tight_corner.csv
+
+# Hard acceleration
+python3 tools/generate_synthetic_imu.py --scenarios acceleration --target-speed 20 --accel-rate 4.0 -o hard_accel.csv
+
+# Emergency braking
+python3 tools/generate_synthetic_imu.py --scenarios braking --initial-speed 15 --decel-rate 5.0 -o emergency_brake.csv
 ```
 
 ### Output Format
@@ -39,23 +83,60 @@ timestamp_ms,accel_x,accel_y,accel_z,gyro_x,gyro_y,gyro_z,mag_x,mag_y,mag_z
 - `gyro_{x,y,z}`: rad/s (angular velocity: X=pitch, Y=roll, Z=yaw)
 - `mag_{x,y,z}`: µT (magnetometer, for heading reference)
 
-### Test Ride Sequence
+### Preset Ride Configurations
 
-The default test ride includes:
+#### Short (~14 seconds)
+- Quick acceleration, single corner, brake to stop
+- Good for testing basic pipeline functionality
 
-1. **Stationary** (5s) - Bike at rest
-2. **Acceleration** (5s) - 0 → 10 m/s (36 km/h)
-3. **Straight** (10s) - Constant velocity
-4. **Left Corner** (8s) - 20m radius @ 10 m/s (~0.5G lateral)
-5. **Straight** (5s)
-6. **Right Corner** (8s) - 25m radius @ 10 m/s (~0.4G lateral)
-7. **Straight** (5s)
-8. **Braking** (4s) - 10 m/s → 0 (2.5 m/s² decel)
-9. **Stationary** (5s) - Stopped
+#### Medium (~60 seconds) - Default
+- Full ride sequence: start → accelerate → cruise → corners → brake → stop
+- Balanced mix of all scenarios
+- Good for comprehensive testing
 
-**Total:** ~55 seconds
-- At 100 Hz: 5,500 samples (~550 KB)
-- At 10 Hz: 550 samples (~55 KB)
+#### Long (~3 minutes)
+- Extended cruise sections
+- Multiple corners with varying radii
+- Simulates longer training rides
+
+#### Aggressive (~30 seconds)
+- High speeds (15 m/s = 54 km/h)
+- Tight corners (10-12m radius)
+- Hard acceleration and braking
+- Good for testing extreme scenarios
+
+#### Endurance (~3.5 minutes)
+- Steady, moderate pace (8 m/s = 29 km/h)
+- Gentle acceleration and braking
+- Wide corners (35-40m radius)
+- Long cruise sections
+- Simulates endurance/audax riding
+
+### Command Line Options
+
+#### Basic Options
+- `--output, -o`: Output filename (default: `synthetic_ride.csv`)
+- `--sample-rate, -r`: Sample rate in Hz (default: 100)
+- `--duration, -d`: Total duration in seconds (scales preset scenarios)
+- `--noise, -n`: Noise level in m/s² (default: 0.05)
+- `--no-noise`: Disable noise (perfect data)
+
+#### Scenario Selection
+- `--scenarios, -s`: Choose specific scenarios: `stationary`, `acceleration`, `cornering`, `braking`
+- `--preset`: Use predefined ride type: `short`, `medium`, `long`, `aggressive`, `endurance`
+
+#### Acceleration Parameters
+- `--target-speed`: Target speed for acceleration (m/s, default: 10)
+- `--accel-rate`: Acceleration rate (m/s², default: 2.0)
+
+#### Cornering Parameters
+- `--corner-speed`: Speed during cornering (m/s, default: 10)
+- `--corner-radius`: Corner radius (m, default: 20)
+- `--corner-direction`: Corner direction: `left` or `right` (default: left)
+
+#### Braking Parameters
+- `--initial-speed`: Initial speed for braking (m/s, default: 10)
+- `--decel-rate`: Deceleration rate (m/s², default: 2.5)
 
 ### Extending the Generator
 
