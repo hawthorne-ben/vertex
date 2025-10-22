@@ -13,9 +13,9 @@ export async function POST() {
     
     const { data: stuckFiles, error } = await supabase
       .from('imu_data_files')
-      .select('id, user_id, filename, created_at')
+      .select('id, user_id, filename, uploaded_at')
       .eq('status', 'uploaded')
-      .lt('created_at', fiveMinutesAgo)
+      .lt('uploaded_at', fiveMinutesAgo)
     
     if (error) throw error
     

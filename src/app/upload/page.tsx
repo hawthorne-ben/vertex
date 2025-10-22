@@ -2,47 +2,63 @@
 
 import { useState, useCallback } from 'react'
 import { useDropzone } from 'react-dropzone'
+import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
-import { Upload, FileText, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react'
+import { Upload, FileText } from 'lucide-react'
+import { ConfirmationModal, UploadProgressModal } from '@/components/upload-modals'
 
-type UploadStatus = 'idle' | 'uploading' | 'parsing' | 'success' | 'error'
-
-interface UploadedFile {
+interface FileToUpload {
+  file: File
   id: string
-  filename: string
-  size: number
-  status: UploadStatus
-  error?: string
-  sampleCount?: number
-  duration?: number
 }
 
 export default function UploadPage() {
-  const [files, setFiles] = useState<UploadedFile[]>([])
-  const [uploading, setUploading] = useState(false)
+  const [selectedFiles, setSelectedFiles] = useState<FileToUpload[]>([])
+  const [showConfirmation, setShowConfirmation] = useState(false)
+  const [showUploadProgress, setShowUploadProgress] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
+  const [currentFileIndex, setCurrentFileIndex] = useState(0)
+  const [currentFileName, setCurrentFileName] = useState('')
+  const router = useRouter()
 
-  const handleUpload = useCallback(async (acceptedFiles: File[]) => {
+  const handleFileSelection = useCallback((acceptedFiles: File[]) => {
+    const newFiles: FileToUpload[] = acceptedFiles.map(file => ({
+      file,
+      id: `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    }))
+    
+    setSelectedFiles(prev => [...prev, ...newFiles])
+    setShowConfirmation(true)
+  }, [])
+
+  const handleConfirmUpload = useCallback(async () => {
+    if (selectedFiles.length === 0) return
+
+    setShowConfirmation(false)
+    setShowUploadProgress(true)
+    setUploadProgress(0)
+    setCurrentFileIndex(0)
+
     const supabase = createClient()
     
     // Get current user
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     if (authError || !user) {
       console.error('Not authenticated:', authError)
+      setShowUploadProgress(false)
       return
     }
 
-    for (const file of acceptedFiles) {
-      // Add file to UI with uploading status
-      const tempId = `temp-${Date.now()}-${file.name}`
-      setFiles(prev => [...prev, {
-        id: tempId,
-        filename: file.name,
-        size: file.size,
-        status: 'uploading'
-      }])
+    const uploadedFileIds: string[] = []
 
-      try {
-        setUploading(true)
+    try {
+      for (let i = 0; i < selectedFiles.length; i++) {
+        const fileToUpload = selectedFiles[i]
+        const file = fileToUpload.file
+        
+        setCurrentFileIndex(i)
+        setCurrentFileName(file.name)
+        setUploadProgress((i / selectedFiles.length) * 100)
 
         // 1. Upload to Supabase Storage
         const timestamp = Date.now()
@@ -76,12 +92,7 @@ export default function UploadPage() {
           throw new Error(`Database insert failed: ${dbError.message}`)
         }
 
-        // Update UI with parsing status
-        setFiles(prev => prev.map(f => 
-          f.id === tempId 
-            ? { ...f, id: fileRecord.id, status: 'parsing' as UploadStatus }
-            : f
-        ))
+        uploadedFileIds.push(fileRecord.id)
 
         // 3. Trigger parse job
         const response = await fetch('/api/imu/parse', {
@@ -94,38 +105,41 @@ export default function UploadPage() {
           const errorData = await response.json()
           throw new Error(`Parse trigger failed: ${errorData.error || response.statusText}`)
         }
-
-        // Update UI with success
-        setFiles(prev => prev.map(f => 
-          f.id === fileRecord.id 
-            ? { ...f, status: 'success' as UploadStatus }
-            : f
-        ))
-
-      } catch (err) {
-        console.error('Upload error:', err)
-        setFiles(prev => prev.map(f => 
-          f.id === tempId 
-            ? { 
-                ...f, 
-                status: 'error' as UploadStatus, 
-                error: err instanceof Error ? err.message : 'Unknown error'
-              }
-            : f
-        ))
-      } finally {
-        setUploading(false)
       }
+
+      // Upload complete
+      setUploadProgress(100)
+      
+      // Wait a moment to show completion, then redirect
+      setTimeout(() => {
+        setShowUploadProgress(false)
+        setSelectedFiles([])
+        router.push('/data')
+      }, 1000)
+
+    } catch (err) {
+      console.error('Upload error:', err)
+      setShowUploadProgress(false)
+      alert(`Upload failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
     }
+  }, [selectedFiles, router])
+
+  const handleCancelUpload = useCallback(() => {
+    setShowConfirmation(false)
+    setSelectedFiles([])
+  }, [])
+
+  const handleRemoveFile = useCallback((id: string) => {
+    setSelectedFiles(prev => prev.filter(f => f.id !== id))
   }, [])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop: handleUpload,
+    onDrop: handleFileSelection,
     accept: {
       'text/csv': ['.csv']
     },
     multiple: true,
-    disabled: uploading
+    disabled: showUploadProgress
   })
 
   return (
@@ -147,7 +161,7 @@ export default function UploadPage() {
             ? 'border-primary bg-muted' 
             : 'border-border hover-border hover-bg'
           }
-          ${uploading ? 'opacity-50 cursor-not-allowed' : ''}
+          ${showUploadProgress ? 'opacity-50 cursor-not-allowed' : ''}
         `}
       >
         <input {...getInputProps()} />
@@ -168,70 +182,22 @@ export default function UploadPage() {
         )}
       </div>
 
-      {/* File list */}
-      {files.length > 0 && (
-        <div className="mt-8">
-          <h2 className="text-xl font-normal text-primary mb-4">Uploaded Files</h2>
-          
-          <div className="space-y-3">
-            {files.map((file) => (
-              <div
-                key={file.id}
-                className="card-interactive border rounded-lg p-4"
-              >
-                <div className="flex items-start gap-3">
-                  {/* Status icon */}
-                  <div className="flex-shrink-0 mt-1">
-                    {file.status === 'uploading' && (
-                      <Loader2 className="w-5 h-5 text-tertiary animate-spin" />
-                    )}
-                    {file.status === 'parsing' && (
-                      <Loader2 className="w-5 h-5 text-info animate-spin" />
-                    )}
-                    {file.status === 'success' && (
-                      <CheckCircle2 className="w-5 h-5 text-success" />
-                    )}
-                    {file.status === 'error' && (
-                      <AlertCircle className="w-5 h-5 text-error" />
-                    )}
-                    {file.status === 'idle' && (
-                      <FileText className="w-5 h-5 text-tertiary" />
-                    )}
-                  </div>
+      {/* Modals */}
+      <ConfirmationModal
+        files={selectedFiles}
+        isOpen={showConfirmation}
+        onConfirm={handleConfirmUpload}
+        onCancel={handleCancelUpload}
+        onRemoveFile={handleRemoveFile}
+      />
 
-                  {/* File info */}
-                  <div className="flex-grow min-w-0">
-                    <div className="flex items-baseline gap-3 mb-1">
-                      <h3 className="text-sm font-medium text-primary truncate">
-                        {file.filename}
-                      </h3>
-                      <span className="text-xs text-tertiary flex-shrink-0">
-                        {(file.size / 1024).toFixed(1)} KB
-                      </span>
-                    </div>
-                    
-                    {/* Status text */}
-                    <p className="text-xs text-secondary">
-                      {file.status === 'uploading' && 'Uploading to storage...'}
-                      {file.status === 'parsing' && 'Parsing CSV data...'}
-                      {file.status === 'success' && (
-                        <>
-                          Ready
-                          {file.sampleCount && ` • ${file.sampleCount.toLocaleString()} samples`}
-                          {file.duration && ` • ${file.duration.toFixed(1)}s`}
-                        </>
-                      )}
-                      {file.status === 'error' && (
-                        <span className="text-error">Error: {file.error}</span>
-                      )}
-                    </p>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      <UploadProgressModal
+        isOpen={showUploadProgress}
+        currentFile={currentFileName}
+        progress={uploadProgress}
+        totalFiles={selectedFiles.length}
+        currentFileIndex={currentFileIndex}
+      />
 
       {/* Help section */}
       <div className="mt-12 p-6 bg-muted rounded-lg border border-border">

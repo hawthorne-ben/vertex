@@ -23,7 +23,6 @@ export const parseIMU = inngest.createFunction(
   { 
     id: 'parse-imu-file',
     name: 'Parse IMU CSV File',
-    timeout: '10m', // Increase timeout for large files
     retries: 3 // Limit retries to 3
   },
   { event: 'imu/parse' },
@@ -35,15 +34,20 @@ export const parseIMU = inngest.createFunction(
 
     // Step 1: Get file metadata
     const file = await step.run('get-file-metadata', async () => {
-      console.log(`📁 Getting file metadata for ${fileId}`)
       const { data, error } = await supabaseAdmin
         .from('imu_data_files')
         .select('*')
         .eq('id', fileId)
         .single()
 
-      if (error) throw new Error(`Failed to get file: ${error.message}`)
-      if (!data) throw new Error('File not found')
+      if (error) {
+        console.error(`❌ Database error getting file ${fileId}:`, error)
+        throw new Error(`Failed to get file: ${error.message}`)
+      }
+      if (!data) {
+        console.error(`❌ File not found: ${fileId}`)
+        throw new Error('File not found')
+      }
       
       console.log(`✅ File metadata retrieved: ${data.filename} (${data.file_size_bytes} bytes)`)
       return data
@@ -56,7 +60,10 @@ export const parseIMU = inngest.createFunction(
         .update({ status: 'parsing' })
         .eq('id', fileId)
 
-      if (error) throw new Error(`Failed to update status: ${error.message}`)
+      if (error) {
+        console.error(`❌ Failed to update status to parsing for ${fileId}:`, error)
+        throw new Error(`Failed to update status: ${error.message}`)
+      }
     })
 
     try {
@@ -67,14 +74,21 @@ export const parseIMU = inngest.createFunction(
           .from('uploads')
           .download(file.storage_path)
 
-        if (downloadError) throw new Error(`Failed to download file: ${downloadError.message}`)
-        if (!fileData) throw new Error('File data is empty')
+        if (downloadError) {
+          console.error(`❌ Storage download failed for ${fileId}:`, downloadError)
+          throw new Error(`Failed to download file: ${downloadError.message}`)
+        }
+        if (!fileData) {
+          console.error(`❌ File data is empty for ${fileId}`)
+          throw new Error('File data is empty')
+        }
 
         const csvText = await fileData.text()
 
         // Parse CSV
         try {
           const parsed = await parseIMUCSV(csvText)
+          console.log(`✅ CSV parsing completed for ${fileId}: ${parsed.sampleCount} samples`)
           
           // Convert to serializable format (Inngest serializes data between steps)
           return {
@@ -101,6 +115,7 @@ export const parseIMU = inngest.createFunction(
             duration: parsed.duration
           }
         } catch (err) {
+          console.error(`❌ CSV parsing failed for ${fileId}:`, err)
           if (err instanceof IMUParseError) {
             throw err
           }
@@ -140,12 +155,14 @@ export const parseIMU = inngest.createFunction(
             .insert(rows)
 
           if (error) {
-            throw new Error(`Failed to insert batch ${i / BATCH_SIZE + 1}: ${error.message}`)
+            console.error(`❌ Batch insert failed for ${fileId}, batch ${Math.floor(i / BATCH_SIZE) + 1}:`, error)
+            throw new Error(`Failed to insert batch ${Math.floor(i / BATCH_SIZE) + 1}: ${error.message}`)
           }
 
           insertedCount += rows.length
         }
 
+        console.log(`✅ All samples inserted for ${fileId}: ${insertedCount} total`)
         return insertedCount
       })
 
