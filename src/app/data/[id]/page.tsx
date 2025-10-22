@@ -111,7 +111,7 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
           <p className="text-secondary">Processing data...</p>
         </div>
-      ) : fileData.status === 'error' ? (
+      ) : fileData.status === 'failed' ? (
         <div className="text-center py-12 border border-error rounded-lg bg-error">
           <p className="text-error mb-2">Failed to process data</p>
           {fileData.error_message && (

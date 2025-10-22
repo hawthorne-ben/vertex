@@ -197,32 +197,27 @@ export const parseIMU = inngest.createFunction(
       }
 
     } catch (err) {
-      // Step 6: Update status to error (with retry logic)
+      // Update status to error - do this OUTSIDE of Inngest steps to avoid step failures
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error'
+      
+      console.error(`❌ Parse failed for file ${fileId}:`, errorMessage)
+      
       try {
-        await step.run('update-status-error', async () => {
-          const errorMessage = err instanceof Error ? err.message : 'Unknown error'
-          
-          console.error(`❌ Parse failed for file ${fileId}:`, errorMessage)
-          
-          const { error: updateError } = await supabaseAdmin
-            .from('imu_data_files')
-            .update({
-              status: 'error',
-              error_message: errorMessage
-            })
-            .eq('id', fileId)
+        const { error: updateError } = await supabaseAdmin
+          .from('imu_data_files')
+          .update({
+            status: 'failed',
+            error_message: errorMessage
+          })
+          .eq('id', fileId)
 
-          if (updateError) {
-            console.error('Failed to update error status:', updateError)
-            throw updateError
-          }
-          
+        if (updateError) {
+          console.error('Failed to update error status:', updateError)
+        } else {
           console.log(`✅ Error status updated for file ${fileId}`)
-        })
+        }
       } catch (updateErr) {
-        // If error status update fails, log it but don't throw
         console.error(`❌ CRITICAL: Failed to update error status for ${fileId}:`, updateErr)
-        console.error(`❌ Original error was:`, err)
       }
 
       throw err
