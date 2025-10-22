@@ -16,10 +16,21 @@ export default async function DataPage() {
     .from('imu_data_files')
     .select('*')
     .eq('user_id', user.id)
-    .order('start_time', { ascending: false, nullsFirst: false })
+    .order('uploaded_at', { ascending: false }) // Use uploaded_at instead of start_time
 
   if (error) {
     console.error('Error fetching data:', error)
+    // Return error state instead of crashing
+    return (
+      <div className="container mx-auto px-4 md:px-6 py-8 max-w-6xl">
+        <div className="mb-8">
+          <h1 className="text-3xl font-normal text-primary mb-2">IMU Data</h1>
+          <p className="text-secondary">
+            Error loading data: {error.message}
+          </p>
+        </div>
+      </div>
+    )
   }
 
   return (

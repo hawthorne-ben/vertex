@@ -32,8 +32,13 @@ export async function GET() {
   }
   
   try {
-    // Check Inngest connection
-    await inngest.send({ name: 'test/health-check', data: { timestamp: Date.now() } })
+    // Check Inngest connection with timeout
+    const inngestPromise = inngest.send({ name: 'test/health-check', data: { timestamp: Date.now() } })
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Inngest health check timeout')), 5000)
+    })
+    
+    await Promise.race([inngestPromise, timeoutPromise])
     checks.inngest = true
   } catch (error) {
     errors.push(`Inngest: ${error instanceof Error ? error.message : 'Unknown error'}`)

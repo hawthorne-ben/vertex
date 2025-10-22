@@ -33,7 +33,7 @@ export default function Home() {
 
   const handleWaitlistSignup = (e: React.FormEvent) => {
     e.preventDefault()
-    // TODO: Implement actual email capture
+    // Email capture not implemented yet
     console.log('Waitlist signup:', email)
     setSubscribed(true)
   }

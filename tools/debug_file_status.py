@@ -144,11 +144,101 @@ def fix_stuck_files():
     except requests.exceptions.RequestException as e:
         print(f"❌ Error fixing stuck files: {e}")
 
+def cleanup_orphaned_samples():
+    """Find and delete orphaned samples (samples without corresponding file records)"""
+    url, key = get_supabase_client()
+    if not url:
+        return
+    
+    headers = {
+        'apikey': key,
+        'Authorization': f'Bearer {key}',
+        'Content-Type': 'application/json'
+    }
+    
+    try:
+        # Get all unique file IDs from samples
+        samples_response = requests.get(
+            f"{url}/rest/v1/imu_samples?select=imu_file_id",
+            headers=headers
+        )
+        
+        if samples_response.status_code != 200:
+            print("❌ Failed to get samples")
+            return
+        
+        samples_data = samples_response.json()
+        if not samples_data:
+            print("✅ No samples found")
+            return
+        
+        # Get unique file IDs from samples
+        sample_file_ids = set(s['imu_file_id'] for s in samples_data)
+        
+        # Get all existing file IDs
+        files_response = requests.get(
+            f"{url}/rest/v1/imu_data_files?select=id",
+            headers=headers
+        )
+        
+        if files_response.status_code != 200:
+            print("❌ Failed to get files")
+            return
+        
+        files_data = files_response.json()
+        existing_file_ids = set(f['id'] for f in files_data)
+        
+        # Find orphaned file IDs
+        orphaned_file_ids = sample_file_ids - existing_file_ids
+        
+        if not orphaned_file_ids:
+            print("✅ No orphaned samples found")
+            return
+        
+        print(f"🧹 Found orphaned samples for {len(orphaned_file_ids)} file IDs")
+        
+        total_deleted = 0
+        for file_id in orphaned_file_ids:
+            # Count samples for this file
+            count_response = requests.get(
+                f"{url}/rest/v1/imu_samples?imu_file_id=eq.{file_id}&select=count",
+                headers=headers
+            )
+            
+            if count_response.status_code != 200:
+                continue
+                
+            sample_count = len(count_response.json())
+            
+            print(f"   Deleting {sample_count} samples for orphaned file {file_id}...")
+            
+            # Delete samples for this orphaned file
+            delete_response = requests.delete(
+                f"{url}/rest/v1/imu_samples?imu_file_id=eq.{file_id}",
+                headers=headers
+            )
+            
+            if delete_response.status_code == 200:
+                total_deleted += sample_count
+                print(f"   ✅ Deleted {sample_count} samples")
+            else:
+                print(f"   ❌ Failed to delete samples: {delete_response.text}")
+        
+        print(f"✅ Cleanup complete: {total_deleted} orphaned samples deleted")
+        
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Error cleaning up orphaned samples: {e}")
+
 def main():
     import sys
     
-    if len(sys.argv) > 1 and sys.argv[1] == '--fix-stuck':
-        fix_stuck_files()
+    if len(sys.argv) > 1:
+        if sys.argv[1] == '--fix-stuck':
+            fix_stuck_files()
+        elif sys.argv[1] == '--cleanup-orphaned':
+            cleanup_orphaned_samples()
+        else:
+            print("Usage: python debug_file_status.py [--fix-stuck|--cleanup-orphaned]")
     else:
         check_recent_files()
 
