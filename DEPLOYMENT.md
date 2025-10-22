@@ -26,7 +26,124 @@ Since auto-deploy is disabled for better control, use manual deployment:
    vercel
    ```
 
-### 3. Environment Variables Setup
+### 3. Development Workflow (Local First)
+
+**Priority Order:**
+1. **Local Development** (Preferred for debugging)
+   ```bash
+   # Terminal 1: Start Next.js dev server
+   npm run dev
+   
+   # Terminal 2: Start Inngest dev server  
+   npm run dev:inngest
+   ```
+   - ✅ **Faster iterations** (no deployment time)
+   - ✅ **No deployment costs** (production won't be free forever)
+   - ✅ **Easier debugging** (direct access to logs)
+   - ✅ **Real-time changes** (hot reload)
+
+   **⚠️ Hot Reload Reliability:**
+   - Hot reload can be flaky, especially with complex changes
+   - **Always restart dev server** when testing new features: `npm run dev:clean`
+   - Restart both servers when making significant changes
+
+   **🗄️ Development Database Setup:**
+   - Use separate Supabase dev project to avoid conflicts with production
+   - See [Development Database Setup](#development-database-setup) section below
+
+2. **Production Deployment** (Only when needed)
+   ```bash
+   vercel --prod  # Deploy without committing (debugging)
+   ```
+   - Use only when local environment differs significantly
+   - Or when testing production-specific features
+
+**Debugging Pattern (Keep Git History Clean):**
+- Use `vercel --prod` to deploy without committing to git
+- This keeps git history clean while allowing rapid iteration
+- Only commit when features are complete and tested
+
+**Benefits:**
+- ✅ Clean git history
+- ✅ Faster debugging cycles  
+- ✅ Easy rollbacks
+- ✅ No "debugging commits" cluttering the log
+
+## Development Database Setup
+
+### Why Use a Separate Dev Database?
+
+- **🛡️ Safety**: Avoid accidentally affecting production data
+- **🧪 Testing**: Clean environment for testing new features
+- **🔄 Isolation**: Can reset/rebuild dev database without affecting prod
+- **📊 Performance**: Dev database won't impact production performance
+
+### Setup Steps
+
+1. **Create Supabase Dev Project**
+   - Go to [Supabase Dashboard](https://supabase.com/dashboard)
+   - Click "New Project"
+   - Name: `vertex-dev`
+   - Use same region as production
+   - Generate strong database password
+
+2. **Configure Environment Variables**
+   ```bash
+   # Copy the template
+   cp env.local.dev.template .env.local
+   
+   # Edit .env.local with your dev database credentials
+   NEXT_PUBLIC_SUPABASE_URL=https://your-dev-project-ref.supabase.co
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=your-dev-anon-key
+   SUPABASE_SERVICE_ROLE_KEY=your-dev-service-role-key
+   ```
+
+3. **Set Up Database Schema**
+   - Go to your dev project SQL Editor
+   - Run the contents of `dev-database-setup.sql`
+   - This creates all tables, indexes, and RLS policies
+
+4. **Test the Setup**
+   ```bash
+   # Restart dev servers with new environment
+   pkill -f "next dev" && npm run dev
+   npx inngest-cli@latest dev
+   
+   # Test upload and parsing
+   # Go to http://localhost:3000/upload
+   ```
+
+### Switching Between Environments
+
+**For Development:**
+```bash
+# Use dev database
+cp env.local.dev.template .env.local
+# Edit .env.local with dev credentials
+```
+
+**For Production Testing:**
+```bash
+# Use production database
+vercel env pull .env.local
+```
+
+### Database Schema Management
+
+- **Schema Changes**: Update `dev-database-setup.sql` first
+- **Test in Dev**: Apply changes to dev database
+- **Deploy to Prod**: Apply same changes to production
+- **Version Control**: Keep schema changes in git
+
+### Troubleshooting
+
+**Common Issues:**
+- **"Table doesn't exist"**: Run `dev-database-setup.sql` in dev project
+- **"Permission denied"**: Check RLS policies are created
+- **"Storage bucket missing"**: Verify storage bucket creation in SQL
+- **"Environment variables"**: Double-check `.env.local` has dev credentials
+
+### 4. Environment Variables Setup
 
 **Required for full functionality:**
 ```bash

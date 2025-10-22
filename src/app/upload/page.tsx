@@ -41,6 +41,63 @@ export default function UploadPage() {
     setShowConfirmation(true)
   }, [])
 
+  const uploadFileWithProgress = useCallback((
+    file: File, 
+    storagePath: string, 
+    supabase: any,
+    onProgress: (progress: number) => void
+  ) => {
+    return new Promise<void>(async (resolve, reject) => {
+      try {
+        // Get upload URL from Supabase
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session) {
+          reject(new Error('Not authenticated'))
+          return
+        }
+        
+        const xhr = new XMLHttpRequest()
+        
+        // Track upload progress
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable) {
+            const progress = (e.loaded / e.total) * 100
+            onProgress(progress)
+          }
+        }
+        
+        // Handle completion
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve()
+          } else {
+            reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`))
+          }
+        }
+        
+        // Handle errors
+        xhr.onerror = () => {
+          reject(new Error('Upload failed: Network error'))
+        }
+        
+        // Build the upload URL
+        const uploadUrl = `${supabase.supabaseUrl}/storage/v1/object/uploads/${storagePath}`
+        
+        // Set up the request
+        xhr.open('POST', uploadUrl, true)
+        xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`)
+        xhr.setRequestHeader('Cache-Control', '3600')
+        
+        // Send the file
+        const formData = new FormData()
+        formData.append('file', file)
+        xhr.send(formData)
+      } catch (error) {
+        reject(error)
+      }
+    })
+  }, [])
+
   const handleConfirmUpload = useCallback(async () => {
     if (selectedFiles.length === 0) return
 
@@ -68,22 +125,20 @@ export default function UploadPage() {
         
         setCurrentFileIndex(i)
         setCurrentFileName(file.name)
-        setUploadProgress((i / selectedFiles.length) * 100)
-
-        // 1. Upload to Supabase Storage
+        
+        // Calculate base progress for this file
+        const fileStartProgress = (i / selectedFiles.length) * 100
+        const fileEndProgress = ((i + 1) / selectedFiles.length) * 100
+        
+        // 1. Upload to Supabase Storage with progress tracking
         const timestamp = Date.now()
         const storagePath = `${user.id}/${timestamp}_${file.name}`
         
-        const { error: uploadError } = await supabase.storage
-          .from('uploads')
-          .upload(storagePath, file, {
-            cacheControl: '3600',
-            upsert: false
-          })
-
-        if (uploadError) {
-          throw new Error(`Storage upload failed: ${uploadError.message}`)
-        }
+        await uploadFileWithProgress(file, storagePath, supabase, (fileProgress) => {
+          // Map file progress (0-100) to overall progress range for this file
+          const overallProgress = fileStartProgress + (fileProgress / 100) * (fileEndProgress - fileStartProgress)
+          setUploadProgress(overallProgress)
+        })
 
         // 2. Create metadata record in database
         const { data: fileRecord, error: dbError } = await supabase
@@ -117,22 +172,20 @@ export default function UploadPage() {
         }
       }
 
-      // Upload complete
+      // Upload complete - show success briefly then redirect
       setUploadProgress(100)
       
-      // Wait a moment to show completion, then redirect
-      setTimeout(() => {
-        setShowUploadProgress(false)
-        setSelectedFiles([])
-        router.push('/data')
-      }, 1000)
+      // Immediate redirect after showing 100% completion
+      setShowUploadProgress(false)
+      setSelectedFiles([])
+      router.push('/data')
 
     } catch (err) {
       console.error('Upload error:', err)
       setShowUploadProgress(false)
       alert(`Upload failed: ${err instanceof Error ? err.message : 'Unknown error'}`)
     }
-  }, [selectedFiles, router])
+  }, [selectedFiles, router, uploadFileWithProgress])
 
   const handleCancelUpload = useCallback(() => {
     setShowConfirmation(false)

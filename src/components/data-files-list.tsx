@@ -38,17 +38,17 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
     const interval = setInterval(async () => {
       const supabase = createClient()
       const fileIds = processingFiles.map(f => f.id)
-      
+
       const { data: updatedFiles, error } = await supabase
         .from('imu_data_files')
         .select('*')
         .in('id', fileIds)
-      
+
       if (error) {
         console.error('Failed to poll file status:', error)
         return
       }
-      
+
       if (updatedFiles) {
         setFiles(prev => prev.map(file => {
           const updated = updatedFiles.find(f => f.id === file.id)
@@ -58,7 +58,7 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
     }, 3000) // Poll every 3 seconds
 
     return () => clearInterval(interval)
-  }, [files.filter(f => f.status === 'uploaded' || f.status === 'parsing').length])
+  }, []) // Empty dependency array - only run once on mount
 
   const handleDelete = async (fileId: string) => {
     if (!confirm('Are you sure you want to delete this data segment? This will permanently remove all samples in this time range.')) {
@@ -66,35 +66,28 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
     }
 
     setDeleting(fileId)
-    const supabase = createClient()
 
     try {
-      // Delete the record (CASCADE will delete samples)
-      const { error: dbError } = await supabase
-        .from('imu_data_files')
-        .delete()
-        .eq('id', fileId)
+      // Use the admin API endpoint for proper deletion
+      const response = await fetch('/api/admin/delete-file', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fileId })
+      })
 
-      if (dbError) throw dbError
-
-      // Get storage path before removing from state
-      const file = files.find(f => f.id === fileId)
-      if (file && file.storage_path) {
-        // Delete from storage (original upload file)
-        const { error: storageError } = await supabase.storage
-          .from('uploads')
-          .remove([file.storage_path])
-        
-        if (storageError) {
-          console.warn('Storage deletion failed (non-critical):', storageError)
-        }
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Delete failed')
       }
+
+      const result = await response.json()
+      console.log('Delete successful:', result.message)
 
       // Remove from UI
       setFiles(prev => prev.filter(f => f.id !== fileId))
     } catch (err) {
       console.error('Delete error:', err)
-      alert('Failed to delete data segment')
+      alert(`Failed to delete data segment: ${err instanceof Error ? err.message : 'Unknown error'}`)
     } finally {
       setDeleting(null)
     }
@@ -162,7 +155,21 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
             {/* Status icon */}
             <div className="flex-shrink-0 mt-1">
               {file.status === 'parsing' && (
-                <Loader2 className="w-6 h-6 text-info animate-spin" />
+                <div className="relative">
+                  <Loader2 className="w-6 h-6 text-info animate-spin" />
+                  {/* Show warning if processing for more than 5 minutes */}
+                  {(() => {
+                    try {
+                      const uploadTime = new Date(file.uploaded_at)
+                      const processingTime = new Date().getTime() - uploadTime.getTime()
+                      return processingTime > 5 * 60 * 1000 ? (
+                        <div className="absolute -top-1 -right-1 w-3 h-3 bg-warning rounded-full animate-pulse" title="Processing longer than expected" />
+                      ) : null
+                    } catch (error) {
+                      return null
+                    }
+                  })()}
+                </div>
               )}
               {file.status === 'ready' && (
                 <CheckCircle2 className="w-6 h-6 text-success" />
@@ -181,18 +188,28 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
                 <h3 className="text-lg font-medium text-primary">
                   {file.start_time && file.end_time ? (
                     <>
-                      {new Date(file.start_time).toLocaleDateString('en-US', { 
-                        month: 'short', 
-                        day: 'numeric', 
-                        year: 'numeric',
-                        hour: 'numeric',
-                        minute: '2-digit'
-                      })}
+                      {(() => {
+                        try {
+                          return new Date(file.start_time).toLocaleDateString('en-US', { 
+                            month: 'short', 
+                            day: 'numeric', 
+                            year: 'numeric'
+                          })
+                        } catch (error) {
+                          return 'Invalid Date'
+                        }
+                      })()}
                       {' → '}
-                      {new Date(file.end_time).toLocaleTimeString('en-US', {
-                        hour: 'numeric',
-                        minute: '2-digit'
-                      })}
+                      {(() => {
+                        try {
+                          return new Date(file.end_time).toLocaleTimeString('en-US', {
+                            hour: 'numeric',
+                            minute: '2-digit'
+                          })
+                        } catch (error) {
+                          return 'Invalid Time'
+                        }
+                      })()}
                     </>
                   ) : (
                     <span className="text-tertiary">Processing...</span>
@@ -243,7 +260,7 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
               )}
 
               {/* Error message */}
-              {file.status === 'error' && file.error_message && (
+              {file.status === 'failed' && file.error_message && (
                 <div className="mt-3 p-3 bg-error text-error border-error rounded text-sm">
                   {file.error_message}
                 </div>
