@@ -25,6 +25,11 @@ export function ConfirmationModal({ files, isOpen, onConfirm, onCancel, onRemove
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
 
+  const isFileOversized = (bytes: number) => {
+    const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB limit
+    return bytes > MAX_FILE_SIZE
+  }
+
   const getFileType = (filename: string) => {
     const ext = filename.split('.').pop()?.toLowerCase()
     return ext || 'unknown'
@@ -63,8 +68,9 @@ export function ConfirmationModal({ files, isOpen, onConfirm, onCancel, onRemove
                     <span className="text-sm font-medium text-primary truncate">
                       {fileToUpload.file.name}
                     </span>
-                    <span className="text-xs text-tertiary flex-shrink-0">
+                    <span className={`text-xs flex-shrink-0 ${isFileOversized(fileToUpload.file.size) ? 'text-error font-medium' : 'text-tertiary'}`}>
                       {formatFileSize(fileToUpload.file.size)}
+                      {isFileOversized(fileToUpload.file.size) && ' (TOO LARGE)'}
                     </span>
                   </div>
                   <div className="flex items-center gap-2 text-xs text-secondary">

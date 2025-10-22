@@ -22,6 +22,16 @@ export default function UploadPage() {
   const router = useRouter()
 
   const handleFileSelection = useCallback((acceptedFiles: File[]) => {
+    // Check file size limits
+    const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB limit
+    const oversizedFiles = acceptedFiles.filter(file => file.size > MAX_FILE_SIZE)
+    
+    if (oversizedFiles.length > 0) {
+      const fileNames = oversizedFiles.map(f => f.name).join(', ')
+      alert(`Files too large (max 50MB): ${fileNames}\n\nPlease reduce file size or contact support for larger files.`)
+      return
+    }
+
     const newFiles: FileToUpload[] = acceptedFiles.map(file => ({
       file,
       id: `temp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
