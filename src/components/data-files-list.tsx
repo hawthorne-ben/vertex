@@ -167,7 +167,7 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
               {file.status === 'ready' && (
                 <CheckCircle2 className="w-6 h-6 text-success" />
               )}
-              {file.status === 'error' && (
+              {file.status === 'failed' && (
                 <AlertCircle className="w-6 h-6 text-error" />
               )}
               {file.status === 'uploaded' && (
