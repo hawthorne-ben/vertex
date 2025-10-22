@@ -16,7 +16,7 @@ export default function CreateRidePage() {
             <input
               type="text"
               placeholder="Morning training ride"
-              className="w-full px-3 py-2 border border-neutral-300 rounded-md"
+              className="w-full px-3 py-2 border border-border rounded-md"
             />
           </div>
           
@@ -25,14 +25,14 @@ export default function CreateRidePage() {
               <label className="block text-sm font-medium mb-2">Start Time</label>
               <input
                 type="datetime-local"
-                className="w-full px-3 py-2 border border-neutral-300 rounded-md"
+                className="w-full px-3 py-2 border border-border rounded-md"
               />
             </div>
             <div>
               <label className="block text-sm font-medium mb-2">End Time</label>
               <input
                 type="datetime-local"
-                className="w-full px-3 py-2 border border-neutral-300 rounded-md"
+                className="w-full px-3 py-2 border border-border rounded-md"
               />
             </div>
           </div>
@@ -42,13 +42,13 @@ export default function CreateRidePage() {
             <input
               type="text"
               placeholder="San Francisco, CA"
-              className="w-full px-3 py-2 border border-neutral-300 rounded-md"
+              className="w-full px-3 py-2 border border-border rounded-md"
             />
           </div>
           
           <div>
             <label className="block text-sm font-medium mb-2">Bike</label>
-            <select className="w-full px-3 py-2 border border-neutral-300 rounded-md">
+            <select className="w-full px-3 py-2 border border-border rounded-md">
               <option>Select bike...</option>
             </select>
           </div>

@@ -37,7 +37,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-stone-50 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-muted px-4">
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1">
           <CardTitle className="text-3xl font-serif font-normal text-center">
@@ -46,7 +46,7 @@ export default function LoginPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {error && (
-            <div className="p-3 text-sm text-red-800 bg-red-50 border border-red-200 rounded-md">
+            <div className="p-3 text-sm text-error bg-error border border-error rounded-md">
               {error}
             </div>
           )}
@@ -59,7 +59,7 @@ export default function LoginPage() {
               onChange={(e) => setEmail(e.target.value)}
               required
               disabled={loading}
-              className="flex h-10 w-full rounded-md border border-stone-300 bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             />
             <input
               type="password"
@@ -68,7 +68,7 @@ export default function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
               required
               disabled={loading}
-              className="flex h-10 w-full rounded-md border border-stone-300 bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             />
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? 'Signing in...' : 'Sign In'}
@@ -76,7 +76,7 @@ export default function LoginPage() {
           </form>
 
           <div className="text-center text-sm">
-            <a href="/signup" className="text-stone-600 hover:text-stone-900">
+            <a href="/signup" className="text-secondary hover:text-primary">
               Don&apos;t have an account? <span className="underline">Sign up</span>
             </a>
           </div>

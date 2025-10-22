@@ -40,7 +40,7 @@ export function Breadcrumbs() {
     <nav className="flex items-center space-x-2 text-sm">
       <Link 
         href="/dashboard" 
-        className="text-stone-600 hover:text-stone-900"
+        className="text-secondary hover:text-primary"
       >
         Dashboard
       </Link>
@@ -52,13 +52,13 @@ export function Breadcrumbs() {
         
         return (
           <div key={href} className="flex items-center space-x-2">
-            <ChevronRight className="h-4 w-4 text-stone-400" />
+            <ChevronRight className="h-4 w-4 text-tertiary" />
             {isLast ? (
-              <span className="text-stone-900 font-medium">{label}</span>
+              <span className="text-primary font-medium">{label}</span>
             ) : (
               <Link 
                 href={href}
-                className="text-stone-600 hover:text-stone-900"
+                className="text-secondary hover:text-primary"
               >
                 {label}
               </Link>

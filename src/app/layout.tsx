@@ -37,6 +37,25 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className={`${crimsonPro.variable} ${jetbrainsMono.variable}`} suppressHydrationWarning>
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              try {
+                const saved = localStorage.getItem('theme')
+                const prefersDark = window.matchMedia('(prefers-dark-mode)').matches
+                const shouldBeDark = saved === 'dark' || (!saved && prefersDark)
+                
+                if (shouldBeDark) {
+                  document.documentElement.classList.add('dark')
+                }
+              } catch (e) {
+                // Ignore localStorage errors
+              }
+            `,
+          }}
+        />
+      </head>
       <body suppressHydrationWarning>
         <Header />
         <main>{children}</main>

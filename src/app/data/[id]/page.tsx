@@ -51,7 +51,7 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
     <div className="container mx-auto px-4 md:px-6 py-8 max-w-7xl">
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-3xl font-normal text-stone-900 mb-2">
+        <h1 className="text-3xl font-normal text-primary mb-2">
           {fileData.start_time && fileData.end_time ? (
             <>
               {new Date(fileData.start_time).toLocaleDateString('en-US', { 
@@ -73,7 +73,7 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
         </h1>
         
         {/* Metadata */}
-        <div className="flex items-center gap-6 text-sm text-stone-600">
+        <div className="flex items-center gap-6 text-sm text-secondary">
           {fileData.sample_count && (
             <span>{fileData.sample_count.toLocaleString()} samples</span>
           )}
@@ -87,17 +87,17 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
           )}
           <span className={`
             px-2 py-1 rounded-full text-xs
-            ${fileData.status === 'ready' ? 'bg-green-50 text-green-700' : ''}
-            ${fileData.status === 'parsing' ? 'bg-blue-50 text-blue-700' : ''}
-            ${fileData.status === 'error' ? 'bg-red-50 text-red-700' : ''}
-            ${fileData.status === 'uploaded' ? 'bg-stone-50 text-stone-700' : ''}
+            ${fileData.status === 'ready' ? 'status-badge-success' : ''}
+            ${fileData.status === 'parsing' ? 'status-badge-info' : ''}
+            ${fileData.status === 'error' ? 'status-badge-error' : ''}
+            ${fileData.status === 'uploaded' ? 'bg-muted text-muted-foreground' : ''}
           `}>
             {fileData.status}
           </span>
         </div>
 
         {fileData.filename && (
-          <p className="text-xs text-stone-400 mt-2">
+          <p className="text-xs text-tertiary mt-2">
             Source: {fileData.filename}
           </p>
         )}
@@ -107,20 +107,20 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
       {fileData.status === 'ready' && samples ? (
         <IMUDataCharts samples={samples} />
       ) : fileData.status === 'parsing' ? (
-        <div className="text-center py-12 border border-stone-200 rounded-lg bg-stone-50">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-stone-900 mx-auto mb-4"></div>
-          <p className="text-stone-600">Processing data...</p>
+        <div className="text-center py-12 border border-border rounded-lg bg-muted">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <p className="text-secondary">Processing data...</p>
         </div>
       ) : fileData.status === 'error' ? (
-        <div className="text-center py-12 border border-red-200 rounded-lg bg-red-50">
-          <p className="text-red-600 mb-2">Failed to process data</p>
+        <div className="text-center py-12 border border-error rounded-lg bg-error">
+          <p className="text-error mb-2">Failed to process data</p>
           {fileData.error_message && (
-            <p className="text-sm text-red-500">{fileData.error_message}</p>
+            <p className="text-sm text-error/80">{fileData.error_message}</p>
           )}
         </div>
       ) : (
-        <div className="text-center py-12 border border-stone-200 rounded-lg bg-stone-50">
-          <p className="text-stone-600">Waiting for data to be processed...</p>
+        <div className="text-center py-12 border border-border rounded-lg bg-muted">
+          <p className="text-secondary">Waiting for data to be processed...</p>
         </div>
       )}
     </div>

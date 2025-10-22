@@ -56,9 +56,9 @@ export function IMUDataCharts({ samples }: IMUDataChartsProps) {
           title: 'Accelerometer',
           unit: 'm/s²',
           lines: [
-            { key: 'accel_x', color: '#ef4444', name: 'X' },
-            { key: 'accel_y', color: '#22c55e', name: 'Y' },
-            { key: 'accel_z', color: '#3b82f6', name: 'Z' }
+            { key: 'accel_x', color: 'hsl(var(--chart-1))', name: 'X' },
+            { key: 'accel_y', color: 'hsl(var(--chart-2))', name: 'Y' },
+            { key: 'accel_z', color: 'hsl(var(--chart-3))', name: 'Z' }
           ]
         }
       case 'gyro':
@@ -66,9 +66,9 @@ export function IMUDataCharts({ samples }: IMUDataChartsProps) {
           title: 'Gyroscope',
           unit: 'rad/s',
           lines: [
-            { key: 'gyro_x', color: '#ef4444', name: 'X' },
-            { key: 'gyro_y', color: '#22c55e', name: 'Y' },
-            { key: 'gyro_z', color: '#3b82f6', name: 'Z' }
+            { key: 'gyro_x', color: 'hsl(var(--chart-1))', name: 'X' },
+            { key: 'gyro_y', color: 'hsl(var(--chart-2))', name: 'Y' },
+            { key: 'gyro_z', color: 'hsl(var(--chart-3))', name: 'Z' }
           ]
         }
       case 'mag':
@@ -76,9 +76,9 @@ export function IMUDataCharts({ samples }: IMUDataChartsProps) {
           title: 'Magnetometer',
           unit: 'µT',
           lines: [
-            { key: 'mag_x', color: '#ef4444', name: 'X' },
-            { key: 'mag_y', color: '#22c55e', name: 'Y' },
-            { key: 'mag_z', color: '#3b82f6', name: 'Z' }
+            { key: 'mag_x', color: 'hsl(var(--chart-1))', name: 'X' },
+            { key: 'mag_y', color: 'hsl(var(--chart-2))', name: 'Y' },
+            { key: 'mag_z', color: 'hsl(var(--chart-3))', name: 'Z' }
           ]
         }
     }
@@ -94,8 +94,8 @@ export function IMUDataCharts({ samples }: IMUDataChartsProps) {
           onClick={() => setDataType('accel')}
           className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
             dataType === 'accel'
-              ? 'bg-stone-900 text-white'
-              : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
+              ? 'bg-primary text-primary-foreground'
+              : 'bg-muted text-muted-foreground hover:bg-muted/80'
           }`}
         >
           Accelerometer
@@ -104,8 +104,8 @@ export function IMUDataCharts({ samples }: IMUDataChartsProps) {
           onClick={() => setDataType('gyro')}
           className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
             dataType === 'gyro'
-              ? 'bg-stone-900 text-white'
-              : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
+              ? 'bg-primary text-primary-foreground'
+              : 'bg-muted text-muted-foreground hover:bg-muted/80'
           }`}
         >
           Gyroscope
@@ -115,8 +115,8 @@ export function IMUDataCharts({ samples }: IMUDataChartsProps) {
             onClick={() => setDataType('mag')}
             className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
               dataType === 'mag'
-                ? 'bg-stone-900 text-white'
-                : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-muted text-muted-foreground hover:bg-muted/80'
             }`}
           >
             Magnetometer
@@ -125,34 +125,35 @@ export function IMUDataCharts({ samples }: IMUDataChartsProps) {
       </div>
 
       {/* Chart */}
-      <div className="border border-stone-200 rounded-lg p-6 bg-white">
-        <h3 className="text-lg font-medium text-stone-900 mb-4">
-          {config.title} <span className="text-sm text-stone-500">({config.unit})</span>
+      <div className="border border-border rounded-lg p-6 bg-card">
+        <h3 className="text-lg font-medium text-card-foreground mb-4">
+          {config.title} <span className="text-sm text-muted-foreground">({config.unit})</span>
         </h3>
         
         <ResponsiveContainer width="100%" height={400}>
           <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+            <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
             <XAxis 
               dataKey="time" 
               label={{ value: 'Time (seconds)', position: 'insideBottom', offset: -5 }}
-              tick={{ fontSize: 12 }}
+              tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }}
             />
             <YAxis 
               label={{ value: config.unit, angle: -90, position: 'insideLeft' }}
-              tick={{ fontSize: 12 }}
+              tick={{ fontSize: 12, fill: 'hsl(var(--muted-foreground))' }}
             />
             <Tooltip 
               contentStyle={{ 
-                backgroundColor: 'white', 
-                border: '1px solid #e5e7eb',
+                backgroundColor: 'hsl(var(--popover))', 
+                border: '1px solid hsl(var(--border))',
                 borderRadius: '6px',
-                fontSize: '12px'
+                fontSize: '12px',
+                color: 'hsl(var(--popover-foreground))'
               }}
               formatter={(value: number) => value.toFixed(3)}
               labelFormatter={(label) => `Time: ${Number(label).toFixed(2)}s`}
             />
-            <Legend wrapperStyle={{ fontSize: '14px' }} />
+            <Legend wrapperStyle={{ fontSize: '14px', color: 'hsl(var(--foreground))' }} />
             {config.lines.map(line => (
               <Line
                 key={line.key}
@@ -177,12 +178,12 @@ export function IMUDataCharts({ samples }: IMUDataChartsProps) {
             const mean = values.reduce((a, b) => a + b, 0) / values.length
 
             return (
-              <div key={line.key} className="p-3 bg-stone-50 rounded-md">
+              <div key={line.key} className="p-3 bg-muted rounded-md">
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-3 h-3 rounded-full" style={{ backgroundColor: line.color }}></div>
-                  <span className="font-medium text-stone-900">{line.name}-axis</span>
+                  <span className="font-medium text-foreground">{line.name}-axis</span>
                 </div>
-                <div className="space-y-1 text-xs text-stone-600">
+                <div className="space-y-1 text-xs text-muted-foreground">
                   <div>Min: {min.toFixed(3)} {config.unit}</div>
                   <div>Max: {max.toFixed(3)} {config.unit}</div>
                   <div>Mean: {mean.toFixed(3)} {config.unit}</div>
@@ -194,7 +195,7 @@ export function IMUDataCharts({ samples }: IMUDataChartsProps) {
       </div>
 
       {/* Info */}
-      <div className="text-sm text-stone-500 bg-stone-50 border border-stone-200 rounded-lg p-4">
+      <div className="text-sm text-muted-foreground bg-muted border border-border rounded-lg p-4">
         <p className="mb-2">
           <strong>Displaying:</strong> {chartData.length.toLocaleString()} of {samples.length.toLocaleString()} samples
           {chartData.length < samples.length && ' (downsampled for performance)'}

@@ -131,8 +131,8 @@ export default function UploadPage() {
   return (
     <div className="container mx-auto px-4 md:px-6 py-8 max-w-4xl">
       <div className="mb-8">
-        <h1 className="text-3xl font-normal text-stone-900 mb-2">Upload IMU Data</h1>
-        <p className="text-stone-600">
+        <h1 className="text-3xl font-normal text-primary mb-2">Upload IMU Data</h1>
+        <p className="text-secondary">
           Upload CSV files from your IMU sensor. Files will be automatically parsed and processed.
         </p>
       </div>
@@ -144,24 +144,24 @@ export default function UploadPage() {
           border-2 border-dashed rounded-lg p-12 text-center cursor-pointer
           transition-colors
           ${isDragActive 
-            ? 'border-stone-900 bg-stone-50' 
-            : 'border-stone-300 hover:border-stone-400 hover:bg-stone-50'
+            ? 'border-primary bg-muted' 
+            : 'border-border hover-border hover-bg'
           }
           ${uploading ? 'opacity-50 cursor-not-allowed' : ''}
         `}
       >
         <input {...getInputProps()} />
         
-        <Upload className="w-12 h-12 mx-auto mb-4 text-stone-400" />
+        <Upload className="w-12 h-12 mx-auto mb-4 text-tertiary" />
         
         {isDragActive ? (
-          <p className="text-lg text-stone-700">Drop CSV files here...</p>
+          <p className="text-lg text-primary">Drop CSV files here...</p>
         ) : (
           <>
-            <p className="text-lg text-stone-700 mb-2">
+            <p className="text-lg text-primary mb-2">
               Drag and drop CSV files here, or click to select
             </p>
-            <p className="text-sm text-stone-500">
+            <p className="text-sm text-secondary">
               Supports CSV files with IMU sensor data (accelerometer, gyroscope, magnetometer)
             </p>
           </>
@@ -171,47 +171,47 @@ export default function UploadPage() {
       {/* File list */}
       {files.length > 0 && (
         <div className="mt-8">
-          <h2 className="text-xl font-normal text-stone-900 mb-4">Uploaded Files</h2>
+          <h2 className="text-xl font-normal text-primary mb-4">Uploaded Files</h2>
           
           <div className="space-y-3">
             {files.map((file) => (
               <div
                 key={file.id}
-                className="border border-stone-200 rounded-lg p-4 bg-white"
+                className="card-interactive border rounded-lg p-4"
               >
                 <div className="flex items-start gap-3">
                   {/* Status icon */}
                   <div className="flex-shrink-0 mt-1">
                     {file.status === 'uploading' && (
-                      <Loader2 className="w-5 h-5 text-stone-400 animate-spin" />
+                      <Loader2 className="w-5 h-5 text-tertiary animate-spin" />
                     )}
                     {file.status === 'parsing' && (
-                      <Loader2 className="w-5 h-5 text-blue-500 animate-spin" />
+                      <Loader2 className="w-5 h-5 text-info animate-spin" />
                     )}
                     {file.status === 'success' && (
-                      <CheckCircle2 className="w-5 h-5 text-green-600" />
+                      <CheckCircle2 className="w-5 h-5 text-success" />
                     )}
                     {file.status === 'error' && (
-                      <AlertCircle className="w-5 h-5 text-red-600" />
+                      <AlertCircle className="w-5 h-5 text-error" />
                     )}
                     {file.status === 'idle' && (
-                      <FileText className="w-5 h-5 text-stone-400" />
+                      <FileText className="w-5 h-5 text-tertiary" />
                     )}
                   </div>
 
                   {/* File info */}
                   <div className="flex-grow min-w-0">
                     <div className="flex items-baseline gap-3 mb-1">
-                      <h3 className="text-sm font-medium text-stone-900 truncate">
+                      <h3 className="text-sm font-medium text-primary truncate">
                         {file.filename}
                       </h3>
-                      <span className="text-xs text-stone-500 flex-shrink-0">
+                      <span className="text-xs text-tertiary flex-shrink-0">
                         {(file.size / 1024).toFixed(1)} KB
                       </span>
                     </div>
                     
                     {/* Status text */}
-                    <p className="text-xs text-stone-600">
+                    <p className="text-xs text-secondary">
                       {file.status === 'uploading' && 'Uploading to storage...'}
                       {file.status === 'parsing' && 'Parsing CSV data...'}
                       {file.status === 'success' && (
@@ -222,7 +222,7 @@ export default function UploadPage() {
                         </>
                       )}
                       {file.status === 'error' && (
-                        <span className="text-red-600">Error: {file.error}</span>
+                        <span className="text-error">Error: {file.error}</span>
                       )}
                     </p>
                   </div>
@@ -234,12 +234,12 @@ export default function UploadPage() {
       )}
 
       {/* Help section */}
-      <div className="mt-12 p-6 bg-stone-50 rounded-lg border border-stone-200">
-        <h3 className="text-sm font-medium text-stone-900 mb-2">CSV Format Requirements</h3>
-        <ul className="text-sm text-stone-600 space-y-1">
+      <div className="mt-12 p-6 bg-muted rounded-lg border border-border">
+        <h3 className="text-sm font-medium text-primary mb-2">CSV Format Requirements</h3>
+        <ul className="text-sm text-secondary space-y-1">
           <li>• First row must contain column headers</li>
-          <li>• Required columns: <code className="text-xs bg-white px-1 py-0.5 rounded">timestamp_ms, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z</code></li>
-          <li>• Optional columns: <code className="text-xs bg-white px-1 py-0.5 rounded">mag_x, mag_y, mag_z, quat_w, quat_x, quat_y, quat_z</code></li>
+          <li>• Required columns: <code className="text-xs bg-background px-1 py-0.5 rounded">timestamp_ms, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z</code></li>
+          <li>• Optional columns: <code className="text-xs bg-background px-1 py-0.5 rounded">mag_x, mag_y, mag_z, quat_w, quat_x, quat_y, quat_z</code></li>
           <li>• Timestamps should be in milliseconds (Unix epoch)</li>
           <li>• Accelerometer units: m/s²</li>
           <li>• Gyroscope units: rad/s</li>

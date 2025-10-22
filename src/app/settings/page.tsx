@@ -70,8 +70,8 @@ export default function SettingsPage() {
               {message && (
                 <div className={`mb-4 p-3 rounded-md ${
                   message.type === 'success' 
-                    ? 'bg-green-50 text-green-800 border border-green-200' 
-                    : 'bg-red-50 text-red-800 border border-red-200'
+                    ? 'bg-success text-success border border-success' 
+                    : 'bg-error text-error border border-error'
                 }`}>
                   {message.text}
                 </div>
@@ -89,7 +89,7 @@ export default function SettingsPage() {
                     onChange={(e) => setFullName(e.target.value)}
                     placeholder="Your name"
                     disabled={loading}
-                    className="flex h-10 w-full rounded-md border border-stone-300 bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    className="form-input flex h-10 w-full rounded-md px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   />
                 </div>
 
@@ -102,9 +102,9 @@ export default function SettingsPage() {
                     type="email"
                     value={user?.email || ''}
                     disabled
-                    className="flex h-10 w-full rounded-md border border-stone-300 bg-stone-50 px-3 py-2 text-sm text-stone-500 cursor-not-allowed"
+                    className="form-input-disabled flex h-10 w-full rounded-md px-3 py-2 text-sm"
                   />
-                  <p className="text-xs text-stone-500 mt-1">
+                  <p className="text-xs text-tertiary mt-1">
                     Email is tied to your account authentication and cannot be changed here. 
                     Contact support to update your email.
                   </p>
@@ -124,7 +124,7 @@ export default function SettingsPage() {
               <CardTitle className="text-xl font-serif">Your Bikes</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-stone-600 text-center py-8">
+              <p className="text-secondary text-center py-8">
                 No bikes configured yet. Add your first bike to use in ride metadata.
               </p>
               <Button className="w-full">Add Bike</Button>
@@ -140,14 +140,14 @@ export default function SettingsPage() {
             <CardContent className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-2">Units</label>
-                <select className="w-full px-3 py-2 border border-stone-300 rounded-md">
+                <select className="form-input w-full px-3 py-2 rounded-md">
                   <option>Metric</option>
                   <option>Imperial</option>
                 </select>
               </div>
               <div>
                 <label className="block text-sm font-medium mb-2">Timezone</label>
-                <select className="w-full px-3 py-2 border border-stone-300 rounded-md">
+                <select className="form-input w-full px-3 py-2 rounded-md">
                   <option>UTC</option>
                 </select>
               </div>
@@ -163,18 +163,18 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-6">
               <div>
-                <h3 className="font-medium mb-2">Account ID</h3>
-                <p className="text-sm text-stone-600 mb-2">
+                <h3 className="font-medium mb-2 text-primary">Account ID</h3>
+                <p className="text-sm text-secondary mb-2">
                   Your unique identifier (never changes):
                 </p>
-                <code className="block p-2 bg-stone-100 rounded text-xs font-mono break-all">
+                <code className="block p-2 bg-muted rounded text-xs font-mono break-all text-primary">
                   {user?.id || 'Loading...'}
                 </code>
               </div>
 
-              <div className="border-t border-stone-200 pt-6">
-                <h3 className="font-medium mb-2">Change Password</h3>
-                <p className="text-sm text-stone-600 mb-4">
+              <div className="border-t border-border pt-6">
+                <h3 className="font-medium mb-2 text-primary">Change Password</h3>
+                <p className="text-sm text-secondary mb-4">
                   Password changes require re-authentication.
                 </p>
                 <Button variant="outline" disabled>
@@ -182,12 +182,12 @@ export default function SettingsPage() {
                 </Button>
               </div>
 
-              <div className="border-t border-stone-200 pt-6">
-                <h3 className="font-medium mb-2 text-red-800">Danger Zone</h3>
-                <p className="text-sm text-stone-600 mb-4">
+              <div className="border-t border-border pt-6">
+                <h3 className="font-medium mb-2 text-error">Danger Zone</h3>
+                <p className="text-sm text-secondary mb-4">
                   Permanently delete your account and all associated data.
                 </p>
-                <Button variant="outline" className="border-red-300 text-red-800 hover:bg-red-50" disabled>
+                <Button variant="outline" className="border-error text-error hover:bg-error/10" disabled>
                   Delete Account (Coming Soon)
                 </Button>
               </div>
