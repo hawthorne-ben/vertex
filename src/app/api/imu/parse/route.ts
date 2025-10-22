@@ -46,13 +46,33 @@ export async function POST(req: NextRequest) {
     }
 
     // Trigger Inngest job
-    await inngest.send({
-      name: 'imu/parse',
-      data: { 
+    try {
+      await inngest.send({
+        name: 'imu/parse',
+        data: { 
+          fileId,
+          userId: user.id
+        }
+      })
+      console.log(`✅ Parse job triggered for file ${fileId}`)
+    } catch (inngestError) {
+      console.warn(`⚠️ Failed to trigger Inngest parse job for file ${fileId}:`, inngestError)
+      
+      // Update file status to indicate manual processing needed
+      await supabase
+        .from('imu_data_files')
+        .update({
+          status: 'uploaded',
+          error_message: 'Inngest not available - manual processing required'
+        })
+        .eq('id', fileId)
+      
+      return NextResponse.json({ 
+        status: 'uploaded',
         fileId,
-        userId: user.id
-      }
-    })
+        message: 'File uploaded but requires manual processing trigger'
+      })
+    }
 
     return NextResponse.json({ 
       status: 'parsing_queued',

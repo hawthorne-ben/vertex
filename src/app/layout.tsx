@@ -4,6 +4,8 @@ import "./globals.css"
 import { Header } from "@/components/layout/header"
 import { Analytics } from '@vercel/analytics/react'
 import { SpeedInsights } from "@vercel/speed-insights/next"
+import { ToastProvider } from "@/components/ui/toast-context"
+import { ToastContainer } from "@/components/ui/toast-container"
 
 const crimsonPro = Crimson_Pro({
   subsets: ["latin"],
@@ -57,10 +59,13 @@ export default function RootLayout({
         />
       </head>
       <body suppressHydrationWarning>
-        <Header />
-        <main>{children}</main>
-        <Analytics />
-        <SpeedInsights />
+        <ToastProvider>
+          <Header />
+          <main>{children}</main>
+          <ToastContainer />
+          <Analytics />
+          <SpeedInsights />
+        </ToastProvider>
       </body>
     </html>
   )

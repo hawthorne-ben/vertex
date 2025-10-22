@@ -26,7 +26,7 @@ export function ConfirmationModal({ files, isOpen, onConfirm, onCancel, onRemove
   }
 
   const isFileOversized = (bytes: number) => {
-    const MAX_FILE_SIZE = 50 * 1024 * 1024 // 50MB limit
+    const MAX_FILE_SIZE = 200 * 1024 * 1024 // 200MB limit (matches upload logic)
     return bytes > MAX_FILE_SIZE
   }
 
@@ -36,8 +36,8 @@ export function ConfirmationModal({ files, isOpen, onConfirm, onCancel, onRemove
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-background border border-border rounded-lg shadow-lg max-w-2xl w-full max-h-[80vh] overflow-hidden">
+    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-background/90 backdrop-blur-md border border-border rounded-xl shadow-2xl shadow-black/25 max-w-2xl w-full max-h-[80vh] overflow-hidden glass-surface">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-border">
           <h2 className="text-xl font-medium text-primary">Confirm Upload</h2>
@@ -133,8 +133,8 @@ export function UploadProgressModal({ isOpen, currentFile, progress, totalFiles,
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-background border border-border rounded-lg shadow-lg max-w-md w-full">
+    <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-background/90 backdrop-blur-md border border-border rounded-xl shadow-2xl shadow-black/25 max-w-md w-full glass-surface">
         {/* Header */}
         <div className="p-6 border-b border-border">
           <h2 className="text-xl font-medium text-primary">Uploading Files</h2>
