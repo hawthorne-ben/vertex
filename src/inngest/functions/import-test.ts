@@ -27,7 +27,7 @@ export const importTest = inngest.createFunction(
     
     // Test 3: IMU types
     try {
-      const { ParsedIMUData } = await import('@/lib/imu/types')
+      const typesModule = await import('@/lib/imu/types')
       results.push('✅ IMU types imported')
     } catch (error) {
       results.push(`❌ IMU types failed: ${error}`)
