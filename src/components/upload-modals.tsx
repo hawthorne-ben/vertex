@@ -47,7 +47,7 @@ export function ConfirmationModal({ files, isOpen, onConfirm, onCancel, onRemove
         {/* Content */}
         <div className="p-6 overflow-y-auto max-h-[60vh]">
           <p className="text-secondary mb-4">
-            Please review the files you're about to upload. Processing will begin automatically after upload.
+            Please review the files you&apos;re about to upload. Processing will begin automatically after upload.
           </p>
 
           <div className="space-y-3">
