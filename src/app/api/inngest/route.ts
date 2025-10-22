@@ -2,6 +2,16 @@ import { serve } from 'inngest/next'
 import { inngest } from '@/inngest/client'
 import { testFunction } from '@/inngest/functions/test-function'
 
+// Debug: Try importing parseIMU with error handling
+let parseIMU;
+try {
+  const parseIMUModule = require('@/inngest/functions/parse-imu');
+  parseIMU = parseIMUModule.parseIMU;
+  console.log('✅ parseIMU imported successfully');
+} catch (error) {
+  console.error('❌ Failed to import parseIMU:', error);
+}
+
 // Debug: Try importing parseIMUTest with error handling
 let parseIMUTest;
 try {
@@ -13,6 +23,12 @@ try {
 }
 
 const functions = [testFunction];
+if (parseIMU) {
+  functions.push(parseIMU);
+  console.log('✅ parseIMU added to functions array');
+} else {
+  console.log('❌ parseIMU not added - import failed');
+}
 if (parseIMUTest) {
   functions.push(parseIMUTest);
   console.log('✅ parseIMUTest added to functions array');
