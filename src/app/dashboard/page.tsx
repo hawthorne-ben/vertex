@@ -14,34 +14,34 @@ export default function DashboardPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-6 md:mb-8">
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-stone-600">Total Rides</CardTitle>
+            <CardTitle className="text-sm font-medium text-secondary">Total Rides</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.totalRides}</div>
+            <div className="text-2xl font-bold text-primary">{stats.totalRides}</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-stone-600">Total Hours</CardTitle>
+            <CardTitle className="text-sm font-medium text-secondary">Total Hours</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.totalHours}h</div>
+            <div className="text-2xl font-bold text-primary">{stats.totalHours}h</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-stone-600">Max Lean Angle</CardTitle>
+            <CardTitle className="text-sm font-medium text-secondary">Max Lean Angle</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.maxLeanAngle}°</div>
+            <div className="text-2xl font-bold text-primary">{stats.maxLeanAngle}°</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-stone-600">Storage Used</CardTitle>
+            <CardTitle className="text-sm font-medium text-secondary">Storage Used</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.storageUsed} {stats.storageUnit}</div>
+            <div className="text-2xl font-bold text-primary">{stats.storageUsed} {stats.storageUnit}</div>
           </CardContent>
         </Card>
       </div>
@@ -59,35 +59,35 @@ export default function DashboardPage() {
                 <Link 
                   key={ride.id}
                   href={`/rides/${ride.id}`}
-                  className="block p-3 border border-stone-200 rounded-md hover:bg-stone-50 transition-colors"
+                  className="card-interactive block p-3 rounded-md"
                 >
                   <div className="flex justify-between gap-4 mb-2">
-                    <h3 className="font-medium text-base">{ride.name}</h3>
-                    <span className="text-sm text-stone-500 flex-shrink-0">
+                    <h3 className="font-medium text-base text-primary">{ride.name}</h3>
+                    <span className="text-sm text-tertiary flex-shrink-0">
                       {new Date(ride.date).toLocaleDateString('en-US', { 
                         month: 'short', 
                         day: 'numeric'
                       })}
                     </span>
                   </div>
-                  <p className="text-sm text-stone-600 mb-2">{ride.location}</p>
+                  <p className="text-sm text-secondary mb-2">{ride.location}</p>
                   
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
                     <div className="flex justify-between">
-                      <span className="text-stone-500">Distance</span>
-                      <span className="font-medium">{ride.distance} mi</span>
+                      <span className="text-tertiary">Distance</span>
+                      <span className="font-medium text-primary">{ride.distance} mi</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-stone-500">Duration</span>
-                      <span className="font-medium">{Math.round(ride.duration / 60)} min</span>
+                      <span className="text-tertiary">Duration</span>
+                      <span className="font-medium text-primary">{Math.round(ride.duration / 60)} min</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-stone-500">Max Speed</span>
-                      <span className="font-medium">{ride.stats.maxSpeed} mph</span>
+                      <span className="text-tertiary">Max Speed</span>
+                      <span className="font-medium text-primary">{ride.stats.maxSpeed} mph</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-stone-500">Max Lean</span>
-                      <span className="font-medium">{ride.stats.maxLeanAngle}°</span>
+                      <span className="text-tertiary">Max Lean</span>
+                      <span className="font-medium text-primary">{ride.stats.maxLeanAngle}°</span>
                     </div>
                   </div>
                 </Link>
@@ -105,44 +105,44 @@ export default function DashboardPage() {
             <div className="space-y-6">
               {/* Calendar Heatmap Placeholder */}
               <div>
-                <h3 className="text-sm font-medium mb-3">This Month</h3>
-                <div className="h-32 bg-stone-100 rounded-md flex items-center justify-center">
-                  <p className="text-stone-500 text-sm">Calendar heatmap</p>
+                <h3 className="text-sm font-medium mb-3 text-primary">This Month</h3>
+                <div className="h-32 bg-muted rounded-md flex items-center justify-center">
+                  <p className="text-tertiary text-sm">Calendar heatmap</p>
                 </div>
               </div>
 
               {/* Quick Stats */}
               <div>
-                <h3 className="text-sm font-medium mb-3">Last 30 Days</h3>
+                <h3 className="text-sm font-medium mb-3 text-primary">Last 30 Days</h3>
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
-                    <span className="text-stone-600">Rides</span>
-                    <span className="font-medium">12</span>
+                    <span className="text-secondary">Rides</span>
+                    <span className="font-medium text-primary">12</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-stone-600">Total Distance</span>
-                    <span className="font-medium">284 mi</span>
+                    <span className="text-secondary">Total Distance</span>
+                    <span className="font-medium text-primary">284 mi</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-stone-600">Total Time</span>
-                    <span className="font-medium">18.5 h</span>
+                    <span className="text-secondary">Total Time</span>
+                    <span className="font-medium text-primary">18.5 h</span>
                   </div>
                   <div className="flex justify-between">
-                    <span className="text-stone-600">Avg Lean Angle</span>
-                    <span className="font-medium">32.4°</span>
+                    <span className="text-secondary">Avg Lean Angle</span>
+                    <span className="font-medium text-primary">32.4°</span>
                   </div>
                 </div>
               </div>
 
               {/* Milestones */}
               <div>
-                <h3 className="text-sm font-medium mb-3">Recent Milestones</h3>
+                <h3 className="text-sm font-medium mb-3 text-primary">Recent Milestones</h3>
                 <div className="space-y-2 text-sm">
-                  <div className="flex items-center gap-2 text-stone-600">
+                  <div className="flex items-center gap-2 text-secondary">
                     <span className="text-lg">🏆</span>
                     <span>First track day completed</span>
                   </div>
-                  <div className="flex items-center gap-2 text-stone-600">
+                  <div className="flex items-center gap-2 text-secondary">
                     <span className="text-lg">📊</span>
                     <span>20+ rides logged</span>
                   </div>

@@ -106,13 +106,13 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
 
   if (files.length === 0) {
     return (
-      <div className="text-center py-12 border-2 border-dashed border-stone-200 rounded-lg">
-        <FileText className="w-12 h-12 mx-auto mb-4 text-stone-400" />
-        <h3 className="text-lg font-medium text-stone-900 mb-2">No IMU data yet</h3>
-        <p className="text-stone-600 mb-6">Upload your first sensor data to get started</p>
+      <div className="text-center py-12 border-2 border-dashed border-border rounded-lg">
+        <FileText className="w-12 h-12 mx-auto mb-4 text-tertiary" />
+        <h3 className="text-lg font-medium text-primary mb-2">No IMU data yet</h3>
+        <p className="text-secondary mb-6">Upload your first sensor data to get started</p>
         <a
           href="/upload"
-          className="inline-block px-6 py-2 bg-stone-900 text-white hover:bg-stone-800 transition-colors rounded-md"
+          className="inline-block px-6 py-2 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors rounded-md"
         >
           Upload Data
         </a>
@@ -126,29 +126,29 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
         <a
           key={file.id}
           href={`/data/${file.id}`}
-          className="block border border-stone-200 rounded-lg p-6 bg-white hover:shadow-md hover:border-stone-300 transition-all cursor-pointer"
+          className="card-interactive block p-6 rounded-lg"
         >
           <div className="flex items-start gap-4">
             {/* Status icon */}
             <div className="flex-shrink-0 mt-1">
               {file.status === 'parsing' && (
-                <Loader2 className="w-6 h-6 text-blue-500 animate-spin" />
+                <Loader2 className="w-6 h-6 text-info animate-spin" />
               )}
               {file.status === 'ready' && (
-                <CheckCircle2 className="w-6 h-6 text-green-600" />
+                <CheckCircle2 className="w-6 h-6 text-success" />
               )}
               {file.status === 'error' && (
-                <AlertCircle className="w-6 h-6 text-red-600" />
+                <AlertCircle className="w-6 h-6 text-error" />
               )}
               {file.status === 'uploaded' && (
-                <Clock className="w-6 h-6 text-stone-400" />
+                <Clock className="w-6 h-6 text-tertiary" />
               )}
             </div>
 
             {/* Data segment info */}
             <div className="flex-grow min-w-0">
               <div className="flex items-baseline gap-3 mb-2">
-                <h3 className="text-lg font-medium text-stone-900">
+                <h3 className="text-lg font-medium text-primary">
                   {file.start_time && file.end_time ? (
                     <>
                       {new Date(file.start_time).toLocaleDateString('en-US', { 
@@ -165,15 +165,15 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
                       })}
                     </>
                   ) : (
-                    <span className="text-stone-500">Processing...</span>
+                    <span className="text-tertiary">Processing...</span>
                   )}
                 </h3>
                 <span className={`
                   text-xs px-2 py-1 rounded-full flex-shrink-0
-                  ${file.status === 'ready' ? 'bg-green-50 text-green-700' : ''}
-                  ${file.status === 'parsing' ? 'bg-blue-50 text-blue-700' : ''}
-                  ${file.status === 'error' ? 'bg-red-50 text-red-700' : ''}
-                  ${file.status === 'uploaded' ? 'bg-stone-50 text-stone-700' : ''}
+                  ${file.status === 'ready' ? 'status-badge-success' : ''}
+                  ${file.status === 'parsing' ? 'status-badge-info' : ''}
+                  ${file.status === 'error' ? 'status-badge-error' : ''}
+                  ${file.status === 'uploaded' ? 'bg-muted text-muted-foreground' : ''}
                 `}>
                   {file.status}
                 </span>
@@ -183,22 +183,22 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
               <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
                 {file.sample_count && (
                   <div>
-                    <span className="text-stone-500 block">Samples</span>
-                    <span className="text-stone-900">{file.sample_count.toLocaleString()}</span>
+                    <span className="text-tertiary block">Samples</span>
+                    <span className="text-primary">{file.sample_count.toLocaleString()}</span>
                   </div>
                 )}
 
                 {file.sample_rate && (
                   <div>
-                    <span className="text-stone-500 block">Sample Rate</span>
-                    <span className="text-stone-900">{file.sample_rate} Hz</span>
+                    <span className="text-tertiary block">Sample Rate</span>
+                    <span className="text-primary">{file.sample_rate} Hz</span>
                   </div>
                 )}
 
                 {file.start_time && file.end_time && (
                   <div>
-                    <span className="text-stone-500 block">Duration</span>
-                    <span className="text-stone-900">
+                    <span className="text-tertiary block">Duration</span>
+                    <span className="text-primary">
                       {formatDuration(file.start_time, file.end_time)}
                     </span>
                   </div>
@@ -207,14 +207,14 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
 
               {/* Source file (de-emphasized) */}
               {file.filename && (
-                <div className="mt-3 text-xs text-stone-400">
+                <div className="mt-3 text-xs text-tertiary">
                   Source: {file.filename} ({formatFileSize(file.file_size_bytes)})
                 </div>
               )}
 
               {/* Error message */}
               {file.status === 'error' && file.error_message && (
-                <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
+                <div className="mt-3 p-3 bg-error text-error border-error rounded text-sm">
                   {file.error_message}
                 </div>
               )}
@@ -228,7 +228,7 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
                   handleDelete(file.id)
                 }}
                 disabled={deleting === file.id}
-                className="p-2 text-stone-400 hover:text-red-600 hover:bg-red-50 transition-colors rounded-md disabled:opacity-50"
+                className="p-2 text-tertiary hover:text-error hover:bg-error/10 transition-colors rounded-md disabled:opacity-50"
                 title="Delete segment"
               >
                 {deleting === file.id ? (

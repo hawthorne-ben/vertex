@@ -52,7 +52,7 @@ export default function SignUpPage() {
 
   if (success) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-stone-50 px-4">
+      <div className="min-h-screen flex items-center justify-center bg-muted px-4">
         <Card className="w-full max-w-md">
           <CardHeader>
             <CardTitle className="text-3xl font-serif font-normal text-center">
@@ -60,10 +60,10 @@ export default function SignUpPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <p className="text-center text-stone-600">
+            <p className="text-center text-secondary">
               We sent a confirmation link to <strong>{email}</strong>
             </p>
-            <p className="text-center text-sm text-stone-500">
+            <p className="text-center text-sm text-secondary">
               Click the link in the email to complete your registration.
             </p>
             <Button 
@@ -80,7 +80,7 @@ export default function SignUpPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-stone-50 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-muted px-4">
       <Card className="w-full max-w-md">
         <CardHeader>
           <CardTitle className="text-3xl font-serif font-normal text-center">
@@ -89,7 +89,7 @@ export default function SignUpPage() {
         </CardHeader>
         <CardContent>
           {error && (
-            <div className="mb-4 p-3 text-sm text-red-800 bg-red-50 border border-red-200 rounded-md">
+            <div className="mb-4 p-3 text-sm text-error bg-error border border-error rounded-md">
               {error}
             </div>
           )}
@@ -101,7 +101,7 @@ export default function SignUpPage() {
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               disabled={loading}
-              className="flex h-10 w-full rounded-md border border-stone-300 bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             />
             <input
               type="email"
@@ -110,7 +110,7 @@ export default function SignUpPage() {
               onChange={(e) => setEmail(e.target.value)}
               required
               disabled={loading}
-              className="flex h-10 w-full rounded-md border border-stone-300 bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             />
             <input
               type="password"
@@ -120,7 +120,7 @@ export default function SignUpPage() {
               required
               minLength={6}
               disabled={loading}
-              className="flex h-10 w-full rounded-md border border-stone-300 bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
             />
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? 'Creating account...' : 'Sign Up'}
@@ -128,7 +128,7 @@ export default function SignUpPage() {
           </form>
           
           <div className="text-center text-sm mt-4">
-            <a href="/login" className="text-stone-600 hover:text-stone-900">
+            <a href="/login" className="text-secondary hover:text-primary">
               Already have an account? <span className="underline">Sign in</span>
             </a>
           </div>

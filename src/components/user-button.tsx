@@ -7,10 +7,10 @@ export function UserButton() {
   return (
     <Link 
       href="/settings"
-      className="p-2 hover:bg-stone-50 transition-colors rounded-full"
+      className="p-2 hover-bg transition-colors rounded-full"
       title="Settings"
     >
-      <User className="h-5 w-5 text-stone-600" />
+      <User className="h-5 w-5 text-secondary" />
     </Link>
   )
 }
