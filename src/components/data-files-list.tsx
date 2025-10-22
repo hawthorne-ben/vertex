@@ -15,7 +15,7 @@ interface IMUDataFile {
   end_time: string | null
   sample_rate: number | null
   sample_count: number | null
-  status: 'uploaded' | 'parsing' | 'ready' | 'error'
+  status: 'uploaded' | 'parsing' | 'ready' | 'failed'
   error_message: string | null
   uploaded_at: string
   parsed_at: string | null
@@ -202,7 +202,7 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
                   text-xs px-2 py-1 rounded-full flex-shrink-0
                   ${file.status === 'ready' ? 'status-badge-success' : ''}
                   ${file.status === 'parsing' ? 'status-badge-info' : ''}
-                  ${file.status === 'error' ? 'status-badge-error' : ''}
+                  ${file.status === 'failed' ? 'status-badge-error' : ''}
                   ${file.status === 'uploaded' ? 'bg-muted text-muted-foreground' : ''}
                 `}>
                   {file.status}
