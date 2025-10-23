@@ -1,5 +1,5 @@
 # Vertex
-**The Point of Performance**
+**Your ride, unencrypted**
 
 ## Overview
 

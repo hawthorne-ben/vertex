@@ -163,7 +163,7 @@ export default function Home() {
             <div className="max-w-xl">
               <div className="bg-card/95 backdrop-blur-sm rounded-lg p-5 sm:p-6 md:p-8 shadow-2xl">
                 <h2 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-light tracking-tight leading-tight mb-3 sm:mb-4 text-card-foreground">
-                  The Point of Performance
+                  Your ride, unencrypted
                 </h2>
                 <p className="text-sm sm:text-base md:text-lg text-muted-foreground leading-relaxed mb-5 sm:mb-6">
                   Measure how you actually ride. Understand cornering forces, braking smoothness, 

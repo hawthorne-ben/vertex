@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react'
 import { FileText, CheckCircle2, AlertCircle, Loader2, Trash2, Clock } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
-import { useRouter } from 'next/navigation'
 import { useToast } from '@/components/ui/toast-context'
 import { ConfirmationModal } from '@/components/ui/confirmation-modal'
 
@@ -78,6 +77,9 @@ interface IMUDataFile {
   error_message: string | null
   uploaded_at: string
   parsed_at: string | null
+  samples_processed: number | null
+  last_checkpoint_at: string | null
+  processing_started_at: string | null
 }
 
 interface DataFilesListProps {
@@ -89,22 +91,26 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
   const [deleting, setDeleting] = useState<string | null>(null)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [fileToDelete, setFileToDelete] = useState<IMUDataFile | null>(null)
-  const router = useRouter()
+  const [timeEstimates, setTimeEstimates] = useState<Record<string, number[]>>({}) // Buffer for smoothing estimates
   const { addToast } = useToast()
 
   // Poll for status updates on processing files
   useEffect(() => {
-    const processingFiles = files.filter(f => f.status === 'uploaded' || f.status === 'parsing')
-    if (processingFiles.length === 0) return
-
+    // Poll continuously while any files are processing
     const interval = setInterval(async () => {
       const supabase = createClient()
-      const fileIds = processingFiles.map(f => f.id)
+      
+      // Get current list of processing files
+      const processingFileIds = files
+        .filter(f => f.status === 'uploaded' || f.status === 'parsing')
+        .map(f => f.id)
+      
+      if (processingFileIds.length === 0) return
 
       const { data: updatedFiles, error } = await supabase
         .from('imu_data_files')
         .select('*')
-        .in('id', fileIds)
+        .in('id', processingFileIds)
 
       if (error) {
         console.error('Failed to poll file status:', error)
@@ -114,19 +120,26 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
       if (updatedFiles) {
         setFiles(prev => prev.map(file => {
           const updated = updatedFiles.find(f => f.id === file.id)
-          if (updated && updated.status !== file.status) {
-            console.log(`📊 File ${file.filename} status changed: ${file.status} → ${updated.status}`)
-            if (updated.status === 'failed' && updated.error_message) {
-              console.error(`❌ File ${file.filename} failed: ${updated.error_message}`)
+          if (updated) {
+            // Log status changes
+            if (updated.status !== file.status) {
+              console.log(`📊 File ${file.filename} status changed: ${file.status} → ${updated.status}`)
+              if (updated.status === 'failed' && updated.error_message) {
+                console.error(`❌ File ${file.filename} failed: ${updated.error_message}`)
+              }
+            }
+            // Log progress updates
+            if (updated.samples_processed !== file.samples_processed && updated.samples_processed) {
+              console.log(`📈 File ${file.filename} progress: ${updated.samples_processed.toLocaleString()} samples`)
             }
           }
           return updated || file
         }))
       }
-    }, 3000) // Poll every 3 seconds
+    }, 2000) // Poll every 2 seconds for more responsive progress updates
 
     return () => clearInterval(interval)
-  }, [files]) // Include files in dependency array
+  }, [files]) // Restart polling when files list changes (new uploads)
 
   const handleDeleteClick = (file: IMUDataFile) => {
     setFileToDelete(file)
@@ -262,7 +275,7 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
 
             {/* Data segment info */}
             <div className="flex-grow min-w-0">
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex items-start justify-between mb-2 gap-3">
                 <h3 className="text-lg font-medium text-primary">
                   {file.start_time && file.end_time ? (
                     <>
@@ -300,15 +313,32 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
                     <span className="text-tertiary">Processing...</span>
                   )}
                 </h3>
-                <span className={`
-                  text-xs px-2 py-1 rounded-full flex-shrink-0
-                  ${file.status === 'ready' ? 'status-badge-success' : ''}
-                  ${file.status === 'parsing' ? 'status-badge-info' : ''}
-                  ${file.status === 'failed' ? 'status-badge-error' : ''}
-                  ${file.status === 'uploaded' ? 'bg-muted text-muted-foreground' : ''}
-                `}>
-                  {file.status === 'parsing' ? 'parsing' : file.status}
-                </span>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className={`
+                    text-xs px-3 py-1.5 rounded-full font-medium shadow-sm
+                    ${file.status === 'ready' ? 'bg-success/90 text-success-foreground shadow-success/20' : ''}
+                    ${file.status === 'parsing' ? 'bg-info/90 text-info-foreground shadow-info/20' : ''}
+                    ${file.status === 'failed' ? 'bg-error/90 text-error-foreground shadow-error/20' : ''}
+                    ${file.status === 'uploaded' ? 'bg-muted/90 text-muted-foreground shadow-muted/20' : ''}
+                  `}>
+                    {file.status === 'parsing' ? 'parsing' : file.status}
+                  </span>
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault()
+                      handleDeleteClick(file)
+                    }}
+                    disabled={deleting === file.id}
+                    className="p-2 text-tertiary hover:text-error hover:bg-error/10 transition-colors rounded-md disabled:opacity-50"
+                    title="Delete segment"
+                  >
+                    {deleting === file.id ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-5 h-5" />
+                    )}
+                  </button>
+                </div>
               </div>
 
               {/* Metadata grid */}
@@ -347,37 +377,99 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
               {/* Processing progress indicator */}
               {file.status === 'parsing' && (
                 <div className="mt-4">
-                  {file.file_size_bytes && file.file_size_bytes > 10 * 1024 * 1024 ? (
-                    // Large file processing (>10MB)
+                  {file.samples_processed != null && file.samples_processed > 0 && file.sample_count && file.sample_count > 0 ? (
+                    // Real progress tracking available (batch processing has started)
                     <>
-                      <div className="text-sm text-tertiary mb-2">
-                        Processing large file...
+                      <div className="flex justify-between items-center text-sm mb-2">
+                        <span className="text-tertiary">Processing samples...</span>
+                        <span className="text-primary font-mono font-semibold">
+                          {Math.round((file.samples_processed / file.sample_count) * 100)}%
+                        </span>
                       </div>
-                      <div className="w-full bg-muted rounded-full h-2">
+                      <div className="w-full bg-muted rounded-full h-2.5 mb-2">
                         <div 
-                          className="bg-info h-2 rounded-full transition-all duration-1000 animate-pulse"
+                          className="bg-info h-2.5 rounded-full transition-all duration-500"
                           style={{ 
-                            width: file.file_size_bytes > 50 * 1024 * 1024 ? '60%' : '40%' // Estimate based on file size
+                            width: `${Math.min(100, (file.samples_processed / file.sample_count) * 100)}%` 
                           }}
                         />
                       </div>
-                      <div className="text-xs text-tertiary mt-1">
-                        Large files may take several minutes to process completely
+                      <div className="flex justify-between text-xs text-tertiary">
+                        <span>
+                          {file.samples_processed.toLocaleString()} / {file.sample_count.toLocaleString()} samples
+                        </span>
+                        {file.processing_started_at && (
+                          <span className="font-mono">
+                            {(() => {
+                              try {
+                                const startTime = new Date(file.processing_started_at).getTime()
+                                const elapsedSeconds = (Date.now() - startTime) / 1000
+                                const samplesPerSecond = file.samples_processed / elapsedSeconds
+                                const remainingSamples = file.sample_count - file.samples_processed
+                                const estimatedSecondsRemaining = remainingSamples / samplesPerSecond
+                                
+                                // Buffer estimates for smoothing
+                                const currentEstimates = timeEstimates[file.id] || []
+                                const updatedEstimates = [...currentEstimates, estimatedSecondsRemaining].slice(-4) // Keep last 4 estimates
+                                
+                                // Update state asynchronously
+                                setTimeout(() => {
+                                  setTimeEstimates(prev => ({ ...prev, [file.id]: updatedEstimates }))
+                                }, 0)
+                                
+                                // Wait for at least 3 data points before showing estimate
+                                if (updatedEstimates.length < 3) {
+                                  return 'Calculating...'
+                                }
+                                
+                                // Use average of buffered estimates for smoothing
+                                const avgEstimate = updatedEstimates.reduce((a, b) => a + b, 0) / updatedEstimates.length
+                                
+                                if (avgEstimate < 60) {
+                                  return `~${Math.round(avgEstimate)}s remaining`
+                                } else {
+                                  return `~${Math.round(avgEstimate / 60)}m remaining`
+                                }
+                              } catch (error) {
+                                return 'Calculating...'
+                              }
+                            })()}
+                          </span>
+                        )}
+                      </div>
+                    </>
+                  ) : file.processing_started_at ? (
+                    // Processing has started but no batch progress yet (downloading/parsing CSV)
+                    <>
+                      <div className="text-sm text-tertiary mb-2">
+                        <strong className="text-info">Processing started...</strong>
+                      </div>
+                      <div className="w-full bg-muted rounded-full h-2.5 mb-2">
+                        <div 
+                          className="bg-info h-2.5 rounded-full transition-all duration-1000 animate-pulse"
+                          style={{ width: '30%' }}
+                        />
+                      </div>
+                      <div className="text-xs text-tertiary">
+                        {(() => {
+                          try {
+                            const startTime = new Date(file.processing_started_at).getTime()
+                            const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000)
+                            return `Downloading and parsing CSV... (${elapsedSeconds}s elapsed)`
+                          } catch (error) {
+                            return 'Downloading and parsing CSV...'
+                          }
+                        })()}
                       </div>
                     </>
                   ) : (
-                    // Small file processing (≤10MB) - explanatory text
+                    // Queued but not started yet
                     <div className="text-sm text-tertiary">
                       <div className="mb-2">
-                        <strong className="text-info">Processing IMU data...</strong>
+                        <strong className="text-info">Queued for processing...</strong>
                       </div>
-                      <div className="text-xs space-y-1">
-                        <div>• Parsing sensor readings (accelerometer, gyroscope, magnetometer)</div>
-                        <div>• Validating data format and timestamps</div>
-                        <div>• Storing samples in database</div>
-                        <div className="text-info mt-2">
-                          <strong>Expected time:</strong> 30-60 seconds for files under 10MB
-                        </div>
+                      <div className="text-xs text-tertiary">
+                        Job will start momentarily
                       </div>
                     </div>
                   )}
@@ -390,25 +482,6 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
                   {file.error_message}
                 </div>
               )}
-            </div>
-
-            {/* Actions */}
-            <div className="flex-shrink-0">
-              <button
-                onClick={(e) => {
-                  e.preventDefault()
-                  handleDeleteClick(file)
-                }}
-                disabled={deleting === file.id}
-                className="p-2 text-tertiary hover:text-error hover:bg-error/10 transition-colors rounded-md disabled:opacity-50"
-                title="Delete segment"
-              >
-                {deleting === file.id ? (
-                  <Loader2 className="w-5 h-5 animate-spin" />
-                ) : (
-                  <Trash2 className="w-5 h-5" />
-                )}
-              </button>
             </div>
           </div>
         </a>

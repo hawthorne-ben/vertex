@@ -25,51 +25,37 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'File not found' }, { status: 404 })
     }
 
-    // Step 2: Delete all associated samples in batches to avoid timeout
-    console.log(`🗑️ Starting batch deletion of samples for file ${fileId}`)
-    let deletedCount = 0
-    const BATCH_SIZE = 10000 // Delete 10k samples at a time
-    let hasMore = true
+    // Step 2: Delete all associated samples (single query - CASCADE will handle this)
+    // First, count the samples to report how many were deleted
+    console.log(`🗑️ Checking sample count for file ${fileId}`)
+    const { count, error: countError } = await supabase
+      .from('imu_samples')
+      .select('*', { count: 'exact', head: true })
+      .eq('imu_file_id', fileId)
     
-    while (hasMore) {
-      // Get a batch of sample IDs to delete
-      const { data: sampleBatch, error: fetchError } = await supabase
-        .from('imu_samples')
-        .select('id')
-        .eq('imu_file_id', fileId)
-        .limit(BATCH_SIZE)
-      
-      if (fetchError) {
-        console.error('Failed to fetch samples for deletion:', fetchError)
-        return NextResponse.json({ error: 'Failed to fetch samples for deletion' }, { status: 500 })
-      }
-      
-      if (!sampleBatch || sampleBatch.length === 0) {
-        hasMore = false
-        break
-      }
-      
-      // Delete this batch
-      const { error: batchDeleteError } = await supabase
-        .from('imu_samples')
-        .delete()
-        .in('id', sampleBatch.map(s => s.id))
-      
-      if (batchDeleteError) {
-        console.error('Failed to delete sample batch:', batchDeleteError)
-        return NextResponse.json({ error: 'Failed to delete sample batch' }, { status: 500 })
-      }
-      
-      deletedCount += sampleBatch.length
-      console.log(`✅ Deleted batch: ${deletedCount} samples deleted so far`)
-      
-      // If we got fewer samples than the batch size, we're done
-      if (sampleBatch.length < BATCH_SIZE) {
-        hasMore = false
-      }
+    if (countError) {
+      console.error('Failed to count samples:', countError)
+      // Non-critical, continue with deletion
     }
     
-    console.log(`✅ Successfully deleted ${deletedCount} samples for file ${fileId}`)
+    const sampleCount = count || 0
+    console.log(`📊 Found ${sampleCount} samples to delete`)
+    
+    // Delete all samples for this file in one query
+    console.log(`🗑️ Deleting samples for file ${fileId}`)
+    const { error: samplesDeleteError } = await supabase
+      .from('imu_samples')
+      .delete()
+      .eq('imu_file_id', fileId)
+    
+    if (samplesDeleteError) {
+      console.error('Failed to delete samples:', samplesDeleteError)
+      return NextResponse.json({ 
+        error: `Failed to delete samples: ${samplesDeleteError.message}` 
+      }, { status: 500 })
+    }
+    
+    console.log(`✅ Successfully deleted ${sampleCount} samples for file ${fileId}`)
 
     // Step 3: Delete the file record
     const { error: fileDeleteError } = await supabase
@@ -95,7 +81,7 @@ export async function DELETE(request: NextRequest) {
 
     return NextResponse.json({ 
       success: true, 
-      message: `File ${fileData.filename} and ${deletedCount} associated samples deleted successfully` 
+      message: `File ${fileData.filename} and ${sampleCount} associated samples deleted successfully` 
     })
 
   } catch (error) {

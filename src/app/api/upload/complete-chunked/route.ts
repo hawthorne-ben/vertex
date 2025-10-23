@@ -101,16 +101,16 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Trigger streaming processing for chunked files (always use streaming for chunked uploads)
+    // Trigger processing for chunked files
     try {
       await inngest.send({
-        name: 'imu/parse-streaming',
+        name: 'imu/parse',
         data: {
           fileId: fileRecord.id,
           userId
         }
       })
-      console.log(`✅ Streaming processing triggered for file ${fileRecord.id}`)
+      console.log(`✅ Processing triggered for file ${fileRecord.id}`)
     } catch (inngestError) {
       console.warn(`⚠️ Failed to trigger Inngest processing for file ${fileRecord.id}:`, inngestError)
       

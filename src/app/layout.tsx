@@ -20,7 +20,7 @@ const jetbrainsMono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "Vertex - The Point of Performance",
+  title: "Vertex - Your ride, unencrypted",
   description: "IMU cycling data analysis platform for detailed riding dynamics insights",
   metadataBase: new URL('https://ridevertex.com'),
   icons: {
