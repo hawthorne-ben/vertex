@@ -9,16 +9,20 @@ sql/
 # Database credentials and connection scripts
 .db-credentials.local
 
-# Environment templates
+# Environment templates and local files
 env.local.dev.template
+.env.local
 
-# Generated files
-*.tsbuildinfo
-next-env.d.ts
+# Cursor IDE files
+.cursor/
 
 # OS files
 .DS_Store
 *.pem
+
+# Generated files
+*.tsbuildinfo
+next-env.d.ts
 
 # IDE files
 .vscode/
