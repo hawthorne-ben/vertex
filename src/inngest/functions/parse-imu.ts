@@ -30,8 +30,12 @@ export const parseIMU = inngest.createFunction(
   { 
     id: 'parse-imu-file',
     name: 'Parse IMU CSV File',
-    retries: 1
-    // No timeout - let it run as long as needed for large files
+    retries: 1,
+    timeouts: {
+      // Allow up to 15 minutes for large files (100MB+)
+      // Individual steps inherit this timeout unless overridden
+      finish: '15m'
+    }
   },
   { event: 'imu/parse' },
   async ({ event, step }) => {
@@ -64,8 +68,9 @@ export const parseIMU = inngest.createFunction(
     // Step 2: Update status to parsing with streaming mode
     await step.run('update-status-parsing', async () => {
       // Estimate sample count based on file size for progress tracking
-      // Typical CSV: ~45 bytes per row (empirical from 50MB = 1M samples)
-      const estimatedSampleCount = Math.round(file.file_size_bytes / 45)
+      // Empirical data: 45MB = 500k samples = 90 bytes/row
+      // Add 2% buffer to be conservative (better to reach 100% slightly early)
+      const estimatedSampleCount = Math.round(file.file_size_bytes / 92)
       
       const { error } = await supabaseAdmin
         .from('imu_data_files')
@@ -182,49 +187,6 @@ export const parseIMU = inngest.createFunction(
         // Yield control to prevent blocking
         await new Promise(resolve => setImmediate(resolve))
         console.log(`🔄 Starting CSV parsing... (${(csvText.length / 1024 / 1024).toFixed(1)}MB)`)
-
-        // Quick parse of first 10 lines to estimate frequency and duration
-        let estimatedFrequency: number | null = null
-        let estimatedDuration: number | null = null
-        try {
-          const lines = csvText.split('\n').slice(0, 11) // Header + 10 data rows
-          if (lines.length >= 11) {
-            const timestamps: number[] = []
-            for (let i = 1; i <= 10; i++) { // Skip header
-              const cols = lines[i].split(',')
-              if (cols.length > 0) {
-                const ts = parseFloat(cols[0])
-                if (!isNaN(ts)) timestamps.push(ts)
-              }
-            }
-            
-            if (timestamps.length >= 2) {
-              // Calculate average time between samples
-              const diffs = []
-              for (let i = 1; i < timestamps.length; i++) {
-                diffs.push(timestamps[i] - timestamps[i-1])
-              }
-              const avgDiff = diffs.reduce((a, b) => a + b, 0) / diffs.length
-              estimatedFrequency = Math.round(1 / avgDiff)
-              
-              // Estimate total duration based on file size and sample rate
-              const estimatedSamples = Math.round(file.file_size_bytes / 45) // Avg bytes per line
-              estimatedDuration = estimatedSamples / estimatedFrequency
-              
-              console.log(`📊 Estimated frequency: ${estimatedFrequency} Hz, duration: ${estimatedDuration.toFixed(1)}s`)
-              
-              // Update file metadata with estimates
-              await supabaseAdmin
-                .from('imu_data_files')
-                .update({
-                  sample_rate: estimatedFrequency
-                })
-                .eq('id', fileId)
-            }
-          }
-        } catch (error) {
-          console.warn(`⚠️ Could not estimate frequency: ${error}`)
-        }
 
         // Now parse the CSV with checkpoint tracking
         let totalProcessed = file.samples_processed || 0
@@ -420,6 +382,21 @@ export const parseIMU = inngest.createFunction(
         // Small delay to let UI poll and show 100% before marking as 'ready'
         await new Promise(resolve => setTimeout(resolve, 500))
         
+        // Calculate actual sample rate from timestamps if available, otherwise keep estimate
+        let finalSampleRate = file.sample_rate // Keep the estimated frequency from earlier
+        if (result.firstTimestamp && result.lastTimestamp) {
+          try {
+            const start = new Date(result.firstTimestamp).getTime()
+            const end = new Date(result.lastTimestamp).getTime()
+            const durationSeconds = (end - start) / 1000
+            if (durationSeconds > 0) {
+              finalSampleRate = Math.round(result.totalProcessed / durationSeconds)
+            }
+          } catch (error) {
+            console.warn(`⚠️ Could not calculate final sample rate: ${error}`)
+          }
+        }
+        
         // Now update to 'ready' status with all metadata
         const { error } = await supabaseAdmin
           .from('imu_data_files')
@@ -427,7 +404,7 @@ export const parseIMU = inngest.createFunction(
             status: 'ready',
             streaming_mode: false,
             sample_count: result.totalProcessed,
-            sample_rate: Math.round(result.totalProcessed / (file.file_size_bytes / (result.totalProcessed * 0.001))), // Rough estimate
+            sample_rate: finalSampleRate,
             start_time: result.firstTimestamp,
             end_time: result.lastTimestamp,
             parsed_at: new Date().toISOString(),

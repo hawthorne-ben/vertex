@@ -42,31 +42,31 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 md:gap-4 mb-8">
         <Card>
           <CardContent className="pt-4 md:pt-6">
-            <div className="text-xs md:text-sm text-tertiary mb-1">Distance</div>
+            <div className="text-xs md:text-sm text-secondary mb-1">Distance</div>
             <div className="text-xl md:text-2xl font-bold text-primary">{ride.distance} mi</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 md:pt-6">
-            <div className="text-xs md:text-sm text-tertiary mb-1">Duration</div>
+            <div className="text-xs md:text-sm text-secondary mb-1">Duration</div>
             <div className="text-xl md:text-2xl font-bold text-primary">{Math.round(ride.duration / 60)} min</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 md:pt-6">
-            <div className="text-xs md:text-sm text-tertiary mb-1">Avg Speed</div>
+            <div className="text-xs md:text-sm text-secondary mb-1">Avg Speed</div>
             <div className="text-xl md:text-2xl font-bold text-primary">{ride.stats.avgSpeed} mph</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 md:pt-6">
-            <div className="text-xs md:text-sm text-tertiary mb-1">Max Lean</div>
+            <div className="text-xs md:text-sm text-secondary mb-1">Max Lean</div>
             <div className="text-xl md:text-2xl font-bold text-primary">{ride.stats.maxLeanAngle}°</div>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 md:pt-6">
-            <div className="text-xs md:text-sm text-tertiary mb-1">Corners</div>
+            <div className="text-xs md:text-sm text-secondary mb-1">Corners</div>
             <div className="text-xl md:text-2xl font-bold text-primary">{ride.stats.corners}</div>
           </CardContent>
         </Card>
@@ -142,7 +142,7 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
             </CardHeader>
             <CardContent>
               <div className="h-64 bg-muted rounded-md flex items-center justify-center">
-                <p className="text-tertiary">Interactive map will be displayed here</p>
+                <p className="text-secondary">Interactive map will be displayed here</p>
               </div>
             </CardContent>
           </Card>
@@ -156,7 +156,7 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
               </CardHeader>
               <CardContent>
                 <div className="h-80 bg-muted rounded-md flex items-center justify-center">
-                  <p className="text-tertiary">G-force visualization will be displayed here</p>
+                  <p className="text-secondary">G-force visualization will be displayed here</p>
                 </div>
               </CardContent>
             </Card>
@@ -167,19 +167,19 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
               </CardHeader>
               <CardContent>
                 <div className="h-64 bg-muted rounded-md flex items-center justify-center">
-                  <p className="text-tertiary">Lean angle chart over time</p>
+                  <p className="text-secondary">Lean angle chart over time</p>
                 </div>
                 <div className="mt-4 grid grid-cols-3 gap-4 text-sm">
                   <div>
-                    <span className="text-tertiary">Average</span>
+                    <span className="text-secondary">Average</span>
                     <p className="font-medium text-lg text-primary">{ride.stats.avgLeanAngle}°</p>
                   </div>
                   <div>
-                    <span className="text-tertiary">Maximum</span>
+                    <span className="text-secondary">Maximum</span>
                     <p className="font-medium text-lg text-primary">{ride.stats.maxLeanAngle}°</p>
                   </div>
                   <div>
-                    <span className="text-tertiary">Data Points</span>
+                    <span className="text-secondary">Data Points</span>
                     <p className="font-medium text-lg text-primary">{ride.imuData?.dataPoints.toLocaleString() || 'N/A'}</p>
                   </div>
                 </div>
@@ -196,23 +196,23 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
               </CardHeader>
               <CardContent>
                 <div className="h-64 bg-muted rounded-md flex items-center justify-center mb-6">
-                  <p className="text-tertiary">Power/HR chart over time</p>
+                  <p className="text-secondary">Power/HR chart over time</p>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                   <div>
-                    <div className="text-sm text-tertiary mb-1">Avg Power</div>
+                    <div className="text-sm text-secondary mb-1">Avg Power</div>
                     <div className="text-2xl font-bold text-primary">{ride.powerData.avgPower}W</div>
                   </div>
                   <div>
-                    <div className="text-sm text-tertiary mb-1">Max Power</div>
+                    <div className="text-sm text-secondary mb-1">Max Power</div>
                     <div className="text-2xl font-bold text-primary">{ride.powerData.maxPower}W</div>
                   </div>
                   <div>
-                    <div className="text-sm text-tertiary mb-1">Avg HR</div>
+                    <div className="text-sm text-secondary mb-1">Avg HR</div>
                     <div className="text-2xl font-bold text-primary">{ride.powerData.avgHeartRate} bpm</div>
                   </div>
                   <div>
-                    <div className="text-sm text-tertiary mb-1">Calories</div>
+                    <div className="text-sm text-secondary mb-1">Calories</div>
                     <div className="text-2xl font-bold text-primary">{ride.powerData.calories}</div>
                   </div>
                 </div>
@@ -245,17 +245,17 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
                   {ride.imuData && (
                     <>
                       <div>
-                        <span className="text-tertiary">IMU Sample Rate</span>
+                        <span className="text-secondary">IMU Sample Rate</span>
                         <p className="font-medium text-primary">{ride.imuData.sampleRate} Hz</p>
                       </div>
                       <div>
-                        <span className="text-tertiary">Total Data Points</span>
+                        <span className="text-secondary">Total Data Points</span>
                         <p className="font-medium text-primary">{ride.imuData.dataPoints.toLocaleString()}</p>
                       </div>
                     </>
                   )}
                   <div>
-                    <span className="text-tertiary">File Size</span>
+                    <span className="text-secondary">File Size</span>
                     <p className="font-medium text-primary">~{Math.round(ride.distance * 0.08)} MB</p>
                   </div>
                 </div>

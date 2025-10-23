@@ -63,7 +63,7 @@ export default function DashboardPage() {
                 >
                   <div className="flex justify-between gap-4 mb-2">
                     <h3 className="font-medium text-base text-primary">{ride.name}</h3>
-                    <span className="text-sm text-tertiary flex-shrink-0">
+                    <span className="text-sm text-secondary flex-shrink-0">
                       {new Date(ride.date).toLocaleDateString('en-US', { 
                         month: 'short', 
                         day: 'numeric'
@@ -74,19 +74,19 @@ export default function DashboardPage() {
                   
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
                     <div className="flex justify-between">
-                      <span className="text-tertiary">Distance</span>
+                      <span className="text-secondary">Distance</span>
                       <span className="font-medium text-primary">{ride.distance} mi</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-tertiary">Duration</span>
+                      <span className="text-secondary">Duration</span>
                       <span className="font-medium text-primary">{Math.round(ride.duration / 60)} min</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-tertiary">Max Speed</span>
+                      <span className="text-secondary">Max Speed</span>
                       <span className="font-medium text-primary">{ride.stats.maxSpeed} mph</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-tertiary">Max Lean</span>
+                      <span className="text-secondary">Max Lean</span>
                       <span className="font-medium text-primary">{ride.stats.maxLeanAngle}°</span>
                     </div>
                   </div>
@@ -107,7 +107,7 @@ export default function DashboardPage() {
               <div>
                 <h3 className="text-sm font-medium mb-3 text-primary">This Month</h3>
                 <div className="h-32 bg-muted rounded-md flex items-center justify-center">
-                  <p className="text-tertiary text-sm">Calendar heatmap</p>
+                  <p className="text-secondary text-sm">Calendar heatmap</p>
                 </div>
               </div>
 

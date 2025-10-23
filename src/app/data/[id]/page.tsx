@@ -98,7 +98,7 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
         </div>
 
         {fileData.filename && (
-          <p className="text-xs text-tertiary mt-2">
+          <p className="text-xs text-secondary mt-2">
             Source: {fileData.filename}
           </p>
         )}

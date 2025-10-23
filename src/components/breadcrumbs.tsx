@@ -52,7 +52,7 @@ export function Breadcrumbs() {
         
         return (
           <div key={href} className="flex items-center space-x-2">
-            <ChevronRight className="h-4 w-4 text-tertiary" />
+            <ChevronRight className="h-4 w-4 text-secondary" />
             {isLast ? (
               <span className="text-primary font-medium">{label}</span>
             ) : (
