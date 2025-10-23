@@ -319,6 +319,61 @@ export const parseIMUStreaming = inngest.createFunction(
       console.error(`❌ Error details:`, err)
       
       try {
+        // COMPENSATION: Clean up any orphaned samples before marking as failed
+        console.log(`🧹 Cleaning up orphaned samples for failed streaming file ${fileId}`)
+        
+        const { data: orphanedSamples, error: countError } = await supabaseAdmin
+          .from('imu_samples')
+          .select('id')
+          .eq('imu_file_id', fileId)
+          .limit(1) // Just check if any exist
+        
+        if (countError) {
+          console.error('Failed to check for orphaned samples:', countError)
+        } else if (orphanedSamples && orphanedSamples.length > 0) {
+          console.log(`🗑️ Found orphaned samples for streaming file ${fileId}, cleaning up...`)
+          
+          // Delete orphaned samples in batches
+          let deletedCount = 0
+          const BATCH_SIZE = 10000
+          let hasMore = true
+          
+          while (hasMore) {
+            const { data: sampleBatch, error: fetchError } = await supabaseAdmin
+              .from('imu_samples')
+              .select('id')
+              .eq('imu_file_id', fileId)
+              .limit(BATCH_SIZE)
+            
+            if (fetchError || !sampleBatch || sampleBatch.length === 0) {
+              hasMore = false
+              break
+            }
+            
+            const { error: deleteError } = await supabaseAdmin
+              .from('imu_samples')
+              .delete()
+              .in('id', sampleBatch.map(s => s.id))
+            
+            if (deleteError) {
+              console.error('Failed to delete orphaned sample batch:', deleteError)
+              break
+            }
+            
+            deletedCount += sampleBatch.length
+            console.log(`✅ Cleaned up ${deletedCount} orphaned samples`)
+            
+            if (sampleBatch.length < BATCH_SIZE) {
+              hasMore = false
+            }
+          }
+          
+          console.log(`✅ Cleanup complete: ${deletedCount} orphaned samples removed`)
+        } else {
+          console.log(`✅ No orphaned samples found for streaming file ${fileId}`)
+        }
+        
+        // Now update the file status to failed
         const { error: updateError } = await supabaseAdmin
           .from('imu_data_files')
           .update({

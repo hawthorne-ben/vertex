@@ -1,22 +1,16 @@
-# Local planning and documentation files
-APP.md
-BUILD.md
-SAVE_STATE.md
-fix_imu_files_rls.sql
-
 # Dependencies
-node_modules
+node_modules/
 .pnp
 .pnp.js
 
 # Testing
-coverage
+coverage/
 
 # Next.js
 .next/
 out/
-build
-dist
+build/
+dist/
 
 # Production
 *.log
@@ -30,7 +24,7 @@ yarn-error.log*
 .env*.local
 
 # Vercel
-.vercel
+.vercel/
 
 # TypeScript
 *.tsbuildinfo
@@ -41,9 +35,9 @@ next-env.d.ts
 *.pem
 
 # Debug
-.vscode/*
+.vscode/
 !.vscode/extensions.json
-.idea
+.idea/
 
 # PWA files
 **/public/sw.js
@@ -53,7 +47,13 @@ next-env.d.ts
 **/public/workbox-*.js.map
 **/public/worker-*.js.map
 
-# Generated test data and tools
-tools/
-!tools/README.md
+# Project organization folders - exclude from git
+docs/
+scripts/
+sql/
 
+# Database credentials and connection scripts - NEVER COMMIT
+.db-credentials.local
+
+# Environment templates
+env.local.dev.template
