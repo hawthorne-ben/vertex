@@ -220,9 +220,9 @@ export default function Home() {
                     <li>• Heart Rate</li>
                     <li>• Power Output</li>
                     <li>• GPS Track</li>
-                    <li className="text-tertiary">• Lean Angle: ❌</li>
-                    <li className="text-tertiary">• G-Forces: ❌</li>
-                    <li className="text-tertiary">• Cornering Analysis: ❌</li>
+                    <li className="text-secondary">• Lean Angle: ❌</li>
+                    <li className="text-secondary">• G-Forces: ❌</li>
+                    <li className="text-secondary">• Cornering Analysis: ❌</li>
                   </ul>
                 </div>
                 <div className="bg-primary text-primary-foreground p-5 sm:p-6 md:p-8 rounded-lg">
@@ -251,7 +251,7 @@ export default function Home() {
             {/* Step 1 */}
             <div className="text-center">
               <div className="bg-muted rounded-lg aspect-square mb-4 sm:mb-6 flex items-center justify-center">
-                <div className="text-tertiary">
+                <div className="text-secondary">
                   <svg className="w-16 sm:w-20 h-16 sm:h-20 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
                   </svg>
@@ -267,7 +267,7 @@ export default function Home() {
             {/* Step 2 */}
             <div className="text-center">
               <div className="bg-muted rounded-lg aspect-square mb-4 sm:mb-6 flex items-center justify-center">
-                <div className="text-tertiary">
+                <div className="text-secondary">
                   <svg className="w-16 sm:w-20 h-16 sm:h-20 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
                   </svg>
@@ -283,7 +283,7 @@ export default function Home() {
             {/* Step 3 */}
             <div className="text-center">
               <div className="bg-muted rounded-lg aspect-square mb-4 sm:mb-6 flex items-center justify-center">
-                <div className="text-tertiary">
+                <div className="text-secondary">
                   <svg className="w-16 sm:w-20 h-16 sm:h-20 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                   </svg>
@@ -307,7 +307,7 @@ export default function Home() {
               <div className="bg-card p-4 sm:p-5 md:p-6 rounded-lg border border-border">
                 <div className="bg-muted rounded-lg aspect-square mb-3 sm:mb-4 flex items-center justify-center">
                   <div className="text-center">
-                    <svg className="w-12 sm:w-14 md:w-16 h-12 sm:h-14 md:h-16 mx-auto text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-12 sm:w-14 md:w-16 h-12 sm:h-14 md:h-16 mx-auto text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <circle cx="12" cy="12" r="10" strokeWidth={1.5} />
                       <circle cx="12" cy="12" r="6" strokeWidth={1.5} />
                       <circle cx="12" cy="12" r="2" strokeWidth={1.5} />
@@ -323,7 +323,7 @@ export default function Home() {
               {/* Feature 2 */}
               <div className="bg-card p-4 sm:p-5 md:p-6 rounded-lg border border-border">
                 <div className="bg-muted rounded-lg aspect-square mb-3 sm:mb-4 flex items-center justify-center">
-                  <svg className="w-12 sm:w-14 md:w-16 h-12 sm:h-14 md:h-16 text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-12 sm:w-14 md:w-16 h-12 sm:h-14 md:h-16 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
                   </svg>
                 </div>
@@ -336,7 +336,7 @@ export default function Home() {
               {/* Feature 3 */}
               <div className="bg-card p-4 sm:p-5 md:p-6 rounded-lg border border-border">
                 <div className="bg-muted rounded-lg aspect-square mb-3 sm:mb-4 flex items-center justify-center">
-                  <svg className="w-12 sm:w-14 md:w-16 h-12 sm:h-14 md:h-16 text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-12 sm:w-14 md:w-16 h-12 sm:h-14 md:h-16 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                   </svg>
                 </div>
@@ -349,7 +349,7 @@ export default function Home() {
               {/* Feature 4 */}
               <div className="bg-card p-4 sm:p-5 md:p-6 rounded-lg border border-border">
                 <div className="bg-muted rounded-lg aspect-square mb-3 sm:mb-4 flex items-center justify-center">
-                  <svg className="w-12 sm:w-14 md:w-16 h-12 sm:h-14 md:h-16 text-tertiary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <svg className="w-12 sm:w-14 md:w-16 h-12 sm:h-14 md:h-16 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                   </svg>
                 </div>
@@ -370,11 +370,11 @@ export default function Home() {
           </p>
           <div className="bg-muted rounded-lg aspect-video max-w-5xl mx-auto flex items-center justify-center border-2 border-border">
             <div className="text-center p-6 sm:p-8 md:p-12">
-              <svg className="w-16 sm:w-20 md:w-24 h-16 sm:h-20 md:h-24 mx-auto text-tertiary mb-3 sm:mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-16 sm:w-20 md:w-24 h-16 sm:h-20 md:h-24 mx-auto text-secondary mb-3 sm:mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
               </svg>
               <p className="text-sm sm:text-base text-secondary font-medium">Dashboard Screenshot</p>
-              <p className="text-xs sm:text-sm text-tertiary mt-1 sm:mt-2">Full interface preview with ride detail page</p>
+              <p className="text-xs sm:text-sm text-secondary mt-1 sm:mt-2">Full interface preview with ride detail page</p>
             </div>
           </div>
         </section>
@@ -387,11 +387,11 @@ export default function Home() {
                 {/* Left: Image Placeholder */}
                 <div className="bg-muted rounded-lg aspect-[4/3] flex items-center justify-center">
                   <div className="text-center p-6 sm:p-8">
-                    <svg className="w-16 sm:w-20 h-16 sm:h-20 mx-auto text-tertiary mb-3 sm:mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-16 sm:w-20 h-16 sm:h-20 mx-auto text-secondary mb-3 sm:mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
                     </svg>
                     <p className="text-xs sm:text-sm text-secondary">IMU Logger on Bike</p>
-                    <p className="text-xs text-tertiary mt-1 sm:mt-2">Product photo placeholder</p>
+                    <p className="text-xs text-secondary mt-1 sm:mt-2">Product photo placeholder</p>
                   </div>
                 </div>
 
@@ -404,35 +404,35 @@ export default function Home() {
                   
                   <div className="space-y-2.5 sm:space-y-3 mb-6 sm:mb-8">
                     <div className="flex items-start gap-2 sm:gap-3">
-                      <div className="text-tertiary mt-1 text-sm sm:text-base">•</div>
+                      <div className="text-secondary mt-1 text-sm sm:text-base">•</div>
                       <div>
                         <span className="font-medium text-sm sm:text-base">BNO055 9-axis IMU sensor</span>
                         <p className="text-xs sm:text-sm text-secondary">Accelerometer, gyroscope, and magnetometer</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-2 sm:gap-3">
-                      <div className="text-tertiary mt-1 text-sm sm:text-base">•</div>
+                      <div className="text-secondary mt-1 text-sm sm:text-base">•</div>
                       <div>
                         <span className="font-medium text-sm sm:text-base">100Hz sampling rate</span>
                         <p className="text-xs sm:text-sm text-secondary">High-frequency capture for precise analysis</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-2 sm:gap-3">
-                      <div className="text-tertiary mt-1 text-sm sm:text-base">•</div>
+                      <div className="text-secondary mt-1 text-sm sm:text-base">•</div>
                       <div>
                         <span className="font-medium text-sm sm:text-base">SD card data storage</span>
                         <p className="text-xs sm:text-sm text-secondary">Hours of ride data on a single card</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-2 sm:gap-3">
-                      <div className="text-tertiary mt-1 text-sm sm:text-base">•</div>
+                      <div className="text-secondary mt-1 text-sm sm:text-base">•</div>
                       <div>
                         <span className="font-medium text-sm sm:text-base">Garmin mount compatible</span>
                         <p className="text-xs sm:text-sm text-secondary">Mounts to any bike via standard seatpost adapter</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-2 sm:gap-3">
-                      <div className="text-tertiary mt-1 text-sm sm:text-base">•</div>
+                      <div className="text-secondary mt-1 text-sm sm:text-base">•</div>
                       <div>
                         <span className="font-medium text-sm sm:text-base">10-15 hour battery life</span>
                         <p className="text-xs sm:text-sm text-secondary">USB-C rechargeable</p>
@@ -483,7 +483,7 @@ export default function Home() {
                   >
                     <span className="font-medium text-sm sm:text-base pr-3">{faq.question}</span>
                     <ChevronDown 
-                      className={`w-4 sm:w-5 h-4 sm:h-5 text-tertiary transition-transform flex-shrink-0 ${
+                      className={`w-4 sm:w-5 h-4 sm:h-5 text-secondary transition-transform flex-shrink-0 ${
                         openFaq === index ? 'transform rotate-180' : ''
                       }`}
                     />
@@ -531,13 +531,13 @@ export default function Home() {
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
                   <p className="text-base sm:text-lg font-medium mb-1.5 sm:mb-2">You&apos;re on the list!</p>
-                  <p className="text-tertiary text-xs sm:text-sm">
+                  <p className="text-secondary text-xs sm:text-sm">
                     We&apos;ll email you when Vertex launches and when hardware pre-orders open.
                   </p>
                 </div>
               )}
               
-              <p className="text-xs text-tertiary mt-5 sm:mt-6 px-4">
+              <p className="text-xs text-secondary mt-5 sm:mt-6 px-4">
                 We&apos;ll only email you about Vertex updates. No spam, unsubscribe anytime.
               </p>
             </div>

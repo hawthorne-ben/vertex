@@ -39,20 +39,20 @@ export function ConfirmationModal({
       case 'success':
         return <CheckCircle2 className="w-6 h-6 text-success" />
       default:
-        return <AlertTriangle className="w-6 h-6 text-tertiary" />
+        return <AlertTriangle className="w-6 h-6 text-secondary" />
     }
   }
 
   const getConfirmButtonStyle = () => {
     switch (type) {
       case 'delete':
-        return 'bg-error hover:bg-error/90 text-white'
+        return 'bg-error hover:bg-error/90 text-error-foreground'
       case 'warning':
-        return 'bg-warning hover:bg-warning/90 text-white'
+        return 'bg-warning hover:bg-warning/90 text-warning-foreground'
       case 'success':
-        return 'bg-success hover:bg-success/90 text-white'
+        return 'bg-success hover:bg-success/90 text-success-foreground'
       default:
-        return 'bg-primary hover:bg-primary/90 text-white'
+        return 'bg-primary hover:bg-primary/90 text-primary-foreground'
     }
   }
 
@@ -71,7 +71,7 @@ export function ConfirmationModal({
 
   return (
     <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-background/90 backdrop-blur-md border border-border rounded-xl shadow-2xl shadow-black/25 max-w-md w-full glass-surface">
+      <div className="bg-background border border-border rounded-xl shadow-2xl max-w-md w-full">
         {/* Header */}
         <div className="flex items-center gap-3 p-6 border-b border-border">
           <div className="flex-shrink-0">
@@ -84,7 +84,7 @@ export function ConfirmationModal({
           </div>
           <button
             onClick={onClose}
-            className="flex-shrink-0 p-1 text-tertiary hover:text-primary transition-colors"
+            className="flex-shrink-0 p-1 text-secondary hover:text-primary transition-colors"
             aria-label="Close modal"
           >
             <X className="w-5 h-5" />

@@ -234,14 +234,16 @@ export default function UploadPage() {
         }
       }
 
-      // Upload complete - show success briefly then redirect
+      // Upload complete - close modal and redirect immediately
       setUploadProgress(100)
       setLastProgress(100)
-      
-      // Immediate redirect after showing 100% completion
       setShowUploadProgress(false)
       setSelectedFiles([])
-      router.push('/data')
+      
+      // Use setTimeout to ensure state updates are flushed before navigation
+      setTimeout(() => {
+        router.push('/data')
+      }, 0)
 
     } catch (err) {
       console.error('Upload error:', err)
@@ -298,7 +300,7 @@ export default function UploadPage() {
       >
         <input {...getInputProps()} />
         
-        <Upload className="w-12 h-12 mx-auto mb-4 text-tertiary" />
+        <Upload className="w-12 h-12 mx-auto mb-4 text-secondary" />
         
         {isDragActive ? (
           <p className="text-lg text-primary">Drop CSV files here...</p>

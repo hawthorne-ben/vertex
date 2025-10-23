@@ -37,13 +37,13 @@ export function ConfirmationModal({ files, isOpen, onConfirm, onCancel, onRemove
 
   return (
     <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-background/90 backdrop-blur-md border border-border rounded-xl shadow-2xl shadow-black/25 max-w-2xl w-full max-h-[80vh] overflow-hidden glass-surface">
+      <div className="bg-background border border-border rounded-xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-border">
           <h2 className="text-xl font-medium text-primary">Confirm Upload</h2>
           <button
             onClick={onCancel}
-            className="p-2 text-tertiary hover:text-primary hover:bg-muted rounded-md transition-colors"
+            className="p-2 text-secondary hover:text-primary hover:bg-muted rounded-md transition-colors"
           >
             <X className="w-5 h-5" />
           </button>
@@ -61,14 +61,14 @@ export function ConfirmationModal({ files, isOpen, onConfirm, onCancel, onRemove
                 key={fileToUpload.id}
                 className="flex items-center gap-3 p-3 bg-muted rounded-lg border border-border"
               >
-                <FileText className="w-5 h-5 text-tertiary flex-shrink-0" />
+                <FileText className="w-5 h-5 text-secondary flex-shrink-0" />
                 
                 <div className="flex-grow min-w-0">
                   <div className="flex items-baseline gap-2 mb-1">
                     <span className="text-sm font-medium text-primary truncate">
                       {fileToUpload.file.name}
                     </span>
-                    <span className={`text-xs flex-shrink-0 ${isFileOversized(fileToUpload.file.size) ? 'text-error font-medium' : 'text-tertiary'}`}>
+                    <span className={`text-xs flex-shrink-0 ${isFileOversized(fileToUpload.file.size) ? 'text-error font-medium' : 'text-secondary'}`}>
                       {formatFileSize(fileToUpload.file.size)}
                       {isFileOversized(fileToUpload.file.size) && ' (TOO LARGE)'}
                     </span>
@@ -82,7 +82,7 @@ export function ConfirmationModal({ files, isOpen, onConfirm, onCancel, onRemove
 
                 <button
                   onClick={() => onRemoveFile(fileToUpload.id)}
-                  className="p-1 text-tertiary hover:text-error hover:bg-error/10 rounded transition-colors"
+                  className="p-1 text-secondary hover:text-error hover:bg-error/10 rounded transition-colors"
                   title="Remove file"
                 >
                   <X className="w-4 h-4" />
@@ -93,7 +93,7 @@ export function ConfirmationModal({ files, isOpen, onConfirm, onCancel, onRemove
 
           {files.length === 0 && (
             <div className="text-center py-8 text-secondary">
-              <FileText className="w-12 h-12 mx-auto mb-2 text-tertiary" />
+              <FileText className="w-12 h-12 mx-auto mb-2 text-secondary" />
               <p>No files selected</p>
             </div>
           )}
@@ -134,7 +134,7 @@ export function UploadProgressModal({ isOpen, currentFile, progress, totalFiles,
 
   return (
     <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-      <div className="bg-background/90 backdrop-blur-md border border-border rounded-xl shadow-2xl shadow-black/25 max-w-md w-full glass-surface">
+      <div className="bg-background border border-border rounded-xl shadow-2xl max-w-md w-full">
         {/* Header */}
         <div className="p-6 border-b border-border">
           <h2 className="text-xl font-medium text-primary">Uploading Files</h2>

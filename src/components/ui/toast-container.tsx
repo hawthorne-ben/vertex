@@ -21,7 +21,7 @@ function ToastItem({ toast, onRemove }: ToastItemProps) {
       case 'info':
         return <Info className="w-5 h-5 text-info" />
       default:
-        return <Info className="w-5 h-5 text-tertiary" />
+        return <Info className="w-5 h-5 text-secondary" />
     }
   }
 
@@ -80,7 +80,7 @@ function ToastItem({ toast, onRemove }: ToastItemProps) {
       
       <button
         onClick={() => onRemove(toast.id)}
-        className="flex-shrink-0 p-1 text-tertiary hover:text-primary transition-colors"
+        className="flex-shrink-0 p-1 text-secondary hover:text-primary transition-colors"
         aria-label="Close toast"
       >
         <X className="w-4 h-4" />

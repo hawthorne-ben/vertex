@@ -104,7 +104,7 @@ export default function SettingsPage() {
                     disabled
                     className="form-input-disabled flex h-10 w-full rounded-md px-3 py-2 text-sm"
                   />
-                  <p className="text-xs text-tertiary mt-1">
+                  <p className="text-xs text-secondary mt-1">
                     Email is tied to your account authentication and cannot be changed here. 
                     Contact support to update your email.
                   </p>
@@ -124,10 +124,10 @@ export default function SettingsPage() {
               <CardTitle className="text-xl font-serif">Your Bikes</CardTitle>
             </CardHeader>
             <CardContent>
-              <p className="text-secondary text-center py-8">
+              <p className="text-secondary py-8">
                 No bikes configured yet. Add your first bike to use in ride metadata.
               </p>
-              <Button className="w-full">Add Bike</Button>
+              <Button>Add Bike</Button>
             </CardContent>
           </Card>
         </TabsContent>
