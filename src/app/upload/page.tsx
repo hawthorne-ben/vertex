@@ -217,13 +217,13 @@ export default function UploadPage() {
           uploadedFileIds.push(fileRecord.id)
 
           // Trigger parse job for direct uploads
-          // Use streaming processing for large files (>50MB), regular processing for small files
-          const useStreaming = file.size > 50 * 1024 * 1024 // 50MB threshold
-          const endpoint = useStreaming ? '/api/imu/parse-streaming' : '/api/imu/parse'
-          
-          const response = await fetch(endpoint, {
+          // Always use streaming processing for progress tracking
+          const response = await fetch('/api/imu/parse-streaming', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+              'Content-Type': 'application/json',
+              'x-user-id': user.id // Required by streaming endpoint
+            },
             body: JSON.stringify({ fileId: fileRecord.id })
           })
 

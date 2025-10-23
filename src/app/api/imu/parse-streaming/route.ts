@@ -25,16 +25,16 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Trigger streaming parse job
+    // Trigger parse job
     try {
       await inngest.send({
-        name: 'imu/parse-streaming',
+        name: 'imu/parse',
         data: { 
           fileId,
           userId 
         }
       })
-      console.log(`✅ Streaming parse job triggered for file ${fileId}`)
+      console.log(`✅ Parse job triggered for file ${fileId}`)
       
       return NextResponse.json({
         success: true,

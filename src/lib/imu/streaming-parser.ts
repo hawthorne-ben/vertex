@@ -28,6 +28,7 @@ export async function parseIMUCSVStreaming(
     let totalProcessed = 0
     let errors: Array<{ row: number; error: string }> = []
     let isComplete = false
+    let rowCount = 0
 
     const processBatch = async (): Promise<void> => {
       if (batchBuffer.length === 0) return
@@ -49,12 +50,30 @@ export async function parseIMUCSVStreaming(
       }
     }
 
+    // Log before starting parse
+    console.log(`🔄 Starting PapaParse streaming... (${csvText.length} chars)`)
+    
     Papa.parse(csvText, {
       header: true,
       skipEmptyLines: true,
       dynamicTyping: false,
+      // Note: worker option doesn't work in Node.js (serverless)
+      // PapaParse will process synchronously in step callback
+      chunkSize: 1024 * 1024, // Process 1MB chunks at a time
       
       step: (result, parser) => {
+        rowCount++
+        
+        // Log first row to confirm streaming started
+        if (rowCount === 1) {
+          console.log(`✅ First row parsed - streaming active`)
+        }
+        
+        // Log every 1000 rows to show progress
+        if (rowCount % 1000 === 0) {
+          console.log(`📊 Parsed ${rowCount} rows, buffer size: ${batchBuffer.length}`)
+        }
+        
         try {
           // Parse the row into an IMU sample
           const sample = parseRow(result.data, result.meta.cursor)
@@ -66,14 +85,16 @@ export async function parseIMUCSVStreaming(
           if (batchBuffer.length >= options.batchSize) {
             // Pause parsing while we process the batch
             parser.pause()
+            console.log(`⏸️  Parser paused at ${batchBuffer.length} samples, starting batch processing...`)
             
             processBatch()
               .then(() => {
                 // Resume parsing after batch is processed
+                console.log(`▶️  Batch processed, resuming parser...`)
                 parser.resume()
               })
               .catch((error) => {
-                console.error('Batch processing error:', error)
+                console.error('❌ Batch processing error:', error)
                 parser.abort()
                 reject(error)
               })
