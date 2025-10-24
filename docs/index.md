@@ -11,33 +11,33 @@ Welcome to the comprehensive technical documentation for **Vertex**, an IMU cycl
 ## 🚀 Quick Navigation
 
 ### [Architecture Overview]({{ site.baseurl }}/architecture/)
-- [System Design]({{ site.baseurl }}/architecture/system-design/)
-- [Database Schema]({{ site.baseurl }}/architecture/database/)
-- [Storage Strategy]({{ site.baseurl }}/architecture/storage/)
-- [Processing Pipeline]({{ site.baseurl }}/architecture/processing/)
+- [System Design]({{ site.baseurl }}/architecture/system-design.html)
+- [Database Schema]({{ site.baseurl }}/architecture/database.html)
+- [Storage Strategy]({{ site.baseurl }}/architecture/storage.html)
+- [Processing Pipeline]({{ site.baseurl }}/architecture/processing.html)
 
 ### [Development Guide]({{ site.baseurl }}/development/)
-- [Local Setup]({{ site.baseurl }}/development/local-setup/)
-- [Deployment]({{ site.baseurl }}/development/deployment/)
-- [Debugging]({{ site.baseurl }}/development/debugging/)
-- [Build Process]({{ site.baseurl }}/development/build/)
+- [Local Setup]({{ site.baseurl }}/development/local-setup.html)
+- [Deployment]({{ site.baseurl }}/development/DEPLOYMENT.html)
+- [Debugging]({{ site.baseurl }}/development/debugging.html)
+- [Build Process]({{ site.baseurl }}/development/BUILD.html)
 
 ### [Feature Documentation]({{ site.baseurl }}/features/)
-- [Charting System]({{ site.baseurl }}/features/charting/)
-- [Upload System]({{ site.baseurl }}/features/upload/)
-- [Data Analysis]({{ site.baseurl }}/features/analysis/)
-- [Progress Tracking]({{ site.baseurl }}/features/progress/)
+- [Charting System]({{ site.baseurl }}/features/CHARTING_IMPLEMENTATION.html)
+- [Upload System]({{ site.baseurl }}/features/upload.html)
+- [Data Analysis]({{ site.baseurl }}/features/analysis.html)
+- [Progress Tracking]({{ site.baseurl }}/features/PROGRESS_TRACKING_IMPLEMENTATION.html)
 
 ### [Operations]({{ site.baseurl }}/operations/)
-- [Monitoring]({{ site.baseurl }}/operations/monitoring/)
-- [Storage Cleanup]({{ site.baseurl }}/operations/cleanup/)
-- [Troubleshooting]({{ site.baseurl }}/operations/troubleshooting/)
+- [Monitoring]({{ site.baseurl }}/operations/OBSERVABILITY_PIPELINE.html)
+- [Storage Cleanup]({{ site.baseurl }}/operations/STORAGE_CLEANUP.html)
+- [Troubleshooting]({{ site.baseurl }}/operations/troubleshooting.html)
 
 ### [API Reference]({{ site.baseurl }}/api-reference/)
-- [Authentication]({{ site.baseurl }}/api-reference/auth/)
-- [Data Upload]({{ site.baseurl }}/api-reference/upload/)
-- [Admin Endpoints]({{ site.baseurl }}/api-reference/admin/)
-- [Health Checks]({{ site.baseurl }}/api-reference/health/)
+- [Authentication]({{ site.baseurl }}/api-reference/auth.html)
+- [Data Upload]({{ site.baseurl }}/api-reference/upload.html)
+- [Admin Endpoints]({{ site.baseurl }}/api-reference/admin.html)
+- [Health Checks]({{ site.baseurl }}/api-reference/health.html)
 
 ---
 

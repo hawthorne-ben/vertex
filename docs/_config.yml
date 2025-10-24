@@ -13,20 +13,13 @@ theme: minima
 author: Ben Hawthorne
 email: hawthorneben@gmail.com
 
-# Navigation
-navigation:
-  - title: Overview
-    url: /
-  - title: Architecture
-    url: /architecture/
-  - title: Development
-    url: /development/
-  - title: Features
-    url: /features/
-  - title: Operations
-    url: /operations/
-  - title: API Reference
-    url: /api-reference/
+# Navigation for minima theme
+header_pages:
+  - architecture/index.md
+  - development/index.md
+  - features/index.md
+  - operations/index.md
+  - api-reference/index.md
 
 # Exclude from processing
 exclude:

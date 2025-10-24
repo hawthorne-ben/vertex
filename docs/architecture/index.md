@@ -2,6 +2,7 @@
 layout: default
 title: Architecture Overview
 description: System architecture, database design, and technical infrastructure for Vertex
+nav_order: 1
 ---
 
 # Architecture Overview

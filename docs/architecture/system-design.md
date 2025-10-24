@@ -204,7 +204,7 @@ graph TB
 
 ## Related Documentation
 
-- [Database Schema]({{ site.baseurl }}/architecture/database/) - Detailed database design
-- [Storage Strategy]({{ site.baseurl }}/architecture/storage/) - File storage architecture
-- [Processing Pipeline]({{ site.baseurl }}/architecture/processing/) - Background job design
+- [Database Schema]({{ site.baseurl }}/architecture/database.html) - Detailed database design
+- [Storage Strategy]({{ site.baseurl }}/architecture/storage.html) - File storage architecture
+- [Processing Pipeline]({{ site.baseurl }}/architecture/processing.html) - Background job design
 - [Development Guide]({{ site.baseurl }}/development/) - Setup and deployment procedures

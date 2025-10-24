@@ -2,6 +2,7 @@
 layout: default
 title: Feature Documentation
 description: Detailed implementation guides for Vertex platform features
+nav_order: 3
 ---
 
 # Feature Documentation
