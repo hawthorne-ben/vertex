@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { inngest } from '@/inngest/client'
 
+export const dynamic = 'force-dynamic'
+
 /**
  * Trigger streaming IMU file processing
  */
