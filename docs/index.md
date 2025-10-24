@@ -10,34 +10,34 @@ Welcome to the comprehensive technical documentation for **Vertex**, an IMU cycl
 
 ## 🚀 Quick Navigation
 
-### [Architecture Overview](/architecture/)
-- [System Design](/architecture/system-design/)
-- [Database Schema](/architecture/database/)
-- [Storage Strategy](/architecture/storage/)
-- [Processing Pipeline](/architecture/processing/)
+### [Architecture Overview]({{ site.baseurl }}/architecture/)
+- [System Design]({{ site.baseurl }}/architecture/system-design/)
+- [Database Schema]({{ site.baseurl }}/architecture/database/)
+- [Storage Strategy]({{ site.baseurl }}/architecture/storage/)
+- [Processing Pipeline]({{ site.baseurl }}/architecture/processing/)
 
-### [Development Guide](/development/)
-- [Local Setup](/development/local-setup/)
-- [Deployment](/development/deployment/)
-- [Debugging](/development/debugging/)
-- [Build Process](/development/build/)
+### [Development Guide]({{ site.baseurl }}/development/)
+- [Local Setup]({{ site.baseurl }}/development/local-setup/)
+- [Deployment]({{ site.baseurl }}/development/deployment/)
+- [Debugging]({{ site.baseurl }}/development/debugging/)
+- [Build Process]({{ site.baseurl }}/development/build/)
 
-### [Feature Documentation](/features/)
-- [Charting System](/features/charting/)
-- [Upload System](/features/upload/)
-- [Data Analysis](/features/analysis/)
-- [Progress Tracking](/features/progress/)
+### [Feature Documentation]({{ site.baseurl }}/features/)
+- [Charting System]({{ site.baseurl }}/features/charting/)
+- [Upload System]({{ site.baseurl }}/features/upload/)
+- [Data Analysis]({{ site.baseurl }}/features/analysis/)
+- [Progress Tracking]({{ site.baseurl }}/features/progress/)
 
-### [Operations](/operations/)
-- [Monitoring](/operations/monitoring/)
-- [Storage Cleanup](/operations/cleanup/)
-- [Troubleshooting](/operations/troubleshooting/)
+### [Operations]({{ site.baseurl }}/operations/)
+- [Monitoring]({{ site.baseurl }}/operations/monitoring/)
+- [Storage Cleanup]({{ site.baseurl }}/operations/cleanup/)
+- [Troubleshooting]({{ site.baseurl }}/operations/troubleshooting/)
 
-### [API Reference](/api-reference/)
-- [Authentication](/api-reference/auth/)
-- [Data Upload](/api-reference/upload/)
-- [Admin Endpoints](/api-reference/admin/)
-- [Health Checks](/api-reference/health/)
+### [API Reference]({{ site.baseurl }}/api-reference/)
+- [Authentication]({{ site.baseurl }}/api-reference/auth/)
+- [Data Upload]({{ site.baseurl }}/api-reference/upload/)
+- [Admin Endpoints]({{ site.baseurl }}/api-reference/admin/)
+- [Health Checks]({{ site.baseurl }}/api-reference/health/)
 
 ---
 

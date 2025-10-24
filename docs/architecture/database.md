@@ -269,7 +269,7 @@ GROUP BY u.id, df.id;
 
 ## Related Documentation
 
-- [System Design](/architecture/system-design/) - Overall architecture
-- [Storage Strategy](/architecture/storage/) - File storage design
-- [Processing Pipeline](/architecture/processing/) - Data processing workflows
-- [Development Guide](/development/) - Database setup procedures
+- [System Design]({{ site.baseurl }}/architecture/system-design/) - Overall architecture
+- [Storage Strategy]({{ site.baseurl }}/architecture/storage/) - File storage design
+- [Processing Pipeline]({{ site.baseurl }}/architecture/processing/) - Data processing workflows
+- [Development Guide]({{ site.baseurl }}/development/) - Database setup procedures
