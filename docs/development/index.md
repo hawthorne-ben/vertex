@@ -11,29 +11,27 @@ Complete guide for setting up, developing, and deploying the Vertex platform.
 
 ## 📋 Contents
 
-### [Local Setup](/vertex/development/local-setup/)
-- Environment configuration
-- Database setup
-- Development dependencies
-- First-time setup walkthrough
+### [Build Process]({{ site.baseurl }}/development/BUILD.html)
+- Build configuration
+- Optimization settings
+- Bundle analysis
+- Performance monitoring
 
-### [Deployment](/vertex/development/deployment/)
+### [Deployment]({{ site.baseurl }}/development/DEPLOYMENT.html)
 - Production deployment procedures
 - Vercel configuration
 - Environment variables
 - CI/CD pipeline
 
-### [Debugging](/vertex/development/debugging/)
-- Common debugging scenarios
-- Log analysis
-- Performance troubleshooting
-- Error resolution
+### [Local Development Limitations]({{ site.baseurl }}/development/LOCAL_DEV_LIMITATIONS.html)
+- Known limitations and workarounds
+- Development environment constraints
+- Testing considerations
 
-### [Build Process](/vertex/development/build/)
-- Build configuration
-- Optimization settings
-- Bundle analysis
-- Performance monitoring
+### [Phase 1 Deployment Guide]({{ site.baseurl }}/development/PHASE1_DEPLOYMENT_GUIDE.html)
+- Step-by-step deployment instructions
+- Configuration requirements
+- Troubleshooting common issues
 
 ---
 
@@ -63,7 +61,7 @@ Complete guide for setting up, developing, and deploying the Vertex platform.
 ## 🔍 For AI Reference
 
 When discussing development topics, refer to:
-- **Setup issues** → `local-setup.md`
-- **Deployment problems** → `deployment.md`
-- **Debugging scenarios** → `debugging.md`
-- **Build issues** → `build.md`
+- **Build issues** → `BUILD.md`
+- **Deployment problems** → `DEPLOYMENT.md`
+- **Local limitations** → `LOCAL_DEV_LIMITATIONS.md`
+- **Phase 1 deployment** → `PHASE1_DEPLOYMENT_GUIDE.md`
