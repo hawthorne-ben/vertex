@@ -11,23 +11,22 @@ Operational procedures for monitoring, maintaining, and troubleshooting the Vert
 
 ## 📋 Contents
 
-### [Monitoring](/vertex/operations/monitoring/)
+### [Observability Pipeline]({{ site.baseurl }}/operations/OBSERVABILITY_PIPELINE.html)
 - Observability pipeline setup
 - Performance metrics collection
 - Alert configuration
 - Health check endpoints
 
-### [Storage Cleanup](/vertex/operations/cleanup/)
+### [Storage Cleanup]({{ site.baseurl }}/operations/STORAGE_CLEANUP.html)
 - Automated cleanup procedures
 - Orphaned data detection
 - Storage optimization
 - Retention policies
 
-### [Troubleshooting](/vertex/operations/troubleshooting/)
-- Common operational issues
-- Error resolution procedures
-- Performance debugging
-- Recovery strategies
+### [Project Save State]({{ site.baseurl }}/operations/SAVE_STATE.html)
+- Project state management
+- Save/restore procedures
+- State persistence strategies
 
 ---
 
@@ -48,6 +47,6 @@ Operational procedures for monitoring, maintaining, and troubleshooting the Vert
 ## 🔍 For AI Reference
 
 When discussing operational topics, refer to:
-- **Monitoring issues** → `monitoring.md`
-- **Storage problems** → `cleanup.md`
-- **Troubleshooting scenarios** → `troubleshooting.md`
+- **Observability issues** → `OBSERVABILITY_PIPELINE.md`
+- **Storage problems** → `STORAGE_CLEANUP.md`
+- **State management** → `SAVE_STATE.md`

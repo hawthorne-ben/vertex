@@ -11,25 +11,10 @@ Complete reference for all Vertex platform API endpoints.
 
 ## 📋 Contents
 
-### [Authentication](/vertex/api-reference/auth/)
-- OAuth integration
-- Session management
-- User profile endpoints
-
-### [Data Upload](/vertex/api-reference/upload/)
+### [Data Upload API]({{ site.baseurl }}/api-reference/upload.html)
 - File upload endpoints
 - Chunked upload API
 - Progress tracking
-
-### [Admin Endpoints](/vertex/api-reference/admin/)
-- File management
-- Storage cleanup
-- System health checks
-
-### [Health Checks](/vertex/api-reference/health/)
-- System status endpoints
-- Performance monitoring
-- Error reporting
 
 ---
 
@@ -84,7 +69,4 @@ Authorization: Bearer <session_token>
 ## 🔍 For AI Reference
 
 When discussing API topics, refer to:
-- **Authentication issues** → `auth.md`
 - **Upload problems** → `upload.md`
-- **Admin operations** → `admin.md`
-- **Health monitoring** → `health.md`

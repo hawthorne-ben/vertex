@@ -11,29 +11,22 @@ Comprehensive guides for implementing and understanding Vertex platform features
 
 ## 📋 Contents
 
-### [Charting System](/vertex/features/charting/)
+### [Charting System Implementation]({{ site.baseurl }}/features/CHARTING_IMPLEMENTATION.html)
 - uPlot implementation with LTTB downsampling
 - Performance optimization strategies
 - Interactive features (zoom, pan, selection)
 - Mobile responsiveness
 
-### [Upload System](/vertex/features/upload/)
-- Chunked file upload implementation
-- Progress tracking and error handling
-- File validation and processing
-- Background job integration
-
-### [Data Analysis](/vertex/features/analysis/)
-- IMU data processing algorithms
-- Statistical analysis methods
-- Visualization techniques
-- Export capabilities
-
-### [Progress Tracking](/vertex/features/progress/)
+### [Progress Tracking Implementation]({{ site.baseurl }}/features/PROGRESS_TRACKING_IMPLEMENTATION.html)
 - Real-time processing status
 - User feedback systems
 - Error reporting and recovery
 - Performance metrics
+
+### [Theme System]({{ site.baseurl }}/features/THEME_SYSTEM.html)
+- Theme configuration and customization
+- Dark/light mode implementation
+- UI component theming
 
 ---
 
@@ -50,7 +43,6 @@ Comprehensive guides for implementing and understanding Vertex platform features
 ## 🔍 For AI Reference
 
 When discussing feature implementation, refer to:
-- **Charting questions** → `charting.md`
-- **Upload issues** → `upload.md`
-- **Analysis problems** → `analysis.md`
-- **Progress tracking** → `progress.md`
+- **Charting questions** → `CHARTING_IMPLEMENTATION.md`
+- **Progress tracking** → `PROGRESS_TRACKING_IMPLEMENTATION.md`
+- **Theme system** → `THEME_SYSTEM.md`
