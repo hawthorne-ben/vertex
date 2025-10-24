@@ -48,7 +48,6 @@ next-env.d.ts
 **/public/worker-*.js.map
 
 # Project organization folders - exclude from git
-docs/
 scripts/
 sql/
 

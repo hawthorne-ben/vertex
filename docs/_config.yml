@@ -1,0 +1,66 @@
+# Jekyll configuration for Vertex Documentation
+title: Vertex Documentation
+description: IMU Cycling Data Analysis Platform - Technical Documentation
+baseurl: /vertex
+url: https://bhawthorne.github.io
+
+# Build settings
+markdown: kramdown
+highlighter: rouge
+theme: minima
+
+# Navigation
+navigation:
+  - title: Overview
+    url: /vertex/
+  - title: Architecture
+    url: /vertex/architecture/
+  - title: Development
+    url: /vertex/development/
+  - title: Features
+    url: /vertex/features/
+  - title: Operations
+    url: /vertex/operations/
+  - title: API Reference
+    url: /vertex/api-reference/
+
+# Collections for better organization
+collections:
+  architecture:
+    output: true
+    permalink: /:collection/:name/
+  development:
+    output: true
+    permalink: /:collection/:name/
+  features:
+    output: true
+    permalink: /:collection/:name/
+  operations:
+    output: true
+    permalink: /:collection/:name/
+  api-reference:
+    output: true
+    permalink: /:collection/:name/
+
+# Exclude from processing
+exclude:
+  - README.md
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor
+  - .sass-cache
+  - .jekyll-cache
+  - .jekyll-metadata
+
+# Plugins
+plugins:
+  - jekyll-feed
+  - jekyll-sitemap
+  - jekyll-seo-tag
+
+# SEO
+seo:
+  type: WebSite
+  name: Vertex Documentation
+  description: Technical documentation for Vertex IMU cycling data analysis platform
