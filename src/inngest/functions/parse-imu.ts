@@ -3,8 +3,8 @@ import { parseIMUCSVStreaming, StreamingParseOptions } from '@/lib/imu/streaming
 import { createClient } from '@supabase/supabase-js'
 import { IMUSample } from '@/lib/imu/types'
 
-// Batch size tuned for good progress resolution and performance
-// 10k provides updates every ~1-2 seconds with minimal overhead
+// Batch size: 10k provides good balance of progress resolution and DB performance
+// With sub-batch progress updates every 2s, user gets smooth feedback
 const BATCH_SIZE = 10000
 
 // Create Supabase admin client lazily (only when function runs)
@@ -189,18 +189,37 @@ export const parseIMU = inngest.createFunction(
         console.log(`🔄 Starting CSV parsing... (${(csvText.length / 1024 / 1024).toFixed(1)}MB)`)
 
         // Now parse the CSV with checkpoint tracking
-        let totalProcessed = file.samples_processed || 0
         let batchNumber = 0
+        let totalProcessed = 0
         let firstTimestamp: Date | null = null
         let lastTimestamp: Date | null = null
         const parseStartTime = Date.now()
+        let lastProgressUpdate = 0 // Track last progress update time
 
         const streamingOptions: StreamingParseOptions = {
           batchSize: BATCH_SIZE,
           
+          
           onBatch: async (samples: IMUSample[], currentBatchNumber: number) => {
             const batchStartTime = Date.now()
             batchNumber = currentBatchNumber
+            
+            // Check if file was deleted during processing - abort if so
+            const { data: fileCheck } = await supabaseAdmin
+              .from('imu_data_files')
+              .select('status, error_message')
+              .eq('id', fileId)
+              .single()
+            
+            if (!fileCheck) {
+              console.log(`⚠️ File ${fileId} no longer exists - aborting`)
+              throw new Error('File was deleted during processing')
+            }
+            
+            if (fileCheck.status === 'failed' && fileCheck.error_message === 'File deletion requested by user') {
+              console.log(`⚠️ File ${fileId} deletion requested - aborting`)
+              throw new Error('File deletion requested by user')
+            }
             
             // Track first and last timestamps
             if (!firstTimestamp && samples.length > 0) {
@@ -295,11 +314,34 @@ export const parseIMU = inngest.createFunction(
           },
           
           onProgress: (processedCount: number, totalEstimate?: number) => {
+            // Log progress every 10k samples
             if (processedCount % 10000 === 0) {
               const totalText = totalEstimate ? `/${totalEstimate}` : ''
               const elapsedSeconds = (Date.now() - parseStartTime) / 1000
               const samplesPerSecond = Math.round(processedCount / elapsedSeconds)
               console.log(`📊 Progress: ${processedCount}${totalText} samples (${samplesPerSecond} samples/sec)`)
+            }
+            
+            // Fire-and-forget database progress update every 2 seconds for smooth UI
+            const now = Date.now()
+            if (now - lastProgressUpdate >= 2000) {
+              lastProgressUpdate = now
+              
+              // Non-blocking update - don't await to avoid slowing down CSV parsing
+              void supabaseAdmin
+                .from('imu_data_files')
+                .update({
+                  samples_processed: processedCount,
+                  last_checkpoint_at: new Date().toISOString()
+                })
+                .eq('id', fileId)
+                .then(({ error }) => {
+                  if (error) {
+                    console.warn(`⚠️ Progress update failed:`, error.message)
+                  } else {
+                    console.log(`📈 Sub-batch progress: ${processedCount} samples parsed`)
+                  }
+                })
             }
           },
           

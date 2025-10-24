@@ -27,7 +27,25 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: 'File not found' }, { status: 404 })
     }
 
-    // Step 2: Delete all associated samples (single query - CASCADE will handle this)
+    // Step 2: Mark file as failed to stop any running Inngest jobs
+    // (We'll delete it completely in the next step, this just stops processing)
+    console.log(`🗑️ Marking file ${fileId} as failed to stop processing`)
+    const { error: markError } = await supabase
+      .from('imu_data_files')
+      .update({ 
+        status: 'failed',
+        error_message: 'File deletion requested by user'
+      })
+      .eq('id', fileId)
+    
+    if (markError) {
+      console.error('Failed to mark file as failed:', markError)
+      return NextResponse.json({ 
+        error: `Failed to stop processing: ${markError.message}` 
+      }, { status: 500 })
+    }
+    
+    // Step 3: Delete all associated samples (single query)
     // First, count the samples to report how many were deleted
     console.log(`🗑️ Checking sample count for file ${fileId}`)
     const { count, error: countError } = await supabase
@@ -59,7 +77,7 @@ export async function DELETE(request: NextRequest) {
     
     console.log(`✅ Successfully deleted ${sampleCount} samples for file ${fileId}`)
 
-    // Step 3: Delete the file record
+    // Step 4: Delete the file record
     const { error: fileDeleteError } = await supabase
       .from('imu_data_files')
       .delete()

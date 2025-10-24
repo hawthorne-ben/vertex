@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect, notFound } from 'next/navigation'
 import { IMUUPlotCharts } from '@/components/imu-uplot-charts'
+import { DataDetailHeader } from '@/components/data-detail-header'
 import { downsampleMultiSeries } from '@/lib/imu/lttb-downsample'
 import { Loader2 } from 'lucide-react'
 
@@ -65,35 +66,35 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
       }
     } else {
       // Large dataset: systematic sampling using SQL
-      // Use row_number() to select every Nth row efficiently in a single query
       const stride = Math.ceil((totalCount || 1) / TARGET_SAMPLES)
       
-      // Use RPC call with custom SQL for efficient sampling
-      // This fetches every Nth row in a single query instead of N individual queries
-      const { data, error } = await supabase
-        .rpc('sample_imu_data', {
-          p_file_id: id,
-          p_stride: stride,
-          p_limit: TARGET_SAMPLES
-        })
+      // PostgREST has a hard 1000-row limit per RPC call
+      // We need to fetch in batches of 1000 and combine them
+      const BATCH_SIZE = 1000
+      const numBatches = Math.ceil(TARGET_SAMPLES / BATCH_SIZE)
       
-      if (error) {
-        console.warn('📊 SQL sampling function not available (run complete-schema.sql to enable), using fallback:', error.message || error)
-        // Fallback: just fetch the first TARGET_SAMPLES rows
-        const { data: fallbackData } = await supabase
-          .from('imu_samples')
-          .select('timestamp, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z')
-          .eq('imu_file_id', id)
-          .order('timestamp', { ascending: true })
-          .limit(TARGET_SAMPLES)
+      for (let batch = 0; batch < numBatches; batch++) {
+        const batchStart = batch * BATCH_SIZE
+        const batchLimit = Math.min(BATCH_SIZE, TARGET_SAMPLES - batchStart)
         
-        if (fallbackData) samplesData = fallbackData
-      } else if (data) {
+        // Calculate offset in terms of actual rows (stride * batchStart)
+        const { data, error } = await supabase
+          .rpc('sample_imu_data', {
+            p_file_id: id,
+            p_stride: stride,
+            p_limit: TARGET_SAMPLES // Still pass full limit to function
+          })
+          .range(batchStart, batchStart + batchLimit - 1) // Fetch this batch's slice
+        
+        if (error || !data) break
+        
         // Map sample_timestamp back to timestamp for consistency
-        samplesData = data.map((row: any) => ({
+        const mappedData = data.map((row: any) => ({
           ...row,
           timestamp: row.sample_timestamp
         }))
+        
+        samplesData.push(...mappedData)
       }
     }
 
@@ -109,58 +110,22 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
   return (
     <div className="container mx-auto px-4 md:px-6 py-8 max-w-7xl">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-normal text-primary mb-2">
-          {fileData.start_time && fileData.end_time ? (
-            <>
-              {new Date(fileData.start_time).toLocaleDateString('en-US', { 
-                month: 'short', 
-                day: 'numeric', 
-                year: 'numeric',
-                hour: 'numeric',
-                minute: '2-digit'
-              })}
-              {' → '}
-              {new Date(fileData.end_time).toLocaleTimeString('en-US', {
-                hour: 'numeric',
-                minute: '2-digit'
-              })}
-            </>
-          ) : (
-            'IMU Data Segment'
-          )}
-        </h1>
-        
-        {/* Metadata */}
-        <div className="flex items-center gap-6 text-sm text-secondary">
-          {fileData.sample_count && (
-            <span>{fileData.sample_count.toLocaleString()} samples</span>
-          )}
-          {fileData.sample_rate && (
-            <span>{fileData.sample_rate} Hz</span>
-          )}
-          {fileData.start_time && fileData.end_time && (
-            <span>
-              {((new Date(fileData.end_time).getTime() - new Date(fileData.start_time).getTime()) / 1000).toFixed(1)}s
-            </span>
-          )}
-          <span className={`
-            px-2 py-1 rounded-full text-xs
-            ${fileData.status === 'ready' ? 'status-badge-success' : ''}
-            ${fileData.status === 'parsing' ? 'status-badge-info' : ''}
-            ${fileData.status === 'error' ? 'status-badge-error' : ''}
-            ${fileData.status === 'uploaded' ? 'bg-muted text-muted-foreground' : ''}
-          `}>
-            {fileData.status}
-          </span>
+      {fileData.start_time && fileData.end_time ? (
+        <DataDetailHeader
+          startTime={fileData.start_time}
+          endTime={fileData.end_time}
+          sampleCount={fileData.sample_count}
+          sampleRate={fileData.sample_rate}
+          status={fileData.status}
+          filename={fileData.filename}
+        />
+      ) : (
+        <div className="mb-8">
+          <h1 className="text-3xl font-normal text-primary mb-2">
+            IMU Data Segment
+          </h1>
         </div>
-
-        {fileData.filename && (
-          <p className="text-xs text-secondary mt-2">
-            Source: {fileData.filename}
-          </p>
-        )}
-      </div>
+      )}
 
       {/* Status-based content */}
       {fileData.status === 'ready' && samples ? (

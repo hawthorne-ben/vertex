@@ -332,24 +332,28 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
                     <>
                       {(() => {
                         try {
-                          return new Date(file.start_time).toLocaleDateString('en-US', { 
+                          const startDate = new Date(file.start_time)
+                          const endDate = new Date(file.end_time)
+                          
+                          // Format: "Oct 24, 7:02 PM → 7:06 PM"
+                          const dateStr = startDate.toLocaleDateString(undefined, { 
                             month: 'short', 
-                            day: 'numeric', 
-                            year: 'numeric'
+                            day: 'numeric'
                           })
+                          const startTimeStr = startDate.toLocaleTimeString(undefined, {
+                            hour: 'numeric',
+                            minute: '2-digit',
+                            hour12: true
+                          })
+                          const endTimeStr = endDate.toLocaleTimeString(undefined, {
+                            hour: 'numeric',
+                            minute: '2-digit',
+                            hour12: true
+                          })
+                          
+                          return `${dateStr}, ${startTimeStr} → ${endTimeStr}`
                         } catch (error) {
                           return 'Invalid Date'
-                        }
-                      })()}
-                      {' → '}
-                      {(() => {
-                        try {
-                          return new Date(file.end_time).toLocaleTimeString('en-US', {
-                            hour: 'numeric',
-                            minute: '2-digit'
-                          })
-                        } catch (error) {
-                          return 'Invalid Time'
                         }
                       })()}
                     </>
@@ -537,21 +541,26 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
         title="Delete Data Segment"
         message={fileToDelete ? (() => {
           if (fileToDelete.start_time && fileToDelete.end_time) {
-            const startDate = new Date(fileToDelete.start_time).toLocaleDateString('en-US', {
+            const startDate = new Date(fileToDelete.start_time)
+            const endDate = new Date(fileToDelete.end_time)
+            
+            const dateStr = startDate.toLocaleDateString(undefined, {
               month: 'short',
               day: 'numeric',
-              year: 'numeric',
-              hour: 'numeric',
-              minute: '2-digit'
+              year: 'numeric'
             })
-            const endDate = new Date(fileToDelete.end_time).toLocaleDateString('en-US', {
-              month: 'short',
-              day: 'numeric',
-              year: 'numeric',
+            const startTimeStr = startDate.toLocaleTimeString(undefined, {
               hour: 'numeric',
-              minute: '2-digit'
+              minute: '2-digit',
+              hour12: true
             })
-            return `Are you sure you want to delete sensor data from ${startDate} to ${endDate}? This will permanently remove all samples in this time range.`
+            const endTimeStr = endDate.toLocaleTimeString(undefined, {
+              hour: 'numeric',
+              minute: '2-digit',
+              hour12: true
+            })
+            
+            return `Are you sure you want to delete sensor data from ${dateStr}, ${startTimeStr} → ${endTimeStr}? This will permanently remove all samples in this time range.`
           } else {
             return `Are you sure you want to delete this sensor data? This will permanently remove all samples.`
           }

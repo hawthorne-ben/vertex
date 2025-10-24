@@ -37,6 +37,22 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
   const prevDataTypeRef = useRef<DataType>(dataType)
   const prevDataTypeForChartRef = useRef<DataType>(dataType)
 
+  // Debug log on mount
+  useEffect(() => {
+    if (initialSamples.length > 0) {
+      console.log('📊 Chart initialized with:', {
+        sampleCount: initialSamples.length,
+        originalCount,
+        firstTimestamp: initialSamples[0]?.timestamp,
+        lastTimestamp: initialSamples[initialSamples.length - 1]?.timestamp,
+        timeRange: initialSamples.length > 0 ? 
+          `${new Date(initialSamples[0].timestamp).toLocaleTimeString()} → ${new Date(initialSamples[initialSamples.length - 1].timestamp).toLocaleTimeString()}` 
+          : 'N/A'
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Check if magnetometer data exists
   const hasMagData = samples.some(s => s.mag_x !== null && s.mag_y !== null && s.mag_z !== null)
 
@@ -227,10 +243,27 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
               const startTimeUnix = self.posToVal(select.left, 'x')
               const endTimeUnix = self.posToVal(select.left + select.width, 'x')
               
+              // Log the current X-axis scale bounds for debugging
+              const xScale = self.scales.x
+              console.log('🔍 Zoom selection:', {
+                pixelLeft: select.left,
+                pixelRight: select.left + select.width,
+                pixelWidth: select.width,
+                currentXScaleMin: xScale?.min,
+                currentXScaleMax: xScale?.max,
+                currentXScaleMinLocal: xScale?.min ? new Date(xScale.min * 1000).toLocaleTimeString() : 'N/A',
+                currentXScaleMaxLocal: xScale?.max ? new Date(xScale.max * 1000).toLocaleTimeString() : 'N/A',
+                startTimeUnix,
+                endTimeUnix,
+                startTimeLocal: new Date(startTimeUnix * 1000).toLocaleTimeString(),
+                endTimeLocal: new Date(endTimeUnix * 1000).toLocaleTimeString()
+              })
+              
               // Convert Unix seconds to ISO string
               const startTime = new Date(startTimeUnix * 1000).toISOString()
               const endTime = new Date(endTimeUnix * 1000).toISOString()
               
+              console.log('🔍 Setting zoom range:', { startTime, endTime })
               setZoomRange({ start: startTime, end: endTime })
             }
           }
