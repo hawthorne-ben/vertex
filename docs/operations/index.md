@@ -2,6 +2,7 @@
 layout: default
 title: Operations Guide
 description: Monitoring, maintenance, and troubleshooting for Vertex platform
+nav_order: 4
 ---
 
 # Operations Guide

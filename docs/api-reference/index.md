@@ -2,6 +2,7 @@
 layout: default
 title: API Reference
 description: Complete API reference for Vertex platform endpoints
+nav_order: 5
 ---
 
 # API Reference

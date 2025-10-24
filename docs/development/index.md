@@ -2,6 +2,7 @@
 layout: default
 title: Development Guide
 description: Local development setup, deployment procedures, and debugging guides
+nav_order: 2
 ---
 
 # Development Guide
