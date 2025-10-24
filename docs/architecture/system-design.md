@@ -204,7 +204,7 @@ graph TB
 
 ## Related Documentation
 
-- [Database Schema](/vertex/architecture/database/) - Detailed database design
-- [Storage Strategy](/vertex/architecture/storage/) - File storage architecture
-- [Processing Pipeline](/vertex/architecture/processing/) - Background job design
-- [Development Guide](/vertex/development/) - Setup and deployment procedures
+- [Database Schema](/architecture/database/) - Detailed database design
+- [Storage Strategy](/architecture/storage/) - File storage architecture
+- [Processing Pipeline](/architecture/processing/) - Background job design
+- [Development Guide](/development/) - Setup and deployment procedures

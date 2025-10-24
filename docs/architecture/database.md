@@ -269,7 +269,7 @@ GROUP BY u.id, df.id;
 
 ## Related Documentation
 
-- [System Design](/vertex/architecture/system-design/) - Overall architecture
-- [Storage Strategy](/vertex/architecture/storage/) - File storage design
-- [Processing Pipeline](/vertex/architecture/processing/) - Data processing workflows
-- [Development Guide](/vertex/development/) - Database setup procedures
+- [System Design](/architecture/system-design/) - Overall architecture
+- [Storage Strategy](/architecture/storage/) - File storage design
+- [Processing Pipeline](/architecture/processing/) - Data processing workflows
+- [Development Guide](/development/) - Database setup procedures

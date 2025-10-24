@@ -10,34 +10,34 @@ Welcome to the comprehensive technical documentation for **Vertex**, an IMU cycl
 
 ## 🚀 Quick Navigation
 
-### [Architecture Overview](/vertex/architecture/)
-- [System Design](/vertex/architecture/system-design/)
-- [Database Schema](/vertex/architecture/database/)
-- [Storage Strategy](/vertex/architecture/storage/)
-- [Processing Pipeline](/vertex/architecture/processing/)
+### [Architecture Overview](/architecture/)
+- [System Design](/architecture/system-design/)
+- [Database Schema](/architecture/database/)
+- [Storage Strategy](/architecture/storage/)
+- [Processing Pipeline](/architecture/processing/)
 
-### [Development Guide](/vertex/development/)
-- [Local Setup](/vertex/development/local-setup/)
-- [Deployment](/vertex/development/deployment/)
-- [Debugging](/vertex/development/debugging/)
-- [Build Process](/vertex/development/build/)
+### [Development Guide](/development/)
+- [Local Setup](/development/local-setup/)
+- [Deployment](/development/deployment/)
+- [Debugging](/development/debugging/)
+- [Build Process](/development/build/)
 
-### [Feature Documentation](/vertex/features/)
-- [Charting System](/vertex/features/charting/)
-- [Upload System](/vertex/features/upload/)
-- [Data Analysis](/vertex/features/analysis/)
-- [Progress Tracking](/vertex/features/progress/)
+### [Feature Documentation](/features/)
+- [Charting System](/features/charting/)
+- [Upload System](/features/upload/)
+- [Data Analysis](/features/analysis/)
+- [Progress Tracking](/features/progress/)
 
-### [Operations](/vertex/operations/)
-- [Monitoring](/vertex/operations/monitoring/)
-- [Storage Cleanup](/vertex/operations/cleanup/)
-- [Troubleshooting](/vertex/operations/troubleshooting/)
+### [Operations](/operations/)
+- [Monitoring](/operations/monitoring/)
+- [Storage Cleanup](/operations/cleanup/)
+- [Troubleshooting](/operations/troubleshooting/)
 
-### [API Reference](/vertex/api-reference/)
-- [Authentication](/vertex/api-reference/auth/)
-- [Data Upload](/vertex/api-reference/upload/)
-- [Admin Endpoints](/vertex/api-reference/admin/)
-- [Health Checks](/vertex/api-reference/health/)
+### [API Reference](/api-reference/)
+- [Authentication](/api-reference/auth/)
+- [Data Upload](/api-reference/upload/)
+- [Admin Endpoints](/api-reference/admin/)
+- [Health Checks](/api-reference/health/)
 
 ---
 

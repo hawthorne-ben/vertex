@@ -159,6 +159,6 @@ const subscription = supabase
 
 ## Related Documentation
 
-- [Upload System](/vertex/features/upload/) - Detailed upload implementation
-- [Processing Pipeline](/vertex/architecture/processing/) - Background job processing
-- [Storage Strategy](/vertex/architecture/storage/) - File storage architecture
+- [Upload System](/features/upload/) - Detailed upload implementation
+- [Processing Pipeline](/architecture/processing/) - Background job processing
+- [Storage Strategy](/architecture/storage/) - File storage architecture
