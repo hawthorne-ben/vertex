@@ -31,22 +31,22 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
   let originalSampleCount = 0
   if (fileData.status === 'ready') {
     // Scalable data fetching strategy:
-    // 1. For datasets ≤20k: Fetch all data in 1000-row pages (Supabase limit)
-    // 2. For datasets >20k: Use systematic sampling (every Nth row) to fetch ~20k representative samples
-    // 3. Apply LTTB downsampling to 2k points for display
+    // 1. For small datasets (≤5k samples): Fetch all data
+    // 2. For large datasets (>5k): Use SQL function to systematically sample every Nth row
+    // 3. Apply LTTB downsampling to 2k points for optimal chart performance
     
     const { count: totalCount } = await supabase
       .from('imu_samples')
       .select('*', { count: 'exact', head: true })
       .eq('imu_file_id', id)
     
-    const FETCH_LIMIT = 20000
-    const PAGE_SIZE = 1000 // Supabase default page size
+    const TARGET_SAMPLES = 5000 // Target samples to fetch before LTTB downsampling
+    const PAGE_SIZE = 1000 // Supabase page size for small datasets
     
     let samplesData: any[] = []
     
-    if (totalCount && totalCount <= FETCH_LIMIT) {
-      // Small dataset: fetch all data in paginated batches
+    if (totalCount && totalCount <= TARGET_SAMPLES) {
+      // Small dataset: fetch all data in one or more pages
       const numPages = Math.ceil(totalCount / PAGE_SIZE)
       
       for (let page = 0; page < numPages; page++) {
@@ -64,37 +64,43 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
         if (data) samplesData.push(...data)
       }
     } else {
-      // Large dataset: systematic sampling (fetch every Nth row)
-      // This ensures we get samples evenly distributed across the full time range
-      const stride = Math.ceil((totalCount || 1) / FETCH_LIMIT)
-      const numSamplesToFetch = Math.floor((totalCount || 0) / stride)
-      const numPages = Math.ceil(numSamplesToFetch / PAGE_SIZE)
+      // Large dataset: systematic sampling using SQL
+      // Use row_number() to select every Nth row efficiently in a single query
+      const stride = Math.ceil((totalCount || 1) / TARGET_SAMPLES)
       
-      for (let page = 0; page < numPages; page++) {
-        const pageStart = page * PAGE_SIZE * stride
-        const pageEnd = Math.min(pageStart + PAGE_SIZE * stride, totalCount || 0)
+      // Use RPC call with custom SQL for efficient sampling
+      // This fetches every Nth row in a single query instead of N individual queries
+      const { data, error } = await supabase
+        .rpc('sample_imu_data', {
+          p_file_id: id,
+          p_stride: stride,
+          p_limit: TARGET_SAMPLES
+        })
+      
+      if (error) {
+        console.warn('📊 SQL sampling function not available (run complete-schema.sql to enable), using fallback:', error.message || error)
+        // Fallback: just fetch the first TARGET_SAMPLES rows
+        const { data: fallbackData } = await supabase
+          .from('imu_samples')
+          .select('timestamp, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z')
+          .eq('imu_file_id', id)
+          .order('timestamp', { ascending: true })
+          .limit(TARGET_SAMPLES)
         
-        // Fetch samples at regular intervals (systematic sampling)
-        for (let offset = pageStart; offset < pageEnd && samplesData.length < FETCH_LIMIT; offset += stride) {
-          const { data, error } = await supabase
-            .from('imu_samples')
-            .select('timestamp, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z')
-            .eq('imu_file_id', id)
-            .order('timestamp', { ascending: true })
-            .range(offset, offset)
-            .single()
-          
-          if (error) continue
-          if (data) samplesData.push(data)
-        }
+        if (fallbackData) samplesData = fallbackData
+      } else if (data) {
+        // Map sample_timestamp back to timestamp for consistency
+        samplesData = data.map((row: any) => ({
+          ...row,
+          timestamp: row.sample_timestamp
+        }))
       }
     }
 
     if (samplesData.length > 0) {
-      originalSampleCount = samplesData.length
+      originalSampleCount = totalCount || samplesData.length
       
       // Apply LTTB downsampling to 2000 points for optimal chart performance
-      // LTTB preserves visual features (peaks, valleys, trends) better than naive sampling
       const targetPoints = 2000
       samples = downsampleMultiSeries(samplesData, targetPoints)
     }

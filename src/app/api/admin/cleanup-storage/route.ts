@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import { inngest } from '@/inngest/client'
 
+export const dynamic = 'force-dynamic'
+
 /**
  * Manual trigger for storage cleanup
  * Useful for testing or running cleanup on-demand

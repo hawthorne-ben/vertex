@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { downsampleMultiSeries } from '@/lib/imu/lttb-downsample'
 
+export const dynamic = 'force-dynamic'
+
 interface RouteParams {
   params: Promise<{
     id: string

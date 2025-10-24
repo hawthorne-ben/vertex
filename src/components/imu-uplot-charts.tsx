@@ -149,7 +149,7 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
       axes: [
         {
           label: 'Time',
-          space: 60,
+          space: 80,
           stroke: `hsl(${foregroundColor})`,
           labelGap: 8,
           labelSize: 14,
@@ -161,16 +161,28 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
             stroke: `hsl(${borderColor})`,
             width: 1
           },
+          // Reduce tick density for cleaner X-axis
+          incrs: [
+            // seconds
+            1, 2, 5, 10, 15, 30,
+            // minutes
+            60, 120, 300, 600, 900, 1800,
+            // hours  
+            3600, 7200, 14400, 21600, 43200, 86400
+          ],
           values: (self, ticks) => {
-            // Format timestamps as absolute time (12-hour format)
+            // Format timestamps as absolute time (12-hour format) in local timezone
             return ticks.map(t => {
               const date = new Date(t * 1000)
-              return date.toLocaleTimeString('en-US', { 
-                hour12: true,
-                hour: 'numeric', 
-                minute: '2-digit', 
-                second: '2-digit' 
-              })
+              const hours = date.getHours()
+              const minutes = date.getMinutes().toString().padStart(2, '0')
+              const seconds = date.getSeconds().toString().padStart(2, '0')
+              
+              // Convert to 12-hour format
+              const hour12 = hours % 12 || 12
+              const ampm = hours < 12 ? 'AM' : 'PM'
+              
+              return `${hour12}:${minutes}:${seconds} ${ampm}`
             })
           }
         },
