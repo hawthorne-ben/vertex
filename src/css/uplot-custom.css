@@ -1,0 +1,62 @@
+/* Custom uPlot Styling */
+
+/* Axis labels - increase contrast */
+.uplot .u-axis .u-label {
+  fill: hsl(var(--foreground)) !important;
+  font-weight: 500;
+}
+
+/* Axis tick values - increase contrast */
+.uplot .u-axis text {
+  fill: hsl(var(--foreground)) !important;
+}
+
+/* Legend styling - smaller filled squircles instead of squares */
+.uplot .u-legend .u-marker {
+  width: 8px !important;
+  height: 8px !important;
+  border-radius: 3px !important; /* Squircle effect */
+  border: none !important;
+  /* Background color is set via inline style from series stroke color */
+}
+
+/* Legend text styling */
+.uplot .u-legend .u-label {
+  color: hsl(var(--foreground));
+  font-size: 13px;
+  font-weight: 500;
+  min-width: 20px;
+  display: inline-block;
+}
+
+/* Legend value styling */
+.uplot .u-legend .u-value {
+  color: hsl(var(--muted-foreground));
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  min-width: 60px;
+  display: inline-block;
+  text-align: right;
+}
+
+/* Legend series spacing */
+.uplot .u-legend .u-series {
+  margin-right: 20px;
+}
+
+/* Ensure legend is visible in both light and dark mode */
+.uplot .u-legend {
+  color: hsl(var(--foreground));
+}
+
+/* Hide the first series (timestamp/x-axis) from legend */
+.uplot .u-legend .u-series:first-child {
+  display: none !important;
+}
+
+/* Zoom selection box styling - visible in both light and dark mode */
+.uplot .u-select {
+  background: hsl(var(--primary) / 0.15) !important;
+  border: 2px solid hsl(var(--primary)) !important;
+}
+

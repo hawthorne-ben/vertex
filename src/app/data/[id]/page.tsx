@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect, notFound } from 'next/navigation'
-import { IMUDataCharts } from '@/components/imu-data-charts'
+import { IMUUPlotCharts } from '@/components/imu-uplot-charts'
+import { downsampleMultiSeries } from '@/lib/imu/lttb-downsample'
 import { Loader2 } from 'lucide-react'
 
 export default async function DataDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -27,24 +28,75 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
 
   // Only fetch samples if status is 'ready'
   let samples = null
+  let originalSampleCount = 0
   if (fileData.status === 'ready') {
-    // Fetch samples (limit to 10k for performance, sample if needed)
-    const { data: samplesData, error: samplesError } = await supabase
+    // Scalable data fetching strategy:
+    // 1. For datasets ≤20k: Fetch all data in 1000-row pages (Supabase limit)
+    // 2. For datasets >20k: Use systematic sampling (every Nth row) to fetch ~20k representative samples
+    // 3. Apply LTTB downsampling to 2k points for display
+    
+    const { count: totalCount } = await supabase
       .from('imu_samples')
-      .select('timestamp, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z')
+      .select('*', { count: 'exact', head: true })
       .eq('imu_file_id', id)
-      .order('timestamp', { ascending: true })
-      .limit(10000)
-
-    if (!samplesError && samplesData) {
-      // Sample every Nth point if we have too many
-      const maxPoints = 2000
-      if (samplesData.length > maxPoints) {
-        const step = Math.ceil(samplesData.length / maxPoints)
-        samples = samplesData.filter((_, i) => i % step === 0)
-      } else {
-        samples = samplesData
+    
+    const FETCH_LIMIT = 20000
+    const PAGE_SIZE = 1000 // Supabase default page size
+    
+    let samplesData: any[] = []
+    
+    if (totalCount && totalCount <= FETCH_LIMIT) {
+      // Small dataset: fetch all data in paginated batches
+      const numPages = Math.ceil(totalCount / PAGE_SIZE)
+      
+      for (let page = 0; page < numPages; page++) {
+        const from = page * PAGE_SIZE
+        const to = from + PAGE_SIZE - 1
+        
+        const { data, error } = await supabase
+          .from('imu_samples')
+          .select('timestamp, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z')
+          .eq('imu_file_id', id)
+          .order('timestamp', { ascending: true })
+          .range(from, to)
+        
+        if (error) break
+        if (data) samplesData.push(...data)
       }
+    } else {
+      // Large dataset: systematic sampling (fetch every Nth row)
+      // This ensures we get samples evenly distributed across the full time range
+      const stride = Math.ceil((totalCount || 1) / FETCH_LIMIT)
+      const numSamplesToFetch = Math.floor((totalCount || 0) / stride)
+      const numPages = Math.ceil(numSamplesToFetch / PAGE_SIZE)
+      
+      for (let page = 0; page < numPages; page++) {
+        const pageStart = page * PAGE_SIZE * stride
+        const pageEnd = Math.min(pageStart + PAGE_SIZE * stride, totalCount || 0)
+        
+        // Fetch samples at regular intervals (systematic sampling)
+        for (let offset = pageStart; offset < pageEnd && samplesData.length < FETCH_LIMIT; offset += stride) {
+          const { data, error } = await supabase
+            .from('imu_samples')
+            .select('timestamp, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z')
+            .eq('imu_file_id', id)
+            .order('timestamp', { ascending: true })
+            .range(offset, offset)
+            .single()
+          
+          if (error) continue
+          if (data) samplesData.push(data)
+        }
+      }
+    }
+
+    if (samplesData.length > 0) {
+      originalSampleCount = samplesData.length
+      
+      // Apply LTTB downsampling to 2000 points for optimal chart performance
+      // LTTB preserves visual features (peaks, valleys, trends) better than naive sampling
+      const targetPoints = 2000
+      samples = downsampleMultiSeries(samplesData, targetPoints)
     }
   }
 
@@ -106,7 +158,7 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
 
       {/* Status-based content */}
       {fileData.status === 'ready' && samples ? (
-        <IMUDataCharts samples={samples} />
+        <IMUUPlotCharts fileId={id} initialSamples={samples} originalCount={originalSampleCount} />
       ) : fileData.status === 'parsing' ? (
         <div className="text-center py-12 border border-border rounded-lg bg-muted">
           <Loader2 className="w-8 h-8 text-info animate-spin mx-auto mb-4" />
