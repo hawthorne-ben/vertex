@@ -1,7 +1,7 @@
 # Jekyll configuration for Vertex Documentation
 title: Vertex Documentation
 description: IMU Cycling Data Analysis Platform - Technical Documentation
-baseurl: ""
+baseurl: "/vertex"
 url: "https://hawthorne-ben.github.io"
 
 # Build settings
