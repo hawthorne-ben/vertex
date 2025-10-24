@@ -107,7 +107,7 @@ export function FitFilesList({ files: initialFiles, onDataChange }: FitFilesList
     }, 2000) // Poll every 2 seconds
 
     return () => clearInterval(interval)
-  }, [files.length, files.some(f => f.status === 'uploaded' || f.status === 'parsing')])
+  }, [files])
 
   const handleDeleteClick = (file: FitFile) => {
     setFileToDelete(file)

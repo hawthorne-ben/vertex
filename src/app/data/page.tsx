@@ -3,10 +3,11 @@ import { redirect } from 'next/navigation'
 import { DataTabs } from '@/components/data-tabs'
 
 interface DataPageProps {
-  searchParams: { tab?: string }
+  searchParams: Promise<{ tab?: string }>
 }
 
 export default async function DataPage({ searchParams }: DataPageProps) {
+  const resolvedSearchParams = await searchParams
   const supabase = await createClient()
   
   const { data: { user }, error: authError } = await supabase.auth.getUser()
