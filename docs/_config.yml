@@ -28,24 +28,6 @@ navigation:
   - title: API Reference
     url: /api-reference/
 
-# Collections for better organization
-collections:
-  architecture:
-    output: true
-    permalink: /:collection/:name/
-  development:
-    output: true
-    permalink: /:collection/:name/
-  features:
-    output: true
-    permalink: /:collection/:name/
-  operations:
-    output: true
-    permalink: /:collection/:name/
-  api-reference:
-    output: true
-    permalink: /:collection/:name/
-
 # Exclude from processing
 exclude:
   - README.md
@@ -62,9 +44,3 @@ plugins:
   - jekyll-feed
   - jekyll-sitemap
   - jekyll-seo-tag
-
-# SEO
-seo:
-  type: WebSite
-  name: Vertex Documentation
-  description: Technical documentation for Vertex IMU cycling data analysis platform
