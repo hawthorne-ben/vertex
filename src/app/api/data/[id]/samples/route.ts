@@ -60,31 +60,52 @@ export async function GET(
       return NextResponse.json({ error: 'File not found' }, { status: 404 })
     }
 
-    // Build query
-    let query = supabase
-      .from('imu_samples')
-      .select('timestamp, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z')
-      .eq('imu_file_id', id)
-      .order('timestamp', { ascending: true })
-
-    // Apply time range filter if provided
-    if (start) {
-      query = query.gte('timestamp', start)
-    }
-    if (end) {
-      query = query.lte('timestamp', end)
-    }
-
-    // Fetch data (limit to reasonable max for safety)
+    // Fetch data in batches to work around PostgREST's 1000-row limit
     const maxFetch = resolution === 'high' ? 50000 : 20000
-    query = query.limit(maxFetch)
+    const BATCH_SIZE = 1000
+    const numBatches = Math.ceil(maxFetch / BATCH_SIZE)
+    
+    let samples: any[] = []
+    
+    for (let batch = 0; batch < numBatches; batch++) {
+      const from = batch * BATCH_SIZE
+      const to = from + BATCH_SIZE - 1
+      
+      let query = supabase
+        .from('imu_samples')
+        .select('timestamp, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z')
+        .eq('imu_file_id', id)
+        .order('timestamp', { ascending: true })
+        .range(from, to)
 
-    const { data: samples, error: samplesError } = await query
+      // Apply time range filter if provided
+      if (start) {
+        query = query.gte('timestamp', start)
+      }
+      if (end) {
+        query = query.lte('timestamp', end)
+      }
 
-    if (samplesError) {
-      console.error('Error fetching samples:', samplesError)
-      return NextResponse.json({ error: 'Failed to fetch samples' }, { status: 500 })
+      const { data: batchData, error: samplesError } = await query
+
+      if (samplesError) {
+        console.error('Error fetching samples batch:', samplesError)
+        break
+      }
+      
+      if (!batchData || batchData.length === 0) {
+        break // No more data
+      }
+      
+      samples.push(...batchData)
+      
+      // If we got less than a full batch, we've reached the end
+      if (batchData.length < BATCH_SIZE) {
+        break
+      }
     }
+
+    const samplesError = samples.length === 0 ? new Error('No samples found') : null
 
     if (!samples || samples.length === 0) {
       return NextResponse.json({ 
