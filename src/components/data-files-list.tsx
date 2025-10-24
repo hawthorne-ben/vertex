@@ -181,6 +181,7 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
     }, 2000) // Poll every 2 seconds for more responsive progress updates
 
     return () => clearInterval(interval)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [files.length, files.some(f => f.status === 'uploaded' || f.status === 'parsing')]) // Restart when files are added or processing status changes
 
   const handleDeleteClick = (file: IMUDataFile) => {
