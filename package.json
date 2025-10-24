@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "next dev",
     "dev:clean": "pkill -f 'next dev' 2>/dev/null || true; sleep 2; npm run dev",
+    "dev:log": "pkill -f 'next dev' 2>/dev/null || true; sleep 2; npm run dev 2>&1 | tee logs/dev.log",
     "dev:inngest": "pkill -f 'inngest-cli' 2>/dev/null || true; sleep 1; npx inngest-cli@latest dev",
+    "dev:inngest:log": "pkill -f 'inngest-cli' 2>/dev/null || true; sleep 1; npx inngest-cli@latest dev 2>&1 | tee logs/inngest.log",
     "dev:kill": "pkill -f 'next dev' && pkill -f 'inngest-cli'",
     "env:check": "node -e \"console.log('Supabase URL:', process.env.NEXT_PUBLIC_SUPABASE_URL ? '✅ Set' : '❌ Missing'); console.log('Inngest Event Key:', process.env.INNGEST_EVENT_KEY ? '✅ Set' : '❌ Missing')\"",
     "db:reset": "echo 'Run DELETE FROM auth.users; in Supabase SQL editor to reset dev database'",
@@ -29,7 +31,7 @@
     "clsx": "^2.1.1",
     "downsample-lttb": "^0.0.1",
     "fili": "^2.0.2",
-    "fit-file-parser": "^1.11.0",
+    "fit-file-parser": "^1.21.0",
     "inngest": "^3.44.3",
     "lucide-react": "^0.468.0",
     "next": "^15.0.0",

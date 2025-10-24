@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { X, CheckCircle2, AlertCircle, AlertTriangle, Info } from 'lucide-react'
+import { X, CheckCircle2, AlertCircle, AlertTriangle, Info, Copy } from 'lucide-react'
 import { Toast, useToast } from './toast-context'
 
 interface ToastItemProps {
@@ -10,6 +10,16 @@ interface ToastItemProps {
 }
 
 function ToastItem({ toast, onRemove }: ToastItemProps) {
+  const handleCopy = async () => {
+    const textToCopy = `${toast.title}${toast.message ? `: ${toast.message}` : ''}`
+    try {
+      await navigator.clipboard.writeText(textToCopy)
+      // You could add a brief "Copied!" feedback here if desired
+    } catch (err) {
+      console.error('Failed to copy text: ', err)
+    }
+  }
+
   const getIcon = () => {
     switch (toast.type) {
       case 'success':
@@ -78,13 +88,28 @@ function ToastItem({ toast, onRemove }: ToastItemProps) {
         )}
       </div>
       
-      <button
-        onClick={() => onRemove(toast.id)}
-        className="flex-shrink-0 p-1 text-secondary hover:text-primary transition-colors"
-        aria-label="Close toast"
-      >
-        <X className="w-4 h-4" />
-      </button>
+      <div className="flex-shrink-0 flex items-center gap-1">
+        {/* Copy button for error toasts */}
+        {toast.type === 'error' && (
+          <button
+            onClick={handleCopy}
+            className="p-1 text-secondary hover:text-primary transition-colors"
+            aria-label="Copy error message"
+            title="Copy error message"
+          >
+            <Copy className="w-4 h-4" />
+          </button>
+        )}
+        
+        {/* Close button */}
+        <button
+          onClick={() => onRemove(toast.id)}
+          className="p-1 text-secondary hover:text-primary transition-colors"
+          aria-label="Close toast"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
     </div>
   )
 }
