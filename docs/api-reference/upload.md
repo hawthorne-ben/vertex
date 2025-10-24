@@ -159,6 +159,4 @@ const subscription = supabase
 
 ## Related Documentation
 
-- [Upload System]({{ site.baseurl }}/features/upload.html) - Detailed upload implementation
-- [Processing Pipeline]({{ site.baseurl }}/architecture/processing.html) - Background job processing
-- [Storage Strategy]({{ site.baseurl }}/architecture/storage.html) - File storage architecture
+- [Development Guide]({{ site.baseurl }}/development/) - Setup and deployment procedures

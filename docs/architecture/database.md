@@ -270,6 +270,4 @@ GROUP BY u.id, df.id;
 ## Related Documentation
 
 - [System Design]({{ site.baseurl }}/architecture/system-design.html) - Overall architecture
-- [Storage Strategy]({{ site.baseurl }}/architecture/storage.html) - File storage design
-- [Processing Pipeline]({{ site.baseurl }}/architecture/processing.html) - Data processing workflows
 - [Development Guide]({{ site.baseurl }}/development/) - Database setup procedures
