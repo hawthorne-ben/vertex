@@ -428,7 +428,7 @@ export default function RideBuilder() {
               </Card>
             ) : (
               <div className="text-center py-8 text-gray-500">
-                Click "Preview Ride" to analyze the data association
+                Click &quot;Preview Ride&quot; to analyze the data association
               </div>
             )}
           </TabsContent>
