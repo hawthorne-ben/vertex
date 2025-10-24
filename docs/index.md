@@ -13,31 +13,31 @@ Welcome to the comprehensive technical documentation for **Vertex**, an IMU cycl
 ### [Architecture Overview]({{ site.baseurl }}/architecture/)
 - [System Design]({{ site.baseurl }}/architecture/system-design.html)
 - [Database Schema]({{ site.baseurl }}/architecture/database.html)
-- [Storage Strategy]({{ site.baseurl }}/architecture/storage.html)
-- [Processing Pipeline]({{ site.baseurl }}/architecture/processing.html)
 
 ### [Development Guide]({{ site.baseurl }}/development/)
-- [Local Setup]({{ site.baseurl }}/development/local-setup.html)
-- [Deployment]({{ site.baseurl }}/development/DEPLOYMENT.html)
-- [Debugging]({{ site.baseurl }}/development/debugging.html)
 - [Build Process]({{ site.baseurl }}/development/BUILD.html)
+- [Deployment]({{ site.baseurl }}/development/DEPLOYMENT.html)
+- [Local Development Limitations]({{ site.baseurl }}/development/LOCAL_DEV_LIMITATIONS.html)
+- [Phase 1 Deployment Guide]({{ site.baseurl }}/development/PHASE1_DEPLOYMENT_GUIDE.html)
 
 ### [Feature Documentation]({{ site.baseurl }}/features/)
 - [Charting System]({{ site.baseurl }}/features/CHARTING_IMPLEMENTATION.html)
-- [Upload System]({{ site.baseurl }}/features/upload.html)
-- [Data Analysis]({{ site.baseurl }}/features/analysis.html)
 - [Progress Tracking]({{ site.baseurl }}/features/PROGRESS_TRACKING_IMPLEMENTATION.html)
+- [Theme System]({{ site.baseurl }}/features/THEME_SYSTEM.html)
 
 ### [Operations]({{ site.baseurl }}/operations/)
-- [Monitoring]({{ site.baseurl }}/operations/OBSERVABILITY_PIPELINE.html)
+- [Observability Pipeline]({{ site.baseurl }}/operations/OBSERVABILITY_PIPELINE.html)
 - [Storage Cleanup]({{ site.baseurl }}/operations/STORAGE_CLEANUP.html)
-- [Troubleshooting]({{ site.baseurl }}/operations/troubleshooting.html)
+- [Project Save State]({{ site.baseurl }}/operations/SAVE_STATE.html)
 
 ### [API Reference]({{ site.baseurl }}/api-reference/)
-- [Authentication]({{ site.baseurl }}/api-reference/auth.html)
 - [Data Upload]({{ site.baseurl }}/api-reference/upload.html)
-- [Admin Endpoints]({{ site.baseurl }}/api-reference/admin.html)
-- [Health Checks]({{ site.baseurl }}/api-reference/health.html)
+
+---
+
+## ⚠️ Local Development Note
+
+**Local Jekyll serving is currently not working** due to Ruby version compatibility issues (requires Ruby 2.7+, system has 2.6). The documentation is fully functional on GitHub Pages at the live URL above.
 
 ---
 
