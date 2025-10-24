@@ -44,6 +44,18 @@ export function Header() {
               Data
             </Link>
             <Link 
+              href="/rides" 
+              className="px-3 py-2 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors rounded-md"
+            >
+              Rides
+            </Link>
+            <Link 
+              href="/ride-builder" 
+              className="px-3 py-2 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors rounded-md"
+            >
+              Build Ride
+            </Link>
+            <Link 
               href="/upload" 
               className="px-3 py-2 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors rounded-md"
             >

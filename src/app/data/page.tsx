@@ -1,8 +1,12 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
-import { DataFilesList } from '@/components/data-files-list'
+import { DataTabs } from '@/components/data-tabs'
 
-export default async function DataPage() {
+interface DataPageProps {
+  searchParams: { tab?: string }
+}
+
+export default async function DataPage({ searchParams }: DataPageProps) {
   const supabase = await createClient()
   
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -12,37 +16,37 @@ export default async function DataPage() {
   }
 
   // Fetch user's IMU data time ranges (sorted by most recent data)
-  const { data: files, error } = await supabase
+  const { data: imuFiles, error: imuError } = await supabase
     .from('imu_data_files')
     .select('*')
     .eq('user_id', user.id)
-    .order('uploaded_at', { ascending: false }) // Use uploaded_at instead of start_time
+    .order('uploaded_at', { ascending: false })
 
-  if (error) {
-    console.error('Error fetching data:', error)
-    // Return error state instead of crashing
-    return (
-      <div className="container mx-auto px-4 md:px-6 py-8 max-w-6xl">
-        <div className="mb-8">
-          <h1 className="text-3xl font-normal text-primary mb-2">IMU Data</h1>
-          <p className="text-secondary">
-            Error loading data: {error.message}
-          </p>
-        </div>
-      </div>
-    )
+  // Fetch user's FIT files (sorted by most recent upload)
+  const { data: fitFiles, error: fitError } = await supabase
+    .from('fit_files')
+    .select('*')
+    .eq('user_id', user.id)
+    .order('uploaded_at', { ascending: false })
+
+  if (imuError) {
+    console.error('Error fetching IMU data:', imuError)
+  }
+
+  if (fitError) {
+    console.error('Error fetching FIT data:', fitError)
   }
 
   return (
     <div className="container mx-auto px-4 md:px-6 py-8 max-w-6xl">
       <div className="mb-8">
-        <h1 className="text-3xl font-normal text-primary mb-2">IMU Data</h1>
+        <h1 className="text-3xl font-normal text-primary mb-2">Data Files</h1>
         <p className="text-secondary">
-          Time ranges where you have valid sensor data
+          View and manage your uploaded sensor data and cycling computer files
         </p>
       </div>
 
-      <DataFilesList files={files || []} />
+      <DataTabs imuFiles={imuFiles || []} fitFiles={fitFiles || []} />
     </div>
   )
 }

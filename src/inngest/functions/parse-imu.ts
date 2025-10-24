@@ -3,9 +3,10 @@ import { parseIMUCSVStreaming, StreamingParseOptions } from '@/lib/imu/streaming
 import { createClient } from '@supabase/supabase-js'
 import { IMUSample } from '@/lib/imu/types'
 
-// Batch size: 10k provides good balance of progress resolution and DB performance
-// With sub-batch progress updates every 2s, user gets smooth feedback
-const BATCH_SIZE = 10000
+// Batch size: 1k for local dev, 10k for production
+// Smaller batches reduce timeout risk in local development
+// Larger batches improve performance in production
+const BATCH_SIZE = process.env.NODE_ENV === 'production' ? 10000 : 1000
 
 // Create Supabase admin client lazily (only when function runs)
 function getSupabaseAdmin() {
@@ -253,12 +254,19 @@ export const parseIMU = inngest.createFunction(
             console.log(`🔄 Inserting batch of ${rows.length} samples...`)
             const insertStart = Date.now()
             
-            const { error } = await supabaseAdmin
+            // Add timeout to prevent hanging
+            const insertPromise = supabaseAdmin
               .from('imu_samples')
               .upsert(rows, { 
                 onConflict: 'user_id,imu_file_id,timestamp',
                 ignoreDuplicates: false
               })
+            
+            const timeoutPromise = new Promise((_, reject) => 
+              setTimeout(() => reject(new Error('Database insert timeout after 30 seconds')), 30000)
+            )
+            
+            const { error } = await Promise.race([insertPromise, timeoutPromise]) as any
             
             const insertDuration = Date.now() - insertStart
             console.log(`✅ Batch inserted in ${insertDuration}ms`)

@@ -112,9 +112,10 @@ interface IMUDataFile {
 
 interface DataFilesListProps {
   files: IMUDataFile[]
+  onDataChange?: () => void
 }
 
-export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
+export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesListProps) {
   const [files, setFiles] = useState(initialFiles)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
@@ -213,6 +214,11 @@ export function DataFilesList({ files: initialFiles }: DataFilesListProps) {
 
       // Remove from UI
       setFiles(prev => prev.filter(f => f.id !== fileToDelete.id))
+      
+      // Notify parent component to refresh data
+      if (onDataChange) {
+        onDataChange()
+      }
       
       // Show success toast
       addToast({

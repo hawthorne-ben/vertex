@@ -1,194 +1,246 @@
+import { createClient } from '@/lib/supabase/server'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Bike, FileText, Clock, MapPin, TrendingUp, Zap } from 'lucide-react'
 import Link from 'next/link'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import mockData from '@/lib/mock-data.json'
 
-export default function RidesPage() {
-  const { rides } = mockData
+interface Ride {
+  id: string
+  imu_file_id: string
+  fit_file_id: string
+  association_method: string
+  association_confidence: number
+  association_overlap_start: string
+  association_overlap_end: string
+  association_overlap_duration_minutes: number
+  association_created_at: string
+  imu_filename: string
+  fit_filename: string
+  total_distance_miles: number
+  total_ascent_feet: number
+  avg_speed_mph: number
+  sample_count: number
+}
+
+export default async function RidesPage() {
+  const supabase = await createClient()
+  
+  // Get current user
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+  if (authError || !user) {
+    return <div>Please log in to view rides</div>
+  }
+
+  // Fetch rides (associated IMU and FIT files) - simplified query
+  const { data: imuFiles, error: imuError } = await supabase
+    .from('imu_data_files')
+    .select('*')
+    .eq('user_id', user.id)
+    .not('associated_fit_file_id', 'is', null)
+    .order('association_created_at', { ascending: false })
+
+  if (imuError) {
+    console.error('Failed to fetch IMU files:', imuError)
+    return <div>Failed to load rides</div>
+  }
+
+  // Fetch corresponding FIT files
+  const rides = []
+  if (imuFiles && imuFiles.length > 0) {
+    for (const imuFile of imuFiles) {
+      const { data: fitFile, error: fitError } = await supabase
+        .from('fit_files')
+        .select('*')
+        .eq('id', imuFile.associated_fit_file_id)
+        .single()
+
+      if (!fitError && fitFile) {
+        rides.push({
+          id: imuFile.id,
+          imu_file_id: imuFile.id,
+          fit_file_id: fitFile.id,
+          association_method: imuFile.association_method,
+          association_confidence: imuFile.association_confidence,
+          association_overlap_start: imuFile.association_overlap_start,
+          association_overlap_end: imuFile.association_overlap_end,
+          association_overlap_duration_minutes: imuFile.association_overlap_duration_minutes,
+          association_created_at: imuFile.association_created_at,
+          imu_filename: imuFile.filename,
+          fit_filename: fitFile.filename,
+          total_distance_miles: fitFile.total_distance_miles,
+          total_ascent_feet: fitFile.total_ascent_feet,
+          avg_speed_mph: fitFile.avg_speed_mph,
+          sample_count: imuFile.sample_count
+        })
+      }
+    }
+  }
+
+  const getConfidenceBadgeColor = (confidence: number) => {
+    if (confidence >= 0.8) return 'bg-green-100 text-green-800'
+    if (confidence >= 0.6) return 'bg-yellow-100 text-yellow-800'
+    if (confidence >= 0.4) return 'bg-orange-100 text-orange-800'
+    return 'bg-red-100 text-red-800'
+  }
+
+  const formatDuration = (minutes: number) => {
+    const hours = Math.floor(minutes / 60)
+    const mins = Math.floor(minutes % 60)
+    return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`
+  }
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
       month: 'short',
       day: 'numeric',
-      year: 'numeric',
-    })
-  }
-
-  const formatTime = (dateString: string) => {
-    return new Date(dateString).toLocaleTimeString('en-US', {
       hour: '2-digit',
-      minute: '2-digit',
+      minute: '2-digit'
     })
   }
-
-  const formatDuration = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600)
-    const minutes = Math.floor((seconds % 3600) / 60)
-    return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`
-  }
-
-  // Sort rides by date (most recent first)
-  const sortedRides = [...rides].sort((a, b) => 
-    new Date(b.date).getTime() - new Date(a.date).getTime()
-  )
-
-  // Group by bike type
-  const bikeGroups = rides.reduce((acc, ride) => {
-    if (!acc[ride.bike]) acc[ride.bike] = []
-    acc[ride.bike].push(ride)
-    return acc
-  }, {} as Record<string, typeof rides>)
 
   return (
-    <div className="container mx-auto p-6">
-      <h1 className="text-3xl font-serif font-normal mb-8">All Rides</h1>
+    <div className="container mx-auto py-8 px-4">
+      <div className="max-w-6xl mx-auto">
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold mb-2">Your Rides</h1>
+          <p className="text-gray-600">
+            Comprehensive ride analysis combining IMU sensor data with GPS tracking.
+          </p>
+        </div>
 
-      <Tabs defaultValue="all" className="space-y-6">
-        <TabsList>
-          <TabsTrigger value="all">All Rides</TabsTrigger>
-          <TabsTrigger value="by-bike">By Bike</TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="all">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-xl font-serif">
-                All Rides ({sortedRides.length})
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {/* Table Header - Hidden on mobile */}
-                <div className="hidden md:grid grid-cols-12 gap-4 px-4 py-3 bg-muted rounded-md text-sm font-medium text-secondary">
-                  <div className="col-span-3">Ride</div>
-                  <div className="col-span-2">Date</div>
-                  <div className="col-span-2">Location</div>
-                  <div className="col-span-1 text-right">Distance</div>
-                  <div className="col-span-1 text-right">Duration</div>
-                  <div className="col-span-1 text-right">Max Speed</div>
-                  <div className="col-span-2 text-right">Max Lean</div>
-                </div>
-
-                {/* Ride Rows */}
-                {sortedRides.map((ride) => (
-                  <Link
-                    key={ride.id}
-                    href={`/rides/${ride.id}`}
-                    className="block md:grid md:grid-cols-12 gap-4 px-4 py-4 border border-border rounded-md hover:bg-muted transition-colors"
-                  >
-                    {/* Mobile layout */}
-                    <div className="md:hidden space-y-2">
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <div className="font-medium">{ride.name}</div>
-                          <div className="text-sm text-secondary">{formatDate(ride.date)} • {formatTime(ride.date)}</div>
-                        </div>
-                        <div className="text-right">
-                          <div className="font-medium">{ride.stats.maxLeanAngle}°</div>
-                          <div className="text-xs text-secondary">max lean</div>
-                        </div>
-                      </div>
-                      <div className="flex gap-4 text-sm text-secondary">
-                        <span>{ride.distance} mi</span>
-                        <span>•</span>
-                        <span>{formatDuration(ride.duration)}</span>
-                        <span>•</span>
-                        <span>{ride.stats.maxSpeed} mph</span>
-                      </div>
-                    </div>
-
-                    {/* Desktop layout */}
-                    <div className="hidden md:contents">
-                      <div className="col-span-3">
-                        <div className="font-medium">{ride.name}</div>
-                        <div className="text-sm text-secondary">{formatTime(ride.date)}</div>
-                      </div>
-                      <div className="col-span-2 text-secondary">
-                        {formatDate(ride.date)}
-                      </div>
-                      <div className="col-span-2 text-secondary truncate">
-                        {ride.location}
-                      </div>
-                      <div className="col-span-1 text-right text-primary">
-                        {ride.distance} mi
-                      </div>
-                      <div className="col-span-1 text-right text-primary">
-                        {formatDuration(ride.duration)}
-                      </div>
-                      <div className="col-span-1 text-right text-primary">
-                        {ride.stats.maxSpeed} mph
-                      </div>
-                      <div className="col-span-2 text-right">
-                        <span className="font-medium text-primary">
-                          {ride.stats.maxLeanAngle}°
-                        </span>
-                      </div>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="by-bike">
-          <div className="space-y-6">
-            {Object.entries(bikeGroups).map(([bike, bikeRides]) => (
-              <Card key={bike}>
+        {rides && rides.length > 0 ? (
+          <div className="grid gap-6">
+            {rides.map((ride) => (
+              <Card key={ride.id} className="hover:shadow-lg transition-shadow">
                 <CardHeader>
-                  <CardTitle className="text-xl font-serif">
-                    {bike} ({bikeRides.length} rides)
-                  </CardTitle>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <CardTitle className="flex items-center">
+                        <Bike className="h-5 w-5 mr-2" />
+                        {ride.fit_filename}
+                      </CardTitle>
+                      <CardDescription>
+                        Created {formatDate(ride.association_created_at)}
+                      </CardDescription>
+                    </div>
+                    <span className={`px-2 py-1 rounded-full text-xs font-medium ${getConfidenceBadgeColor(ride.association_confidence)}`}>
+                      {(ride.association_confidence * 100).toFixed(0)}% confidence
+                    </span>
+                  </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-2">
-                    {bikeRides
-                      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-                      .map((ride) => (
-                        <Link
-                          key={ride.id}
-                          href={`/rides/${ride.id}`}
-                          className="block px-4 py-3 border border-border rounded-md hover:bg-muted transition-colors"
-                        >
-                          <div className="flex justify-between items-start mb-2">
+                  <div className="grid md:grid-cols-2 gap-6">
+                    {/* Ride Metrics */}
+                    <div className="space-y-4">
+                      <h3 className="font-semibold text-lg">Ride Metrics</h3>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div className="flex items-center">
+                          <MapPin className="h-4 w-4 mr-2 text-gray-500" />
+                          <div>
+                            <div className="text-sm text-gray-500">Distance</div>
+                            <div className="font-semibold">{ride.total_distance_miles.toFixed(1)} mi</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center">
+                          <TrendingUp className="h-4 w-4 mr-2 text-gray-500" />
+                          <div>
+                            <div className="text-sm text-gray-500">Elevation</div>
+                            <div className="font-semibold">{ride.total_ascent_feet.toFixed(0)} ft</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center">
+                          <Zap className="h-4 w-4 mr-2 text-gray-500" />
+                          <div>
+                            <div className="text-sm text-gray-500">Avg Speed</div>
+                            <div className="font-semibold">{ride.avg_speed_mph.toFixed(1)} mph</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center">
+                          <Clock className="h-4 w-4 mr-2 text-gray-500" />
+                          <div>
+                            <div className="text-sm text-gray-500">Duration</div>
+                            <div className="font-semibold">{formatDuration(ride.association_overlap_duration_minutes)}</div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Data Sources */}
+                    <div className="space-y-4">
+                      <h3 className="font-semibold text-lg">Data Sources</h3>
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                          <div className="flex items-center">
+                            <FileText className="h-4 w-4 mr-2 text-blue-500" />
                             <div>
-                              <div className="font-medium">{ride.name}</div>
-                              <div className="text-sm text-secondary">
-                                {formatDate(ride.date)} at {formatTime(ride.date)}
+                              <div className="font-medium">{ride.imu_filename}</div>
+                              <div className="text-sm text-gray-500">
+                                {ride.sample_count.toLocaleString()} sensor samples
                               </div>
                             </div>
-                            <div className="text-sm text-secondary">
-                              {ride.location}
+                          </div>
+                          <span className="px-2 py-1 border border-gray-300 rounded-full text-xs font-medium text-gray-700">
+                            IMU Data
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                          <div className="flex items-center">
+                            <Bike className="h-4 w-4 mr-2 text-green-500" />
+                            <div>
+                              <div className="font-medium">{ride.fit_filename}</div>
+                              <div className="text-sm text-gray-500">
+                                GPS & ride metrics
+                              </div>
                             </div>
                           </div>
-                          <div className="flex gap-6 text-sm">
-                            <div>
-                              <span className="text-secondary">Distance: </span>
-                              <span className="font-medium">{ride.distance} mi</span>
-                            </div>
-                            <div>
-                              <span className="text-secondary">Duration: </span>
-                              <span className="font-medium">{formatDuration(ride.duration)}</span>
-                            </div>
-                            <div>
-                              <span className="text-secondary">Max Lean: </span>
-                              <span className="font-medium">{ride.stats.maxLeanAngle}°</span>
-                            </div>
-                            <div>
-                              <span className="text-secondary">Max Speed: </span>
-                              <span className="font-medium">{ride.stats.maxSpeed} mph</span>
-                            </div>
-                          </div>
-                        </Link>
-                      ))}
+                          <span className="px-2 py-1 border border-gray-300 rounded-full text-xs font-medium text-gray-700">
+                            FIT Data
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div className="flex justify-end mt-6 space-x-3">
+                    <Link href={`/data/${ride.imu_file_id}`}>
+                      <Button variant="outline">
+                        View IMU Data
+                      </Button>
+                    </Link>
+                    <Link href={`/data/${ride.fit_file_id}`}>
+                      <Button variant="outline">
+                        View FIT Data
+                      </Button>
+                    </Link>
+                    <Link href={`/rides/${ride.id}`}>
+                      <Button>
+                        Analyze Ride
+                      </Button>
+                    </Link>
                   </div>
                 </CardContent>
               </Card>
             ))}
           </div>
-        </TabsContent>
-      </Tabs>
+        ) : (
+          <Card>
+            <CardContent className="text-center py-12">
+              <Bike className="h-12 w-12 mx-auto text-gray-400 mb-4" />
+              <h3 className="text-lg font-semibold mb-2">No Rides Yet</h3>
+              <p className="text-gray-600 mb-6">
+                Create your first ride by combining IMU sensor data with FIT file data.
+              </p>
+              <Link href="/ride-builder">
+                <Button>
+                  Build Your First Ride
+                </Button>
+              </Link>
+            </CardContent>
+          </Card>
+        )}
+      </div>
     </div>
   )
 }
-

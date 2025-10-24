@@ -10,6 +10,7 @@ export interface Toast {
   title: string
   message?: string
   duration?: number
+  persistent?: boolean // New field for persistent toasts
 }
 
 interface ToastContextType {
@@ -33,15 +34,18 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     const newToast: Toast = {
       ...toast,
       id,
-      duration: toast.duration || 5000 // Default 5 seconds
+      duration: toast.duration || (toast.type === 'error' ? 0 : 5000), // Error toasts are persistent by default
+      persistent: toast.persistent !== undefined ? toast.persistent : (toast.type === 'error')
     }
 
     setToasts(prev => [...prev, newToast])
 
-    // Auto remove after duration
-    setTimeout(() => {
-      removeToast(id)
-    }, newToast.duration)
+    // Auto remove after duration (only if not persistent)
+    if (!newToast.persistent && newToast.duration && newToast.duration > 0) {
+      setTimeout(() => {
+        removeToast(id)
+      }, newToast.duration)
+    }
   }, [removeToast])
 
   const clearToasts = useCallback(() => {

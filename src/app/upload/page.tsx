@@ -160,13 +160,13 @@ export default function UploadPage() {
         const file = fileToUpload.file
         
         setCurrentFileIndex(i)
-        setCurrentFileName(file.name)
+        setCurrentFileName(file?.name || 'Unknown file')
         
         // Calculate base progress for this file
         const fileStartProgress = (i / selectedFiles.length) * 100
         const fileEndProgress = ((i + 1) / selectedFiles.length) * 100
         
-        console.log(`📁 Processing file ${i + 1}/${selectedFiles.length}: ${file.name}`)
+        console.log(`📁 Processing file ${i + 1}/${selectedFiles.length}: ${file?.name || 'Unknown file'}`)
         console.log(`📁 File progress range: ${fileStartProgress.toFixed(1)}% - ${fileEndProgress.toFixed(1)}%`)
         
         // Upload file (chunked or direct)
@@ -175,7 +175,7 @@ export default function UploadPage() {
           const overallProgress = fileStartProgress + (fileProgress / 100) * (fileEndProgress - fileStartProgress)
           
           console.log(`📊 Progress Update:`)
-          console.log(`  File: ${file.name}`)
+          console.log(`  File: ${file?.name || 'Unknown file'}`)
           console.log(`  File Progress: ${fileProgress.toFixed(1)}%`)
           console.log(`  Overall Progress: ${overallProgress.toFixed(1)}%`)
           console.log(`  Last Progress: ${lastProgress.toFixed(1)}%`)
@@ -196,40 +196,80 @@ export default function UploadPage() {
           // Chunked upload - fileId returned
           uploadedFileIds.push(uploadResult)
         } else {
-          // Direct upload - create database record
+          // Direct upload - create database record based on file type
           const storagePath = uploadResult as string
-          const { data: fileRecord, error: dbError } = await supabase
-            .from('imu_data_files')
-            .insert({
-              user_id: user.id,
-              filename: file.name,
-              storage_path: storagePath,
-              file_size_bytes: file.size,
-              status: 'uploaded'
+          const isFitFile = file?.name?.toLowerCase().endsWith('.fit') || false
+          
+          if (isFitFile) {
+            // Create FIT file record
+            const { data: fileRecord, error: dbError } = await supabase
+              .from('fit_files')
+              .insert({
+                user_id: user.id,
+                filename: file?.name || 'unknown.fit',
+                storage_path: storagePath,
+                file_size_bytes: file?.size || 0,
+                chunk_count: 1, // Direct upload = 1 chunk
+                status: 'uploaded',
+                processing_started_at: new Date().toISOString()
+              })
+              .select()
+              .single()
+
+            if (dbError) {
+              throw new Error(`FIT file database insert failed: ${dbError.message}`)
+            }
+
+            uploadedFileIds.push(fileRecord.id)
+
+            // Trigger FIT parse job via dedicated API endpoint
+            const response = await fetch('/api/fit/parse', {
+              method: 'POST',
+              headers: { 
+                'Content-Type': 'application/json',
+                'x-user-id': user.id
+              },
+              body: JSON.stringify({ fileId: fileRecord.id })
             })
-            .select()
-            .single()
 
-          if (dbError) {
-            throw new Error(`Database insert failed: ${dbError.message}`)
-          }
+            if (!response.ok) {
+              const errorData = await response.json()
+              throw new Error(`FIT parse trigger failed: ${errorData.error || response.statusText}`)
+            }
+          } else {
+            // Create IMU file record
+            const { data: fileRecord, error: dbError } = await supabase
+              .from('imu_data_files')
+              .insert({
+                user_id: user.id,
+                filename: file?.name || 'unknown.csv',
+                storage_path: storagePath,
+                file_size_bytes: file?.size || 0,
+                status: 'uploaded'
+              })
+              .select()
+              .single()
 
-          uploadedFileIds.push(fileRecord.id)
+            if (dbError) {
+              throw new Error(`IMU file database insert failed: ${dbError.message}`)
+            }
 
-          // Trigger parse job for direct uploads
-          // Always use streaming processing for progress tracking
-          const response = await fetch('/api/imu/parse-streaming', {
-            method: 'POST',
-            headers: { 
-              'Content-Type': 'application/json',
-              'x-user-id': user.id // Required by streaming endpoint
-            },
-            body: JSON.stringify({ fileId: fileRecord.id })
-          })
+            uploadedFileIds.push(fileRecord.id)
 
-          if (!response.ok) {
-            const errorData = await response.json()
-            throw new Error(`Parse trigger failed: ${errorData.error || response.statusText}`)
+            // Trigger IMU parse job
+            const response = await fetch('/api/imu/parse-streaming', {
+              method: 'POST',
+              headers: { 
+                'Content-Type': 'application/json',
+                'x-user-id': user.id // Required by streaming endpoint
+              },
+              body: JSON.stringify({ fileId: fileRecord.id })
+            })
+
+            if (!response.ok) {
+              const errorData = await response.json()
+              throw new Error(`IMU parse trigger failed: ${errorData.error || response.statusText}`)
+            }
           }
         }
       }
@@ -238,11 +278,32 @@ export default function UploadPage() {
       setUploadProgress(100)
       setLastProgress(100)
       setShowUploadProgress(false)
+      
+      // Capture file information before clearing state
+      const uploadedFileTypes = selectedFiles
+        .filter(fileToUpload => fileToUpload?.file?.name) // Only include files with names
+        .map(fileToUpload => ({
+          name: fileToUpload.file.name,
+          type: fileToUpload.file.name.toLowerCase().endsWith('.fit') ? 'fit' : 'imu'
+        }))
+      
       setSelectedFiles([])
       
       // Use setTimeout to ensure state updates are flushed before navigation
       setTimeout(() => {
-        router.push('/data')
+        // Determine which tab to show based on uploaded files
+        const hasFitFiles = uploadedFileTypes.some(file => file.type === 'fit')
+        const hasImuFiles = uploadedFileTypes.some(file => file.type === 'imu')
+        
+        let redirectPath = '/data'
+        if (hasFitFiles && !hasImuFiles) {
+          redirectPath = '/data?tab=fit'
+        } else if (hasImuFiles && !hasFitFiles) {
+          redirectPath = '/data?tab=imu'
+        }
+        // If both types, default to IMU tab
+        
+        router.push(redirectPath)
       }, 0)
 
     } catch (err) {
@@ -270,7 +331,8 @@ export default function UploadPage() {
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: handleFileSelection,
     accept: {
-      'text/csv': ['.csv']
+      'text/csv': ['.csv'],
+      'application/octet-stream': ['.fit']
     },
     multiple: true,
     disabled: showUploadProgress
@@ -279,9 +341,9 @@ export default function UploadPage() {
   return (
     <div className="container mx-auto px-4 md:px-6 py-8 max-w-4xl">
       <div className="mb-8">
-        <h1 className="text-3xl font-normal text-primary mb-2">Upload IMU Data</h1>
+        <h1 className="text-3xl font-normal text-primary mb-2">Upload Data</h1>
         <p className="text-secondary">
-          Upload CSV files from your IMU sensor. Files will be automatically parsed and processed.
+          Upload CSV files from your IMU sensor or FIT files from your cycling computer. Files will be automatically parsed and processed.
         </p>
       </div>
 
@@ -303,14 +365,14 @@ export default function UploadPage() {
         <Upload className="w-12 h-12 mx-auto mb-4 text-secondary" />
         
         {isDragActive ? (
-          <p className="text-lg text-primary">Drop CSV files here...</p>
+          <p className="text-lg text-primary">Drop files here...</p>
         ) : (
           <>
             <p className="text-lg text-primary mb-2">
-              Drag and drop CSV files here, or click to select
+              Drag and drop CSV or FIT files here, or click to select
             </p>
             <p className="text-sm text-secondary">
-              Supports CSV files with IMU sensor data (accelerometer, gyroscope, magnetometer)
+              Supports CSV files with IMU sensor data and FIT files from cycling computers
             </p>
           </>
         )}
@@ -334,19 +396,35 @@ export default function UploadPage() {
       />
 
       {/* Help section */}
-      <div className="mt-12 p-6 bg-muted rounded-lg border border-border">
-        <h3 className="text-sm font-medium text-primary mb-2">CSV Format Requirements</h3>
-        <ul className="text-sm text-secondary space-y-1">
-          <li>• First row must contain column headers</li>
-          <li>• Required columns: <code className="text-xs bg-background px-1 py-0.5 rounded">timestamp_ms, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z</code></li>
-          <li>• Optional columns: <code className="text-xs bg-background px-1 py-0.5 rounded">mag_x, mag_y, mag_z, quat_w, quat_x, quat_y, quat_z</code></li>
-          <li>• Timestamps should be in milliseconds (Unix epoch)</li>
-          <li>• Accelerometer units: m/s²</li>
-          <li>• Gyroscope units: rad/s</li>
-          <li>• Magnetometer units: µT (microtesla)</li>
-          <li>• <strong>File size limit: 200MB</strong> (large files automatically split into chunks)</li>
-          <li>• Supports 2+ hour rides at 100Hz sampling rate</li>
-        </ul>
+      <div className="mt-12 space-y-6">
+        {/* CSV Format */}
+        <div className="p-6 bg-muted rounded-lg border border-border">
+          <h3 className="text-sm font-medium text-primary mb-2">CSV Format Requirements</h3>
+          <ul className="text-sm text-secondary space-y-1">
+            <li>• First row must contain column headers</li>
+            <li>• Required columns: <code className="text-xs bg-background px-1 py-0.5 rounded">timestamp_ms, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z</code></li>
+            <li>• Optional columns: <code className="text-xs bg-background px-1 py-0.5 rounded">mag_x, mag_y, mag_z, quat_w, quat_x, quat_y, quat_z</code></li>
+            <li>• Timestamps should be in milliseconds (Unix epoch)</li>
+            <li>• Accelerometer units: m/s²</li>
+            <li>• Gyroscope units: rad/s</li>
+            <li>• Magnetometer units: µT (microtesla)</li>
+            <li>• <strong>File size limit: 200MB</strong> (large files automatically split into chunks)</li>
+            <li>• Supports 2+ hour rides at 100Hz sampling rate</li>
+          </ul>
+        </div>
+
+        {/* FIT Format */}
+        <div className="p-6 bg-muted rounded-lg border border-border">
+          <h3 className="text-sm font-medium text-primary mb-2">FIT File Support</h3>
+          <ul className="text-sm text-secondary space-y-1">
+            <li>• Compatible with Garmin, Wahoo, and other cycling computers</li>
+            <li>• Extracts GPS track, power, heart rate, cadence, and speed data</li>
+            <li>• Automatically calculates ride metadata (distance, duration, elevation)</li>
+            <li>• <strong>File size limit: 200MB</strong> (large files automatically split into chunks)</li>
+            <li>• Processing typically completes in under 10 seconds</li>
+            <li>• Data will be available for ride creation and analysis</li>
+          </ul>
+        </div>
       </div>
     </div>
   )
