@@ -1,28 +1,32 @@
 # Jekyll configuration for Vertex Documentation
 title: Vertex Documentation
 description: IMU Cycling Data Analysis Platform - Technical Documentation
-baseurl: /vertex
-url: https://bhawthorne.github.io
+baseurl: ""
+url: "https://hawthorne-ben.github.io"
 
 # Build settings
 markdown: kramdown
 highlighter: rouge
 theme: minima
 
+# Site settings
+author: Ben Hawthorne
+email: hawthorneben@gmail.com
+
 # Navigation
 navigation:
   - title: Overview
-    url: /vertex/
+    url: /
   - title: Architecture
-    url: /vertex/architecture/
+    url: /architecture/
   - title: Development
-    url: /vertex/development/
+    url: /development/
   - title: Features
-    url: /vertex/features/
+    url: /features/
   - title: Operations
-    url: /vertex/operations/
+    url: /operations/
   - title: API Reference
-    url: /vertex/api-reference/
+    url: /api-reference/
 
 # Collections for better organization
 collections:
