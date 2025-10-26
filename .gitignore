@@ -72,6 +72,9 @@ env.local.dev.template
 fit-inspection-output.txt
 *.txt
 
+# Large CSV files (use Git LFS if needed)
+large_*.csv
+
 # Firmware credentials - NEVER COMMIT
 firmware/.credentials.local
 firmware/**/.credentials.local
