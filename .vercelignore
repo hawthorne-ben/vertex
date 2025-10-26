@@ -5,6 +5,8 @@
 docs/
 scripts/
 sql/
+android/
+firmware/
 
 # Database credentials and connection scripts
 .db-credentials.local

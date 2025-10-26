@@ -4,7 +4,7 @@
  * Shows connected device details, sensor readings, and control actions
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -30,12 +30,13 @@ import { theme } from '../styles/theme';
 import BleService from '../services/BleService';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import ErrorBoundary from '../components/ErrorBoundary';
 
 type DeviceDetailRouteProp = RouteProp<RootStackParamList, 'DeviceDetail'>;
 
 const SAVED_DEVICES_KEY = '@vertex_saved_devices';
 
-const DeviceDetailScreen: React.FC = () => {
+const DeviceDetailScreenContent: React.FC = () => {
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
   const route = useRoute<DeviceDetailRouteProp>();
@@ -43,86 +44,234 @@ const DeviceDetailScreen: React.FC = () => {
 
   const [isConnected, setIsConnected] = useState(false);
   const [isPolling, setIsPolling] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
   const [sensorReading, setSensorReading] = useState<any>(null);
   const [connectionStatus, setConnectionStatus] = useState('Connecting...');
   const [lastReadingTime, setLastReadingTime] = useState<Date | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [streamingError, setStreamingError] = useState<string | null>(null);
+
+  // Track if component is mounted to prevent state updates after unmount
+  const isMountedRef = useRef(true);
+
+  // Detect if this is a Vertex IMU device
+  const isVertexDevice = deviceName?.toLowerCase().includes('vertex');
 
   useEffect(() => {
-    initializeDevice();
+    isMountedRef.current = true;
+    initializeDevice().catch((err) => {
+      console.error('Init error caught:', err);
+      if (isMountedRef.current) {
+        setError(err?.message || 'Failed to initialize');
+      }
+    });
     return () => {
+      isMountedRef.current = false;
       // Don't disconnect on unmount - user controls disconnect
     };
   }, []);
 
+  // Safely set state only if mounted
+  const safeSetState = (setter: Function, value: any) => {
+    if (isMountedRef.current) {
+      try {
+        setter(value);
+      } catch (err) {
+        console.error('State update error:', err);
+      }
+    }
+  };
+
+  // Wrapper for BLE calls with timeout and error handling
+  const safeBleCall = async <T,>(
+    operation: () => Promise<T>,
+    timeoutMs: number = 10000,
+    errorPrefix: string = 'Operation failed'
+  ): Promise<T | null> => {
+    try {
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Operation timed out')), timeoutMs)
+      );
+
+      const result = await Promise.race([operation(), timeoutPromise]);
+      return result;
+    } catch (err: any) {
+      console.error(`${errorPrefix}:`, err);
+      const errorMsg = err?.message || 'Unknown error';
+      if (isMountedRef.current) {
+        setError(`${errorPrefix}: ${errorMsg}`);
+      }
+      return null;
+    }
+  };
+
   const initializeDevice = async () => {
+    if (!isMountedRef.current) return;
+
+    setIsConnecting(true);
+    setError(null);
+    setStreamingError(null);
+
     try {
       // Check if already connected
       const connectedDevice = BleService.getConnectedDevice();
 
       if (connectedDevice?.id === deviceId) {
-        setIsConnected(true);
-        setConnectionStatus('Connected');
+        safeSetState(setIsConnected, true);
+        safeSetState(setConnectionStatus, 'Connected');
+        safeSetState(setError, null);
         await discoverServices();
       } else {
         // Connect to device
-        setConnectionStatus('Connecting...');
+        safeSetState(setConnectionStatus, 'Connecting...');
         await BleService.connectToDevice(deviceId);
-        setIsConnected(true);
-        setConnectionStatus('Connected');
+        safeSetState(setIsConnected, true);
+        safeSetState(setConnectionStatus, 'Connected');
+        safeSetState(setError, null);
         await discoverServices();
       }
-    } catch (error) {
+
+      // If this is a Vertex device, automatically start streaming
+      if (isVertexDevice && isMountedRef.current) {
+        await startIMUStreaming();
+      }
+    } catch (error: any) {
       console.error('Connection error:', error);
-      setConnectionStatus('Connection Failed');
-      Alert.alert('Connection Error', 'Failed to connect to device. Please try again.');
+      if (!isMountedRef.current) return;
+
+      safeSetState(setIsConnected, false);
+      safeSetState(setConnectionStatus, 'Connection Failed');
+      const errorMsg = error?.message || 'Failed to connect to device';
+      safeSetState(setError, errorMsg);
+    } finally {
+      if (isMountedRef.current) {
+        safeSetState(setIsConnecting, false);
+      }
     }
+  };
+
+  const handleReconnect = async () => {
+    await initializeDevice();
   };
 
   const discoverServices = async () => {
     try {
       // Attempt to read battery level
       const battery = await BleService.readBatteryLevel();
-      if (battery !== null) {
-        setBatteryLevel(battery);
+      if (battery !== null && isMountedRef.current) {
+        safeSetState(setBatteryLevel, battery);
       }
     } catch (error) {
       console.log('Battery service not available');
     }
   };
 
+  /**
+   * Start streaming IMU data (for Vertex devices)
+   */
+  const startIMUStreaming = async () => {
+    if (!isMountedRef.current) return;
+
+    safeSetState(setIsStreaming, true);
+    safeSetState(setStreamingError, null);
+
+    try {
+      await BleService.subscribeToIMUStream(
+        (data) => {
+          if (!isMountedRef.current) return;
+
+          safeSetState(setSensorReading, data);
+          safeSetState(setLastReadingTime, new Date());
+          safeSetState(setStreamingError, null);
+        },
+        (error) => {
+          if (!isMountedRef.current) return;
+
+          console.error('IMU stream error:', error);
+          safeSetState(setStreamingError, error.message);
+
+          if (error.message.toLowerCase().includes('disconnect')) {
+            safeSetState(setIsConnected, false);
+            safeSetState(setConnectionStatus, 'Disconnected');
+            safeSetState(setIsStreaming, false);
+          }
+        }
+      );
+    } catch (error: any) {
+      console.error('Failed to start IMU streaming:', error);
+      if (!isMountedRef.current) return;
+
+      safeSetState(setStreamingError, error.message || 'Failed to start streaming');
+      safeSetState(setIsStreaming, false);
+    }
+  };
+
   const handlePollSensor = async () => {
+    if (!isMountedRef.current) return;
+
     if (!isConnected) {
-      Alert.alert('Not Connected', 'Please connect to the device first');
+      safeSetState(setError, 'Not connected to device');
       return;
     }
 
-    setIsPolling(true);
-    setSensorReading(null);
+    safeSetState(setIsPolling, true);
+    safeSetState(setSensorReading, null);
+    safeSetState(setError, null);
 
     try {
-      // For Whoop/testing: Read Heart Rate
-      // For IMU: Read sensor data
-      const reading = await BleService.pollSensor();
+      const connectedDevice = BleService.getConnectedDevice();
+      if (!connectedDevice) {
+        throw new Error('Device connection lost');
+      }
 
-      setSensorReading(reading);
-      setLastReadingTime(new Date());
+      const reading = await safeBleCall(
+        () => BleService.pollSensor(),
+        10000,
+        'Failed to read sensor'
+      );
 
-      // Refresh battery after reading
-      try {
-        const battery = await BleService.readBatteryLevel();
-        if (battery !== null) {
-          setBatteryLevel(battery);
-        }
-      } catch (error) {
-        console.log('Could not refresh battery');
+      if (reading && isMountedRef.current) {
+        safeSetState(setSensorReading, reading);
+        safeSetState(setLastReadingTime, new Date());
+        safeSetState(setError, null);
+
+        // Refresh battery after reading (optional, don't fail if unavailable)
+        safeBleCall(
+          () => BleService.readBatteryLevel(),
+          5000,
+          'Battery read failed'
+        ).then(battery => {
+          if (battery !== null && isMountedRef.current) {
+            safeSetState(setBatteryLevel, battery);
+          }
+        }).catch(() => {
+          // Silently fail battery read
+        });
+      } else if (isMountedRef.current) {
+        // safeBleCall returned null, error already set
+        safeSetState(setIsConnected, false);
+        safeSetState(setConnectionStatus, 'Disconnected');
       }
     } catch (error: any) {
+      if (!isMountedRef.current) return;
+
       console.error('Polling error:', error);
       const errorMessage = error?.message || 'Could not read sensor data';
-      Alert.alert('Polling Error', errorMessage + '\n\nThis device may not have readable sensors, or you may need to activate the sensor on the device first.');
+
+      // Check if device disconnected
+      if (errorMessage.includes('disconnected') || errorMessage.includes('connection') || errorMessage.includes('not connected')) {
+        safeSetState(setIsConnected, false);
+        safeSetState(setConnectionStatus, 'Disconnected');
+        safeSetState(setError, 'Device disconnected. Please reconnect.');
+      } else {
+        safeSetState(setError, errorMessage);
+      }
     } finally {
-      setIsPolling(false);
+      if (isMountedRef.current) {
+        safeSetState(setIsPolling, false);
+      }
     }
   };
 
@@ -264,7 +413,9 @@ const DeviceDetailScreen: React.FC = () => {
           <View style={styles.emptyReading}>
             <Activity size={48} color={theme.colors.textTertiary} />
             <Text style={styles.emptyReadingText}>
-              No data yet. Tap "Poll Sensor" to get a reading.
+              {isVertexDevice
+                ? (isStreaming ? 'Waiting for data stream...' : 'No data yet. Starting stream...')
+                : 'No data yet. Tap "Poll Sensor" to get a reading.'}
             </Text>
           </View>
         </View>
@@ -274,13 +425,22 @@ const DeviceDetailScreen: React.FC = () => {
     return (
       <View style={styles.card}>
         <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>Sensor Reading</Text>
+          <Text style={styles.cardTitle}>
+            {isVertexDevice ? 'Live Sensor Stream' : 'Sensor Reading'}
+          </Text>
           {lastReadingTime && (
             <Text style={styles.timestamp}>
               {lastReadingTime.toLocaleTimeString()}
             </Text>
           )}
         </View>
+
+        {/* Streaming error indicator */}
+        {streamingError && (
+          <View style={styles.streamingErrorBanner}>
+            <Text style={styles.streamingErrorText}>{streamingError}</Text>
+          </View>
+        )}
 
         {/* For Whoop: Show Heart Rate */}
         {sensorReading.heartRate !== undefined && (
@@ -298,46 +458,51 @@ const DeviceDetailScreen: React.FC = () => {
           </View>
         )}
 
-        {/* For IMU: Show sensor data */}
-        {sensorReading.grade !== undefined && (
+        {/* For Vertex IMU: Show orientation data */}
+        {(sensorReading.roll !== undefined || sensorReading.pitch !== undefined || sensorReading.yaw !== undefined) && (
           <>
+            <Text style={styles.sectionLabel}>Orientation (degrees)</Text>
             <View style={styles.sensorGrid}>
-              <View style={styles.sensorValue}>
-                <Text style={styles.sensorLabel}>Grade</Text>
-                <Text style={styles.sensorNumber}>{sensorReading.grade.toFixed(1)}%</Text>
-              </View>
               <View style={styles.sensorValue}>
                 <Text style={styles.sensorLabel}>Roll</Text>
-                <Text style={styles.sensorNumber}>{sensorReading.roll.toFixed(1)}°</Text>
+                <Text style={styles.sensorNumber}>{sensorReading.roll?.toFixed(1) ?? '0.0'}°</Text>
+              </View>
+              <View style={styles.sensorValue}>
+                <Text style={styles.sensorLabel}>Pitch</Text>
+                <Text style={styles.sensorNumber}>{sensorReading.pitch?.toFixed(1) ?? '0.0'}°</Text>
+              </View>
+              <View style={styles.sensorValue}>
+                <Text style={styles.sensorLabel}>Yaw</Text>
+                <Text style={styles.sensorNumber}>{sensorReading.yaw?.toFixed(1) ?? '0.0'}°</Text>
               </View>
             </View>
 
-            <View style={styles.divider} />
-
-            <Text style={styles.sectionLabel}>Acceleration (g)</Text>
-            <View style={styles.sensorGrid}>
-              <View style={styles.sensorValue}>
-                <Text style={styles.sensorLabel}>X-Axis</Text>
-                <Text style={styles.sensorNumber}>{sensorReading.accelX.toFixed(3)}</Text>
-              </View>
-              <View style={styles.sensorValue}>
-                <Text style={styles.sensorLabel}>Y-Axis</Text>
-                <Text style={styles.sensorNumber}>{sensorReading.accelY.toFixed(3)}</Text>
-              </View>
-              <View style={styles.sensorValue}>
-                <Text style={styles.sensorLabel}>Z-Axis</Text>
-                <Text style={styles.sensorNumber}>{sensorReading.accelZ.toFixed(3)}</Text>
-              </View>
-            </View>
+            {/* Show calibration status */}
+            {sensorReading.calibration && (
+              <>
+                <View style={styles.divider} />
+                <Text style={styles.sectionLabel}>Calibration Status (0-3, higher is better)</Text>
+                <View style={styles.sensorGrid}>
+                  <View style={styles.sensorValue}>
+                    <Text style={styles.sensorLabel}>System</Text>
+                    <Text style={styles.sensorNumber}>{sensorReading.calibration.system}</Text>
+                  </View>
+                  <View style={styles.sensorValue}>
+                    <Text style={styles.sensorLabel}>Gyro</Text>
+                    <Text style={styles.sensorNumber}>{sensorReading.calibration.gyro}</Text>
+                  </View>
+                  <View style={styles.sensorValue}>
+                    <Text style={styles.sensorLabel}>Accel</Text>
+                    <Text style={styles.sensorNumber}>{sensorReading.calibration.accel}</Text>
+                  </View>
+                  <View style={styles.sensorValue}>
+                    <Text style={styles.sensorLabel}>Mag</Text>
+                    <Text style={styles.sensorNumber}>{sensorReading.calibration.mag}</Text>
+                  </View>
+                </View>
+              </>
+            )}
           </>
-        )}
-
-        {/* Raw data display for debugging */}
-        {sensorReading.raw && (
-          <View style={styles.rawData}>
-            <Text style={styles.rawDataLabel}>Raw Data:</Text>
-            <Text style={styles.rawDataText}>{sensorReading.raw}</Text>
-          </View>
         )}
       </View>
     );
@@ -357,23 +522,57 @@ const DeviceDetailScreen: React.FC = () => {
       </View>
 
       <ScrollView style={styles.content}>
+        {/* Error Banner */}
+        {error && (
+          <View style={styles.errorBanner}>
+            <Text style={styles.errorText}>{error}</Text>
+            {!isConnected && (
+              <TouchableOpacity
+                style={styles.reconnectButton}
+                onPress={handleReconnect}
+                disabled={isConnecting}>
+                {isConnecting ? (
+                  <ActivityIndicator size="small" color={theme.colors.primary} />
+                ) : (
+                  <Text style={styles.reconnectButtonText}>Reconnect</Text>
+                )}
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
+
         {renderStatusCard()}
         {renderSensorData()}
 
-        {/* Primary Action */}
-        <TouchableOpacity
-          style={[styles.primaryButton, !isConnected && styles.buttonDisabled]}
-          onPress={handlePollSensor}
-          disabled={!isConnected || isPolling}>
-          {isPolling ? (
-            <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
-          ) : (
-            <>
-              <RefreshCw size={20} color={theme.colors.primaryForeground} />
-              <Text style={styles.primaryButtonText}>Poll Sensor</Text>
-            </>
-          )}
-        </TouchableOpacity>
+        {/* Primary Action - Only show poll button for non-Vertex devices */}
+        {!isVertexDevice && (
+          <TouchableOpacity
+            style={[styles.primaryButton, !isConnected && styles.buttonDisabled]}
+            onPress={handlePollSensor}
+            disabled={!isConnected || isPolling}>
+            {isPolling ? (
+              <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
+            ) : (
+              <>
+                <RefreshCw size={20} color={theme.colors.primaryForeground} />
+                <Text style={styles.primaryButtonText}>Poll Sensor</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        )}
+
+        {/* Streaming status for Vertex devices */}
+        {isVertexDevice && (
+          <View style={styles.streamingStatusCard}>
+            <Activity size={20} color={isStreaming ? theme.colors.success : theme.colors.textSecondary} />
+            <Text style={[
+              styles.streamingStatusText,
+              { color: isStreaming ? theme.colors.success : theme.colors.textSecondary }
+            ]}>
+              {isStreaming ? 'Live streaming at 1 Hz' : 'Stream inactive'}
+            </Text>
+          </View>
+        )}
 
         {/* Secondary Actions */}
         <View style={styles.actionsGrid}>
@@ -441,6 +640,38 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     padding: theme.spacing.lg,
+  },
+  errorBanner: {
+    backgroundColor: theme.colors.error + '15', // 15 is hex for ~8% opacity
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.error + '40',
+    padding: theme.spacing.md,
+    marginBottom: theme.spacing.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  errorText: {
+    fontSize: theme.typography.fontSize.sm,
+    color: theme.colors.error,
+    fontFamily: theme.typography.serif,
+    flex: 1,
+    marginRight: theme.spacing.sm,
+  },
+  reconnectButton: {
+    backgroundColor: theme.colors.primary,
+    paddingVertical: theme.spacing.sm,
+    paddingHorizontal: theme.spacing.md,
+    borderRadius: theme.borderRadius.sm,
+    minWidth: 80,
+    alignItems: 'center',
+  },
+  reconnectButtonText: {
+    color: theme.colors.primaryForeground,
+    fontSize: theme.typography.fontSize.sm,
+    fontWeight: theme.typography.fontWeight.medium,
+    fontFamily: theme.typography.serif,
   },
   card: {
     backgroundColor: theme.colors.muted,
@@ -659,6 +890,43 @@ const styles = StyleSheet.create({
     fontWeight: theme.typography.fontWeight.medium,
     fontFamily: theme.typography.serif,
   },
+  streamingErrorBanner: {
+    backgroundColor: theme.colors.error + '15',
+    borderRadius: theme.borderRadius.sm,
+    padding: theme.spacing.sm,
+    marginBottom: theme.spacing.md,
+  },
+  streamingErrorText: {
+    fontSize: theme.typography.fontSize.xs,
+    color: theme.colors.error,
+    fontFamily: theme.typography.serif,
+  },
+  streamingStatusCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: theme.spacing.md,
+    backgroundColor: theme.colors.muted,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    gap: theme.spacing.sm,
+    marginBottom: theme.spacing.md,
+  },
+  streamingStatusText: {
+    fontSize: theme.typography.fontSize.md,
+    fontWeight: theme.typography.fontWeight.medium,
+    fontFamily: theme.typography.serif,
+  },
 });
+
+// Wrap the entire screen in an ErrorBoundary to catch any unhandled errors
+const DeviceDetailScreen: React.FC = () => {
+  return (
+    <ErrorBoundary>
+      <DeviceDetailScreenContent />
+    </ErrorBoundary>
+  );
+};
 
 export default DeviceDetailScreen;

@@ -22,6 +22,16 @@ yarn-error.log*
 # Local env files
 .env
 .env*.local
+.env.production
+
+# Android env files
+android/vertex/.env
+android/vertex/.env.production
+
+# Android signing (NEVER COMMIT)
+android/vertex/android/app/*.keystore
+android/vertex/android/gradle.properties
+android/vertex/android/app/vertex-release.keystore
 
 # Vercel
 .vercel/

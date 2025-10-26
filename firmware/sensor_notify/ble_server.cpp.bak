@@ -1,0 +1,318 @@
+/*
+ * BLE Server Implementation
+ *
+ * Implements BLE GATT server with sensor data notifications
+ */
+
+#include "ble_server.h"
+#include "config.h"
+#include "sensor_manager.h"
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+
+// BLE objects
+static BLEServer* pServer = nullptr;
+static BLEService* pSensorService = nullptr;
+static BLECharacteristic* pSensorCharacteristic = nullptr;
+static BLECharacteristic* pBatteryCharacteristic = nullptr;
+static BLECharacteristic* pCalibCharacteristic = nullptr;
+
+// State tracking
+static BLEState currentState = BLE_IDLE;
+static bool deviceConnected = false;
+static bool oldDeviceConnected = false;
+static uint32_t connectionCount = 0;
+static uint32_t disconnectionCount = 0;
+static uint32_t notificationsSent = 0;
+static unsigned long lastNotificationTime = 0;
+
+/**
+ * BLE Server Callbacks
+ */
+class MyServerCallbacks: public BLEServerCallbacks {
+  void onConnect(BLEServer* pServer) {
+    deviceConnected = true;
+    currentState = BLE_CONNECTED;
+    connectionCount++;
+
+    Serial.println("\n========================================");
+    Serial.println("[BLE] CLIENT CONNECTED");
+    Serial.printf("[BLE] Total connections: %lu\n", connectionCount);
+    Serial.println("========================================\n");
+
+    // Trigger connection callback
+    ::onConnect();
+  };
+
+  void onDisconnect(BLEServer* pServer) {
+    deviceConnected = false;
+    currentState = BLE_ADVERTISING;
+    disconnectionCount++;
+
+    Serial.println("\n========================================");
+    Serial.println("[BLE] CLIENT DISCONNECTED");
+    Serial.printf("[BLE] Total disconnections: %lu\n", disconnectionCount);
+    Serial.println("========================================\n");
+
+    // Start advertising again
+    Serial.println("[BLE] Restarting advertising...");
+    BLEDevice::startAdvertising();
+
+    // Trigger disconnection callback
+    ::onDisconnect();
+  }
+};
+
+/**
+ * Initialize BLE server
+ */
+bool initBLE() {
+  Serial.println("\n========================================");
+  Serial.println("  BLE Server Initialization");
+  Serial.println("========================================");
+
+  // Initialize BLE Device
+  Serial.printf("[BLE] Initializing device: %s\n", DEVICE_NAME);
+  BLEDevice::init(DEVICE_NAME);
+
+  // Get BLE address
+  String addressStr = BLEDevice::getAddress().toString().c_str();
+  Serial.printf("[BLE] Device address: %s\n", addressStr.c_str());
+
+  // Create BLE Server
+  Serial.println("[BLE] Creating BLE server...");
+  pServer = BLEDevice::createServer();
+  if (!pServer) {
+    Serial.println("[ERROR] Failed to create BLE server!");
+    return false;
+  }
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  // Create Sensor Service
+  Serial.printf("[BLE] Creating sensor service (UUID: %s)...\n", SENSOR_SERVICE_UUID);
+  pSensorService = pServer->createService(SENSOR_SERVICE_UUID);
+  if (!pSensorService) {
+    Serial.println("[ERROR] Failed to create sensor service!");
+    return false;
+  }
+
+  // Create Sensor Data Characteristic (NOTIFY + READ)
+  Serial.printf("[BLE] Creating sensor characteristic (UUID: %s)...\n", SENSOR_CHAR_UUID);
+  pSensorCharacteristic = pSensorService->createCharacteristic(
+    SENSOR_CHAR_UUID,
+    BLECharacteristic::PROPERTY_READ |
+    BLECharacteristic::PROPERTY_NOTIFY
+  );
+  pSensorCharacteristic->addDescriptor(new BLE2902());  // Notification descriptor
+
+  // Create Battery Level Characteristic (NOTIFY + READ)
+  Serial.printf("[BLE] Creating battery characteristic (UUID: %s)...\n", BATTERY_CHAR_UUID);
+  pBatteryCharacteristic = pSensorService->createCharacteristic(
+    BATTERY_CHAR_UUID,
+    BLECharacteristic::PROPERTY_READ |
+    BLECharacteristic::PROPERTY_NOTIFY
+  );
+  pBatteryCharacteristic->addDescriptor(new BLE2902());
+
+  // Create Calibration Status Characteristic (NOTIFY + READ)
+  Serial.printf("[BLE] Creating calibration characteristic (UUID: %s)...\n", CALIB_CHAR_UUID);
+  pCalibCharacteristic = pSensorService->createCharacteristic(
+    CALIB_CHAR_UUID,
+    BLECharacteristic::PROPERTY_READ |
+    BLECharacteristic::PROPERTY_NOTIFY
+  );
+  pCalibCharacteristic->addDescriptor(new BLE2902());
+
+  // Start the service
+  Serial.println("[BLE] Starting sensor service...");
+  pSensorService->start();
+
+  // Start advertising
+  Serial.println("[BLE] Starting BLE advertising...");
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SENSOR_SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);  // iPhone connection issue fix
+  pAdvertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
+
+  currentState = BLE_ADVERTISING;
+
+  Serial.println("[OK] BLE server initialized and advertising!");
+  Serial.printf("[BLE] Device name: %s\n", DEVICE_NAME);
+  Serial.printf("[BLE] Address: %s\n", addressStr.c_str());
+  Serial.println("========================================\n");
+
+  return true;
+}
+
+/**
+ * Update BLE state (handle reconnection)
+ */
+void updateBLE() {
+  // Handle disconnection - restart advertising
+  if (!deviceConnected && oldDeviceConnected) {
+    delay(500);  // Give bluetooth stack time to reset
+    pServer->startAdvertising();
+    Serial.println("[BLE] Advertising restarted after disconnection");
+    oldDeviceConnected = deviceConnected;
+  }
+
+  // Handle new connection
+  if (deviceConnected && !oldDeviceConnected) {
+    oldDeviceConnected = deviceConnected;
+  }
+}
+
+/**
+ * Check if client is connected
+ */
+bool isClientConnected() {
+  return deviceConnected;
+}
+
+/**
+ * Get current BLE state
+ */
+BLEState getBLEState() {
+  return currentState;
+}
+
+/**
+ * Send sensor data notification
+ *
+ * Binary packet format (56 bytes total):
+ * - Timestamp (4 bytes)
+ * - Quaternion (16 bytes: 4 floats)
+ * - Euler angles (12 bytes: 3 floats)
+ * - Acceleration (12 bytes: 3 floats)
+ * - Gyroscope (12 bytes: 3 floats)
+ * - Magnetometer (12 bytes: 3 floats)
+ * - Calibration (4 bytes: 4 uint8_t)
+ * - Temperature (1 byte)
+ */
+void sendSensorData() {
+  if (!deviceConnected || !pSensorCharacteristic) {
+    return;
+  }
+
+  // Prepare binary packet
+  uint8_t packet[73];  // Total packet size
+  int offset = 0;
+
+  // Timestamp (4 bytes)
+  memcpy(packet + offset, &currentSensorData.timestamp, 4);
+  offset += 4;
+
+  // Quaternion (16 bytes)
+  memcpy(packet + offset, &currentSensorData.qw, 4);
+  memcpy(packet + offset + 4, &currentSensorData.qx, 4);
+  memcpy(packet + offset + 8, &currentSensorData.qy, 4);
+  memcpy(packet + offset + 12, &currentSensorData.qz, 4);
+  offset += 16;
+
+  // Euler angles (12 bytes)
+  memcpy(packet + offset, &currentSensorData.roll, 4);
+  memcpy(packet + offset + 4, &currentSensorData.pitch, 4);
+  memcpy(packet + offset + 8, &currentSensorData.yaw, 4);
+  offset += 12;
+
+  // Acceleration (12 bytes)
+  memcpy(packet + offset, &currentSensorData.accel_x, 4);
+  memcpy(packet + offset + 4, &currentSensorData.accel_y, 4);
+  memcpy(packet + offset + 8, &currentSensorData.accel_z, 4);
+  offset += 12;
+
+  // Gyroscope (12 bytes)
+  memcpy(packet + offset, &currentSensorData.gyro_x, 4);
+  memcpy(packet + offset + 4, &currentSensorData.gyro_y, 4);
+  memcpy(packet + offset + 8, &currentSensorData.gyro_z, 4);
+  offset += 12;
+
+  // Magnetometer (12 bytes)
+  memcpy(packet + offset, &currentSensorData.mag_x, 4);
+  memcpy(packet + offset + 4, &currentSensorData.mag_y, 4);
+  memcpy(packet + offset + 8, &currentSensorData.mag_z, 4);
+  offset += 12;
+
+  // Calibration (4 bytes)
+  packet[offset++] = currentSensorData.cal_sys;
+  packet[offset++] = currentSensorData.cal_gyro;
+  packet[offset++] = currentSensorData.cal_accel;
+  packet[offset++] = currentSensorData.cal_mag;
+
+  // Temperature (1 byte)
+  packet[offset++] = (uint8_t)currentSensorData.temperature;
+
+  // Send notification
+  pSensorCharacteristic->setValue(packet, offset);
+  pSensorCharacteristic->notify();
+
+  notificationsSent++;
+  lastNotificationTime = millis();
+
+  // Debug logging every 50 notifications (~1 second at 50Hz)
+  if (DEBUG_BLE_ENABLED && notificationsSent % 50 == 0) {
+    Serial.printf("[BLE] Notification #%lu sent (%d bytes): ", notificationsSent, offset);
+    Serial.printf("R=%.1f° P=%.1f° Y=%.1f°\n",
+                  currentSensorData.roll, currentSensorData.pitch, currentSensorData.yaw);
+  }
+}
+
+/**
+ * Send battery level notification (0-100%)
+ */
+void sendBatteryLevel(uint8_t level) {
+  if (!deviceConnected || !pBatteryCharacteristic) {
+    return;
+  }
+
+  pBatteryCharacteristic->setValue(&level, 1);
+  pBatteryCharacteristic->notify();
+
+  if (DEBUG_BLE_ENABLED) {
+    Serial.printf("[BLE] Battery level sent: %d%%\n", level);
+  }
+}
+
+/**
+ * Send calibration status notification
+ */
+void sendCalibrationStatus() {
+  if (!deviceConnected || !pCalibCharacteristic) {
+    return;
+  }
+
+  uint8_t calibData[4] = {
+    currentSensorData.cal_sys,
+    currentSensorData.cal_gyro,
+    currentSensorData.cal_accel,
+    currentSensorData.cal_mag
+  };
+
+  pCalibCharacteristic->setValue(calibData, 4);
+  pCalibCharacteristic->notify();
+
+  if (DEBUG_BLE_ENABLED) {
+    Serial.printf("[BLE] Calibration sent: S=%d G=%d A=%d M=%d\n",
+                  calibData[0], calibData[1], calibData[2], calibData[3]);
+  }
+}
+
+/**
+ * Connection callback (called when client connects)
+ */
+void onConnect() {
+  // User code can be added here
+  Serial.println("[EVENT] onConnect() callback triggered");
+}
+
+/**
+ * Disconnection callback (called when client disconnects)
+ */
+void onDisconnect() {
+  // User code can be added here
+  Serial.println("[EVENT] onDisconnect() callback triggered");
+}

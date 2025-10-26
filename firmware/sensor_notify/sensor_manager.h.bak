@@ -1,0 +1,54 @@
+/*
+ * Sensor Manager - BNO055 IMU Interface
+ *
+ * Handles initialization, calibration, and data reading from BNO055
+ */
+
+#ifndef SENSOR_MANAGER_H
+#define SENSOR_MANAGER_H
+
+#include <Arduino.h>
+
+// Sensor data structure optimized for BLE transmission
+struct SensorData {
+  // Timestamp (milliseconds since boot - phone will add real time)
+  uint32_t timestamp;
+
+  // Orientation (quaternion) - most accurate representation
+  float qw, qx, qy, qz;
+
+  // Euler angles (degrees) - for human readability
+  float roll, pitch, yaw;
+
+  // Linear acceleration (m/s², gravity removed)
+  float accel_x, accel_y, accel_z;
+
+  // Gyroscope (rad/s)
+  float gyro_x, gyro_y, gyro_z;
+
+  // Magnetometer (µT)
+  float mag_x, mag_y, mag_z;
+
+  // Calibration status (0-3, 3 = fully calibrated)
+  uint8_t cal_sys, cal_gyro, cal_accel, cal_mag;
+
+  // Temperature (°C)
+  int8_t temperature;
+};
+
+// Global sensor data (updated in main loop)
+extern SensorData currentSensorData;
+
+// Function prototypes
+bool initSensor();
+void updateSensorData();
+void getCalibrationStatus(uint8_t* sys, uint8_t* gyro, uint8_t* accel, uint8_t* mag);
+bool isSensorReady();
+void printSensorData();
+
+// Calibration helpers
+bool isFullyCalibrated();
+void saveCalibration();  // For future implementation
+void loadCalibration();  // For future implementation
+
+#endif // SENSOR_MANAGER_H

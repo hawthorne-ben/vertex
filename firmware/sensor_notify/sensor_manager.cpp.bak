@@ -1,0 +1,272 @@
+/*
+ * Sensor Manager Implementation
+ *
+ * Handles all BNO055 sensor operations with extensive logging
+ */
+
+#include "sensor_manager.h"
+#include "config.h"
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BNO055.h>
+#include <utility/imumaths.h>
+
+// Create BNO055 sensor instance
+Adafruit_BNO055 bno = Adafruit_BNO055(55);
+
+// Global sensor data
+SensorData currentSensorData;
+
+// Sensor state tracking
+static bool sensorInitialized = false;
+static unsigned long lastReadTime = 0;
+static uint32_t successfulReads = 0;
+static uint32_t failedReads = 0;
+
+/**
+ * Initialize BNO055 sensor
+ * Returns: true if successful, false otherwise
+ */
+bool initSensor() {
+  Serial.println("\n========================================");
+  Serial.println("  BNO055 Sensor Initialization");
+  Serial.println("========================================");
+
+  // Initialize I2C with explicit pins
+  Serial.print("[SENSOR] Initializing I2C on SDA=");
+  Serial.print(I2C_SDA_PIN);
+  Serial.print(", SCL=");
+  Serial.print(I2C_SCL_PIN);
+  Serial.print(" @ ");
+  Serial.print(I2C_CLOCK_SPEED / 1000);
+  Serial.println(" kHz...");
+
+  Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
+  Wire.setClock(I2C_CLOCK_SPEED);
+  Wire.setTimeout(1000);  // 1 second timeout
+  delay(100);
+
+  // Initialize BNO055 (with retries)
+  Serial.println("[SENSOR] Initializing BNO055...");
+  bool sensorFound = false;
+  for (int attempt = 0; attempt < 3; attempt++) {
+    if (attempt > 0) {
+      Serial.printf("[SENSOR] Retry attempt %d...\n", attempt);
+      delay(100);
+    }
+    if (bno.begin()) {
+      sensorFound = true;
+      break;
+    }
+  }
+
+  if (!sensorFound) {
+    Serial.println("[ERROR] Failed to initialize BNO055!");
+    Serial.println("[ERROR] Check:");
+    Serial.println("[ERROR]   - Wiring (SDA, SCL, VCC, GND)");
+    Serial.println("[ERROR]   - I2C address (default 0x28)");
+    Serial.println("[ERROR]   - Power supply voltage");
+    return false;
+  }
+
+  Serial.println("[OK] BNO055 initialized successfully!");
+
+  // Configure external crystal
+  Serial.println("[SENSOR] Configuring external crystal...");
+  bno.setExtCrystalUse(true);
+  delay(100);
+
+  // Get initial calibration status
+  uint8_t sys, gyro, accel, mag;
+  bno.getCalibration(&sys, &gyro, &accel, &mag);
+  Serial.println("[SENSOR] Initial calibration status:");
+  Serial.printf("[SENSOR]   System: %d/3\n", sys);
+  Serial.printf("[SENSOR]   Gyro:   %d/3\n", gyro);
+  Serial.printf("[SENSOR]   Accel:  %d/3\n", accel);
+  Serial.printf("[SENSOR]   Mag:    %d/3\n", mag);
+
+  // Get temperature
+  int8_t temp = bno.getTemp();
+  Serial.printf("[SENSOR] Temperature: %d°C\n", temp);
+
+  sensorInitialized = true;
+  Serial.println("[OK] Sensor initialization complete!");
+  Serial.println("========================================\n");
+
+  return true;
+}
+
+/**
+ * Update sensor data from BNO055
+ * Called at SENSOR_SAMPLE_RATE_HZ frequency
+ */
+void updateSensorData() {
+  if (!sensorInitialized) {
+    if (DEBUG_SENSOR_ENABLED && failedReads % 100 == 0) {
+      Serial.println("[WARN] Sensor not initialized, skipping read");
+    }
+    failedReads++;
+    return;
+  }
+
+  unsigned long startTime = micros();
+
+  // Read quaternion (most accurate orientation)
+  imu::Quaternion quat = bno.getQuat();
+
+  // Convert to Euler angles for convenience
+  imu::Vector<3> euler = quat.toEuler();
+
+  // Read linear acceleration (gravity removed)
+  imu::Vector<3> accel = bno.getVector(Adafruit_BNO055::VECTOR_LINEARACCEL);
+
+  // Read gyroscope
+  imu::Vector<3> gyro = bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
+
+  // Read magnetometer
+  imu::Vector<3> mag = bno.getVector(Adafruit_BNO055::VECTOR_MAGNETOMETER);
+
+  // Read calibration status
+  uint8_t sys, gyro_cal, accel_cal, mag_cal;
+  bno.getCalibration(&sys, &gyro_cal, &accel_cal, &mag_cal);
+
+  // Read temperature
+  int8_t temp = bno.getTemp();
+
+  // Update global sensor data structure
+  currentSensorData.timestamp = millis();
+
+  // Quaternion
+  currentSensorData.qw = quat.w();
+  currentSensorData.qx = quat.x();
+  currentSensorData.qy = quat.y();
+  currentSensorData.qz = quat.z();
+
+  // Euler angles (convert from radians to degrees)
+  currentSensorData.roll = euler.x() * 57.2958;
+  currentSensorData.pitch = euler.y() * 57.2958;
+  currentSensorData.yaw = euler.z() * 57.2958;
+
+  // Linear acceleration
+  currentSensorData.accel_x = accel.x();
+  currentSensorData.accel_y = accel.y();
+  currentSensorData.accel_z = accel.z();
+
+  // Gyroscope
+  currentSensorData.gyro_x = gyro.x();
+  currentSensorData.gyro_y = gyro.y();
+  currentSensorData.gyro_z = gyro.z();
+
+  // Magnetometer
+  currentSensorData.mag_x = mag.x();
+  currentSensorData.mag_y = mag.y();
+  currentSensorData.mag_z = mag.z();
+
+  // Calibration
+  currentSensorData.cal_sys = sys;
+  currentSensorData.cal_gyro = gyro_cal;
+  currentSensorData.cal_accel = accel_cal;
+  currentSensorData.cal_mag = mag_cal;
+
+  // Temperature
+  currentSensorData.temperature = temp;
+
+  unsigned long readDuration = micros() - startTime;
+  lastReadTime = millis();
+  successfulReads++;
+
+  // Debug logging every 50 reads (~1 second at 50Hz)
+  if (DEBUG_SENSOR_ENABLED && successfulReads % 50 == 0) {
+    Serial.printf("[SENSOR] Read #%lu (%.2f ms): ", successfulReads, readDuration / 1000.0);
+    Serial.printf("Roll=%.1f° Pitch=%.1f° Yaw=%.1f° | ",
+                  currentSensorData.roll, currentSensorData.pitch, currentSensorData.yaw);
+    Serial.printf("Cal: S=%d G=%d A=%d M=%d\n",
+                  sys, gyro_cal, accel_cal, mag_cal);
+  }
+}
+
+/**
+ * Get current calibration status
+ */
+void getCalibrationStatus(uint8_t* sys, uint8_t* gyro, uint8_t* accel, uint8_t* mag) {
+  if (!sensorInitialized) {
+    *sys = *gyro = *accel = *mag = 0;
+    return;
+  }
+  bno.getCalibration(sys, gyro, accel, mag);
+}
+
+/**
+ * Check if sensor is ready
+ */
+bool isSensorReady() {
+  return sensorInitialized;
+}
+
+/**
+ * Check if sensor is fully calibrated
+ */
+bool isFullyCalibrated() {
+  return (currentSensorData.cal_sys == 3 &&
+          currentSensorData.cal_gyro == 3 &&
+          currentSensorData.cal_accel == 3 &&
+          currentSensorData.cal_mag == 3);
+}
+
+/**
+ * Print detailed sensor data for debugging
+ */
+void printSensorData() {
+  Serial.println("\n========== SENSOR DATA ==========");
+  Serial.printf("Timestamp: %lu ms\n", currentSensorData.timestamp);
+
+  Serial.println("\n--- Orientation (Quaternion) ---");
+  Serial.printf("W: %.4f  X: %.4f  Y: %.4f  Z: %.4f\n",
+                currentSensorData.qw, currentSensorData.qx,
+                currentSensorData.qy, currentSensorData.qz);
+
+  Serial.println("\n--- Orientation (Euler Angles) ---");
+  Serial.printf("Roll:  %7.2f°\n", currentSensorData.roll);
+  Serial.printf("Pitch: %7.2f°\n", currentSensorData.pitch);
+  Serial.printf("Yaw:   %7.2f°\n", currentSensorData.yaw);
+
+  Serial.println("\n--- Linear Acceleration (m/s²) ---");
+  Serial.printf("X: %7.3f  Y: %7.3f  Z: %7.3f\n",
+                currentSensorData.accel_x, currentSensorData.accel_y,
+                currentSensorData.accel_z);
+
+  Serial.println("\n--- Gyroscope (rad/s) ---");
+  Serial.printf("X: %7.3f  Y: %7.3f  Z: %7.3f\n",
+                currentSensorData.gyro_x, currentSensorData.gyro_y,
+                currentSensorData.gyro_z);
+
+  Serial.println("\n--- Magnetometer (µT) ---");
+  Serial.printf("X: %7.2f  Y: %7.2f  Z: %7.2f\n",
+                currentSensorData.mag_x, currentSensorData.mag_y,
+                currentSensorData.mag_z);
+
+  Serial.println("\n--- Calibration Status ---");
+  Serial.printf("System: %d/3  Gyro: %d/3  Accel: %d/3  Mag: %d/3\n",
+                currentSensorData.cal_sys, currentSensorData.cal_gyro,
+                currentSensorData.cal_accel, currentSensorData.cal_mag);
+
+  Serial.printf("\nTemperature: %d°C\n", currentSensorData.temperature);
+
+  Serial.printf("\nStats: %lu successful reads, %lu failed\n",
+                successfulReads, failedReads);
+  Serial.println("=================================\n");
+}
+
+/**
+ * Save calibration data to EEPROM (future implementation)
+ */
+void saveCalibration() {
+  Serial.println("[TODO] saveCalibration() not yet implemented");
+}
+
+/**
+ * Load calibration data from EEPROM (future implementation)
+ */
+void loadCalibration() {
+  Serial.println("[TODO] loadCalibration() not yet implemented");
+}

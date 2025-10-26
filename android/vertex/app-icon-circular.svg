@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192">
+  <!-- Circular app icon with V logo -->
+  <!-- Background circle -->
+  <circle cx="96" cy="96" r="96" fill="#ffffff"/>
+
+  <!-- V logo centered and scaled -->
+  <g transform="translate(46, 48) scale(1)">
+    <path
+      d="M 20 15 L 50 75 L 80 15 L 70 15 L 50 57 L 30 15 Z"
+      fill="#1a1a1a"
+    />
+  </g>
+</svg>

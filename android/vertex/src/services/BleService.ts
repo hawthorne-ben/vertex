@@ -16,16 +16,70 @@ const HEART_RATE_MEASUREMENT = '00002a37-0000-1000-8000-00805f9b34fb';
 const BATTERY_SERVICE = '0000180f-0000-1000-8000-00805f9b34fb';
 const BATTERY_LEVEL = '00002a19-0000-1000-8000-00805f9b34fb';
 
-// IMU Device UUIDs (to be configured)
-const IMU_SERVICE_UUID = 'YOUR_SERVICE_UUID'; // TODO: Get from firmware
-const IMU_CHARACTERISTIC_UUID = 'YOUR_CHARACTERISTIC_UUID'; // TODO: Get from firmware
+// IMU Device UUIDs (matches firmware sensor_notify)
+const IMU_SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef0';
+const IMU_CHARACTERISTIC_UUID = '12345678-1234-5678-1234-56789abcdef1';
 
 class BleService {
   private manager: BleManager;
   private connectedDevice: Device | null = null;
+  private activeSubscriptions: any[] = [];
+  private isHandlingDisconnection: boolean = false;
 
   constructor() {
     this.manager = new BleManager();
+
+    // Set up global error handler to prevent crashes
+    this.manager.setLogLevel('Verbose');
+
+    // Add global error handler for BLE errors
+    // This prevents crashes from unhandled disconnection errors
+    if (global.ErrorUtils) {
+      const originalHandler = global.ErrorUtils.getGlobalHandler();
+      global.ErrorUtils.setGlobalHandler((error: any, isFatal?: boolean) => {
+        // Check if this is a BLE disconnection error
+        if (error?.message?.includes('DisconnectionRouter') ||
+            error?.message?.includes('CompositeException') ||
+            error?.name === 'CompositeException') {
+          console.log('Caught BLE disconnection error (prevented crash):', error.message);
+          // Don't crash - just handle the disconnection gracefully
+          if (this.connectedDevice) {
+            this.cleanupSubscriptions();
+            this.connectedDevice = null;
+          }
+          return;
+        }
+        // For other errors, call the original handler
+        if (originalHandler) {
+          originalHandler(error, isFatal);
+        }
+      });
+    }
+  }
+
+  /**
+   * Clean up all active subscriptions
+   */
+  private cleanupSubscriptions(): void {
+    console.log(`Cleaning up ${this.activeSubscriptions.length} active subscriptions...`);
+    for (const subscription of this.activeSubscriptions) {
+      try {
+        if (subscription && typeof subscription.remove === 'function') {
+          subscription.remove();
+        }
+      } catch (error) {
+        // Ignore cleanup errors
+        console.log('Subscription cleanup error (safe to ignore)');
+      }
+    }
+    this.activeSubscriptions = [];
+  }
+
+  /**
+   * Check if a device is a Vertex IMU device
+   */
+  isVertexDevice(device: Device): boolean {
+    return device.name?.includes('Vertex') || device.name === 'Vertex-IMU';
   }
 
   /**
@@ -77,24 +131,117 @@ class BleService {
    */
   async connectToDevice(deviceId: string): Promise<Device> {
     console.log(`Connecting to device: ${deviceId}`);
-    
+
     try {
-      const device = await this.manager.connectToDevice(deviceId);
+      // Add timeout for connection
+      const connectionPromise = this.manager.connectToDevice(deviceId, {
+        timeout: 10000, // 10 second timeout
+      });
+
+      const device = await connectionPromise;
       this.connectedDevice = device;
-      
-      // Discover services and characteristics
-      await device.discoverAllServicesAndCharacteristics();
-      
-      console.log('Device connected successfully');
+
+      // Request larger MTU for 56-byte sensor data packets (MTU = payload + 3 bytes overhead)
+      try {
+        await device.requestMTU(185);
+      } catch (mtuError: any) {
+        console.warn('MTU negotiation failed:', mtuError?.message);
+      }
+
+      // Set up disconnection handler
+      device.onDisconnected((error, disconnectedDevice) => {
+        if (this.isHandlingDisconnection) {
+          return; // Already handling disconnection
+        }
+        this.isHandlingDisconnection = true;
+
+        console.log('Device disconnected:', disconnectedDevice?.id);
+        if (error) {
+          console.log('Disconnection reason:', error.message);
+        }
+
+        // Clean up all active subscriptions
+        this.cleanupSubscriptions();
+        this.connectedDevice = null;
+
+        // Reset disconnection flag after a short delay
+        setTimeout(() => {
+          this.isHandlingDisconnection = false;
+        }, 100);
+      });
+
+      try {
+        await device.discoverAllServicesAndCharacteristics();
+      } catch (discoverError: any) {
+        console.error('Service discovery error:', discoverError?.message);
+      }
+
       return device;
-    } catch (error) {
-      console.error('Connection error:', error);
-      throw error;
+    } catch (error: any) {
+      console.error('Connection error:', error?.message || error);
+      this.connectedDevice = null;
+      throw new Error(`Failed to connect: ${error?.message || 'Unknown error'}`);
     }
   }
 
   /**
-   * Subscribe to characteristic notifications
+   * Subscribe to IMU notifications for continuous streaming
+   * Subscribes to the IMU characteristic and receives automatic 1Hz updates
+   * @param onDataReceived Callback when IMU data is received (parsed IMU data)
+   * @param onError Optional callback for errors
+   */
+  async subscribeToIMUStream(
+    onDataReceived: (data: any) => void,
+    onError?: (error: Error) => void
+  ): Promise<void> {
+    if (!this.connectedDevice) {
+      throw new Error('No device connected');
+    }
+
+    try {
+      const services = await this.manager.servicesForDevice(this.connectedDevice.id);
+      const hasIMUService = services.some(s => s.uuid.toLowerCase() === IMU_SERVICE_UUID.toLowerCase());
+
+      if (!hasIMUService) {
+        throw new Error('IMU service not available. Device may not be a Vertex IMU.');
+      }
+
+      const subscription = this.connectedDevice.monitorCharacteristicForService(
+        IMU_SERVICE_UUID,
+        IMU_CHARACTERISTIC_UUID,
+        (error, characteristic) => {
+          if (error) {
+            console.error('IMU stream monitoring error:', error);
+            if (onError) {
+              onError(new Error(`Stream error: ${error.message}`));
+            }
+            return;
+          }
+
+          if (characteristic?.value) {
+            try {
+              const data = this.base64ToUint8Array(characteristic.value);
+              const parsedData = this.parseIMU(data);
+              onDataReceived(parsedData);
+            } catch (parseError: any) {
+              console.error('IMU parse error:', parseError);
+              if (onError) {
+                onError(new Error(`Parse error: ${parseError.message}`));
+              }
+            }
+          }
+        }
+      );
+
+      this.activeSubscriptions.push(subscription);
+    } catch (error: any) {
+      console.error('IMU subscription error:', error);
+      throw new Error(`Failed to subscribe to IMU stream: ${error.message}`);
+    }
+  }
+
+  /**
+   * Subscribe to characteristic notifications (legacy method)
    * @param onDataReceived Callback when data is received
    */
   async subscribeToData(onDataReceived: (data: Uint8Array) => void): Promise<void> {
@@ -105,23 +252,30 @@ class BleService {
     console.log('Subscribing to characteristic notifications...');
 
     try {
-      const characteristic = await this.connectedDevice.monitorCharacteristicForService(
+      const subscription = this.connectedDevice.monitorCharacteristicForService(
         IMU_SERVICE_UUID,
         IMU_CHARACTERISTIC_UUID,
         (error, characteristic) => {
           if (error) {
             console.error('Characteristic monitoring error:', error);
+            // Don't throw - just log the error to prevent crashes
             return;
           }
 
           if (characteristic?.value) {
-            // Convert base64 value to Uint8Array
-            const data = this.base64ToUint8Array(characteristic.value);
-            onDataReceived(data);
+            try {
+              // Convert base64 value to Uint8Array
+              const data = this.base64ToUint8Array(characteristic.value);
+              onDataReceived(data);
+            } catch (parseError) {
+              console.error('Error parsing characteristic data:', parseError);
+            }
           }
         }
       );
 
+      // Track this subscription
+      this.activeSubscriptions.push(subscription);
       console.log('Successfully subscribed to characteristic');
     } catch (error) {
       console.error('Subscription error:', error);
@@ -138,17 +292,21 @@ class BleService {
     }
 
     try {
-      // Make sure services are discovered
-      await this.connectedDevice.discoverAllServicesAndCharacteristics();
+      // Wait a bit for services to be ready
+      await new Promise(resolve => setTimeout(resolve, 500));
 
-      const services = await this.connectedDevice.services();
+      // Get services using servicesForDevice which is more reliable
+      const services = await this.manager.servicesForDevice(this.connectedDevice.id);
       const serviceUUIDs = services.map(s => s.uuid);
       console.log('Available services:', serviceUUIDs);
 
       // Log characteristics for each service
       for (const service of services) {
         try {
-          const chars = await service.characteristics();
+          const chars = await this.manager.characteristicsForDevice(
+            this.connectedDevice.id,
+            service.uuid
+          );
           console.log(`Service ${service.uuid} has ${chars.length} characteristics:`,
             chars.map(c => c.uuid).join(', '));
         } catch (error) {
@@ -174,9 +332,15 @@ class BleService {
 
     console.log('Polling sensor...');
 
-    // First, list all available services for debugging
-    const availableServices = await this.listAvailableServices();
-    console.log('Device has', availableServices.length, 'services');
+    try {
+      // Try to read IMU data first (most common use case)
+      const imuData = await this.readIMU();
+      if (imuData) {
+        return imuData;
+      }
+    } catch (error: any) {
+      console.log('IMU data not available:', error?.message);
+    }
 
     try {
       // Try to read heart rate (for Whoop or HR devices)
@@ -188,18 +352,8 @@ class BleService {
       console.log('Heart rate not available:', error?.message);
     }
 
-    try {
-      // Try to read IMU data
-      const imuData = await this.readIMU();
-      if (imuData) {
-        return imuData;
-      }
-    } catch (error: any) {
-      console.log('IMU data not available:', error?.message);
-    }
-
-    // If nothing worked, return info about available services
-    throw new Error(`No sensor data available. Device has ${availableServices.length} services but none are readable. Available UUIDs: ${availableServices.slice(0, 3).join(', ')}`);
+    // If nothing worked, throw error
+    throw new Error('No sensor data available. Device may not have readable sensors.');
   }
 
   /**
@@ -360,7 +514,8 @@ class BleService {
   }
 
   /**
-   * Read IMU sensor data (for custom IMU device)
+   * Read IMU sensor data via notification (for custom IMU device)
+   * Subscribes to notifications and waits for one packet
    */
   private async readIMU(): Promise<any> {
     if (!this.connectedDevice) {
@@ -368,54 +523,201 @@ class BleService {
     }
 
     try {
+      // Check if device is still connected
+      const isConnected = await this.connectedDevice.isConnected();
+      if (!isConnected) {
+        throw new Error('Device is not connected');
+      }
+
       // First check if the device has the IMU service
-      const services = await this.connectedDevice.services();
-      const hasIMUService = services.some(s => s.uuid.toLowerCase().includes(IMU_SERVICE_UUID.toLowerCase()));
+      const services = await this.manager.servicesForDevice(this.connectedDevice.id);
+      const hasIMUService = services.some(s => s.uuid.toLowerCase() === IMU_SERVICE_UUID.toLowerCase());
 
       if (!hasIMUService) {
-        throw new Error('IMU service not available');
+        throw new Error('IMU service not available. Device may not be a Vertex IMU.');
       }
 
-      const characteristic = await this.connectedDevice.readCharacteristicForService(
-        IMU_SERVICE_UUID,
-        IMU_CHARACTERISTIC_UUID
-      );
+      console.log('Subscribing to IMU notifications...');
 
-      if (!characteristic.value) {
-        throw new Error('No IMU data');
-      }
+      return new Promise((resolve, reject) => {
+        let isResolved = false;
+        let subscription: any = null;
 
-      const data = this.base64ToUint8Array(characteristic.value);
-      return this.parseIMU(data);
+        const cleanup = () => {
+          if (subscription) {
+            try {
+              // Remove from active subscriptions list
+              const index = this.activeSubscriptions.indexOf(subscription);
+              if (index > -1) {
+                this.activeSubscriptions.splice(index, 1);
+              }
+              subscription.remove();
+            } catch (e) {
+              console.log('Subscription cleanup error (safe to ignore):', e);
+            }
+            subscription = null;
+          }
+        };
+
+        const timeout = setTimeout(() => {
+          if (!isResolved) {
+            isResolved = true;
+            cleanup();
+            reject(new Error('Timeout waiting for sensor data. Device may have disconnected or is not responding.'));
+          }
+        }, 5000); // 5 second timeout
+
+        try {
+          subscription = this.connectedDevice!.monitorCharacteristicForService(
+            IMU_SERVICE_UUID,
+            IMU_CHARACTERISTIC_UUID,
+            (error, characteristic) => {
+              if (isResolved) return; // Already handled
+
+              if (error) {
+                clearTimeout(timeout);
+                isResolved = true;
+                cleanup();
+                const errorMsg = error.message || 'Unknown BLE error';
+                // Check if it's a disconnection error
+                if (errorMsg.toLowerCase().includes('disconnect') ||
+                    errorMsg.toLowerCase().includes('not connected')) {
+                  reject(new Error('Device disconnected'));
+                } else {
+                  reject(new Error(`BLE error: ${errorMsg}`));
+                }
+                return;
+              }
+
+              if (characteristic?.value) {
+                clearTimeout(timeout);
+                isResolved = true;
+
+                const data = this.base64ToUint8Array(characteristic.value);
+                console.log(`Received IMU data: ${data.length} bytes`);
+
+                // Clean up subscription before resolving
+                cleanup();
+                resolve(this.parseIMU(data));
+              }
+            }
+          );
+
+          // Track this subscription
+          if (subscription) {
+            this.activeSubscriptions.push(subscription);
+          }
+
+          // IMPORTANT: Trigger a read to activate the onRead callback in firmware
+          // The firmware only sends data when read is requested
+          console.log('Triggering read to request sensor data...');
+          this.connectedDevice!.readCharacteristicForService(
+            IMU_SERVICE_UUID,
+            IMU_CHARACTERISTIC_UUID
+          ).then((char) => {
+            console.log('Read triggered successfully, notification should follow');
+          }).catch((readError) => {
+            console.log('Read trigger error (firmware will handle via notification):', readError?.message);
+            // Don't reject here - the notification callback will handle the response
+          });
+        } catch (subError: any) {
+          clearTimeout(timeout);
+          if (!isResolved) {
+            isResolved = true;
+            reject(new Error(`Failed to subscribe: ${subError?.message || 'Unknown error'}`));
+          }
+        }
+      });
     } catch (error: any) {
       console.log('IMU read error:', error?.message || 'Unknown error');
-      throw new Error('IMU service not available');
+      throw new Error('IMU service not available: ' + (error?.message || 'Unknown error'));
     }
   }
 
   /**
    * Parse IMU sensor data
+   *
+   * FIRMWARE FORMAT (56 bytes):
+   * - Timestamp (4 bytes) - uint32_t milliseconds since boot
+   * - Euler Angles (12 bytes) - 3x float (roll, pitch, yaw in degrees)
+   * - Acceleration (12 bytes) - 3x float (x, y, z in m/s²)
+   * - Gyroscope (12 bytes) - 3x float (x, y, z in rad/s)
+   * - Magnetometer (12 bytes) - 3x float (x, y, z in µT)
+   * - Calibration (4 bytes) - 4x uint8_t (sys, gyro, accel, mag: 0-3)
    */
   private parseIMU(data: Uint8Array): any {
-    // TODO: Implement based on your IMU data format
-    // Expected format: [timestamp(4), grade(2), roll(2), Gx(2), Gy(2), Gz(2)]
-
-    if (data.length < 14) {
-      throw new Error('Invalid IMU data');
+    if (data.length < 56) {
+      throw new Error(`Invalid IMU data length: ${data.length} bytes (expected 56)`);
     }
 
-    const grade = ((data[4] | (data[5] << 8)) / 100.0);
-    const roll = ((data[6] | (data[7] << 8)) / 100.0);
-    const accelX = this.signedInt16(data[8] | (data[9] << 8)) / 1000.0;
-    const accelY = this.signedInt16(data[10] | (data[11] << 8)) / 1000.0;
-    const accelZ = this.signedInt16(data[12] | (data[13] << 8)) / 1000.0;
+    // Create DataView for easier parsing
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    let offset = 0;
+
+    // Timestamp (4 bytes)
+    const timestamp = view.getUint32(offset, true); // little endian
+    offset += 4;
+
+    // Euler angles (12 bytes)
+    const roll = view.getFloat32(offset, true);
+    offset += 4;
+    const pitch = view.getFloat32(offset, true);
+    offset += 4;
+    const yaw = view.getFloat32(offset, true);
+    offset += 4;
+
+    // Acceleration (12 bytes)
+    const accelX = view.getFloat32(offset, true);
+    offset += 4;
+    const accelY = view.getFloat32(offset, true);
+    offset += 4;
+    const accelZ = view.getFloat32(offset, true);
+    offset += 4;
+
+    // Gyroscope (12 bytes)
+    const gyroX = view.getFloat32(offset, true);
+    offset += 4;
+    const gyroY = view.getFloat32(offset, true);
+    offset += 4;
+    const gyroZ = view.getFloat32(offset, true);
+    offset += 4;
+
+    // Magnetometer (12 bytes)
+    const magX = view.getFloat32(offset, true);
+    offset += 4;
+    const magY = view.getFloat32(offset, true);
+    offset += 4;
+    const magZ = view.getFloat32(offset, true);
+    offset += 4;
+
+    // Calibration (4 bytes)
+    const calSys = data[offset++];
+    const calGyro = data[offset++];
+    const calAccel = data[offset++];
+    const calMag = data[offset++];
+
+    console.log(`IMU: Roll=${roll.toFixed(1)}° Pitch=${pitch.toFixed(1)}° Yaw=${yaw.toFixed(1)}° | Cal: S=${calSys} G=${calGyro} A=${calAccel} M=${calMag}`);
 
     return {
-      grade,
+      timestamp,
       roll,
+      pitch,
+      yaw,
       accelX,
       accelY,
       accelZ,
+      gyroX,
+      gyroY,
+      gyroZ,
+      magX,
+      magY,
+      magZ,
+      calibration: {
+        system: calSys,
+        gyro: calGyro,
+        accel: calAccel,
+        mag: calMag,
+      },
       raw: Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' '),
     };
   }
@@ -445,7 +747,16 @@ class BleService {
   async disconnect(): Promise<void> {
     if (this.connectedDevice) {
       console.log('Disconnecting from device...');
-      await this.connectedDevice.cancelConnection();
+
+      // Clean up all subscriptions first
+      this.cleanupSubscriptions();
+
+      try {
+        await this.connectedDevice.cancelConnection();
+      } catch (error) {
+        console.log('Disconnect error (safe to ignore):', error);
+      }
+
       this.connectedDevice = null;
       console.log('Disconnected');
     }

@@ -1,0 +1,66 @@
+/*
+ * Vertex Sensor Notify - Configuration
+ *
+ * BLE-only mode for real-time sensor streaming to mobile app
+ * No WiFi, No NTP - Phone handles all timestamps
+ */
+
+#ifndef CONFIG_H
+#define CONFIG_H
+
+// ===== Device Information =====
+#define DEVICE_NAME "Vertex-IMU"
+#define FIRMWARE_VERSION "1.0.0"
+
+// ===== BLE Configuration =====
+// Standard UUIDs for compatibility
+#define SERVICE_UUID        "00001800-0000-1000-8000-00805f9b34fb"  // Generic Access
+#define SENSOR_SERVICE_UUID "12345678-1234-5678-1234-56789abcdef0"  // Custom sensor service
+#define SENSOR_CHAR_UUID    "12345678-1234-5678-1234-56789abcdef1"  // Sensor data characteristic
+#define BATTERY_CHAR_UUID   "00002a19-0000-1000-8000-00805f9b34fb"  // Standard battery level
+#define CALIB_CHAR_UUID     "12345678-1234-5678-1234-56789abcdef2"  // Calibration status
+
+// BLE advertising settings
+#define BLE_ADVERTISE_INTERVAL 100  // ms
+#define BLE_MTU_SIZE 512            // Maximum transfer unit size
+
+// ===== Sensor Configuration =====
+#define BNO055_ADDRESS 0x28           // I2C address
+#define SENSOR_SAMPLE_RATE_HZ 50      // 50 Hz sampling (20ms interval)
+#define SENSOR_SAMPLE_INTERVAL_MS (1000 / SENSOR_SAMPLE_RATE_HZ)
+
+// ===== I2C Configuration =====
+#define I2C_SDA_PIN 22                // ESP32 default SDA
+#define I2C_SCL_PIN 23                // ESP32 default SCL
+#define I2C_CLOCK_SPEED 100000        // 100kHz for stability
+
+// ===== Power Management =====
+// LiPo Battery Voltage Ranges (Feather ESP32 V2):
+//   - Fully charged: 4.2V
+//   - Nominal: 3.7V
+//   - Low battery: 3.3V
+//   - Critical: 3.0V
+//
+// Battery monitoring through voltage divider on A13
+#define BATTERY_MONITOR_PIN A13
+#define BATTERY_CHECK_INTERVAL_MS 5000  // Check every 5 seconds
+#define LOW_BATTERY_VOLTAGE 3.3         // Volts - warn user
+#define CRITICAL_BATTERY_VOLTAGE 3.0    // Volts - shutdown
+
+// ===== LED Configuration =====
+#define LED_PIN 13                      // Built-in LED for status
+#define LED_BLINK_DISCONNECTED 1000     // Slow blink when disconnected (ms)
+#define LED_BLINK_CONNECTED 100         // Fast blink when connected (ms)
+#define LED_BLINK_LOW_BATTERY 200       // Very fast blink on low battery (ms)
+
+// ===== Debug Configuration =====
+#define SERIAL_BAUD_RATE 115200
+#define DEBUG_SENSOR_ENABLED true       // Log sensor readings
+#define DEBUG_BLE_ENABLED true          // Log BLE events
+#define DEBUG_BATTERY_ENABLED true      // Log battery status
+
+// ===== Memory Management =====
+#define MAX_BLE_CONNECTIONS 1           // Only support one client at a time
+#define SENSOR_DATA_BUFFER_SIZE 64      // Bytes for sensor data packet
+
+#endif // CONFIG_H

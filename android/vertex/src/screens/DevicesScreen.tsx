@@ -254,7 +254,17 @@ const DevicesScreen: React.FC = () => {
     if (!showScanModal) return null;
 
     const deviceArray = Array.from(scannedDevices.values())
-      .sort((a, b) => b.rssi - a.rssi);
+      .sort((a, b) => {
+        // Prioritize Vertex devices
+        const aIsVertex = a.device.name?.toLowerCase().includes('vertex') ?? false;
+        const bIsVertex = b.device.name?.toLowerCase().includes('vertex') ?? false;
+
+        if (aIsVertex && !bIsVertex) return -1;
+        if (!aIsVertex && bIsVertex) return 1;
+
+        // Within same group, sort by RSSI
+        return b.rssi - a.rssi;
+      });
 
     return (
       <View style={styles.modal}>

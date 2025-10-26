@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- V logo centered in adaptive icon safe zone -->
+    <!-- Safe zone is 66dp diameter circle centered in 108x108 canvas -->
+    <!-- This translates to roughly 24dp margins on all sides -->
+    <group
+        android:translateX="24"
+        android:translateY="26"
+        android:scaleX="0.6"
+        android:scaleY="0.6">
+        <path
+            android:fillColor="#1a1a1a"
+            android:pathData="M 20,15 L 50,75 L 80,15 L 70,15 L 50,57 L 30,15 Z"/>
+    </group>
+</vector>
