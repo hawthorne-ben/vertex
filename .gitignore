@@ -71,3 +71,16 @@ env.local.dev.template
 # Debug and inspection files
 fit-inspection-output.txt
 *.txt
+
+# Firmware credentials - NEVER COMMIT
+firmware/.credentials.local
+firmware/**/.credentials.local
+firmware/**/credentials.h
+!firmware/**/credentials.h.template
+.credentials.*
+!.credentials.*.template
+
+# Backup files
+*.bak
+*.old
+*.tmp
