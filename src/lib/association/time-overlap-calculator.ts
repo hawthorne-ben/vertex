@@ -39,6 +39,41 @@ export class TimeOverlapCalculator {
       fitCoverage: fitCoverage
     }
   }
+
+  /**
+   * Calculate overlap using riding time instead of full FIT time
+   */
+  static calculateOverlapWithRidingTime(
+    imuTimeRange: TimeRange,
+    fitRidingTimeRange: TimeRange
+  ): AssociationOverlap | null {
+    const overlapStart = new Date(Math.max(
+      imuTimeRange.start.getTime(),
+      fitRidingTimeRange.start.getTime()
+    ))
+    
+    const overlapEnd = new Date(Math.min(
+      imuTimeRange.end.getTime(),
+      fitRidingTimeRange.end.getTime()
+    ))
+    
+    // Check if there's any overlap
+    if (overlapStart >= overlapEnd) {
+      return null
+    }
+    
+    const overlapDuration = overlapEnd.getTime() - overlapStart.getTime()
+    const imuCoverage = overlapDuration / imuTimeRange.duration
+    const fitRidingCoverage = overlapDuration / fitRidingTimeRange.duration
+    
+    return {
+      start: overlapStart,
+      end: overlapEnd,
+      duration: overlapDuration,
+      imuCoverage: imuCoverage,
+      fitCoverage: fitRidingCoverage
+    }
+  }
   
   /**
    * Extract time range from IMU data

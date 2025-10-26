@@ -1,0 +1,156 @@
+#include "web_server.h"
+#include "sensor_manager.h"
+#include <WebServer.h>
+#include <WiFi.h>
+#include <time.h>
+
+// Web server on port 80
+WebServer server(80);
+
+extern float getBatteryVoltage();
+extern bool isCharging();
+extern SensorData sensorData;
+
+void handleSensor() {
+  // Read sensor data on-demand
+  readSensorData();
+  
+  // Get latest sensor data
+  String json = "{";
+  json += "\"timestamp\":" + String(sensorData.timestamp) + ",";
+  json += "\"orientation\":{";
+  json += "\"qw\":" + String(sensorData.qw, 6) + ",";
+  json += "\"qx\":" + String(sensorData.qx, 6) + ",";
+  json += "\"qy\":" + String(sensorData.qy, 6) + ",";
+  json += "\"qz\":" + String(sensorData.qz, 6);
+  json += "},";
+  json += "\"euler\":{";
+  json += "\"roll\":" + String(sensorData.roll, 2) + ",";
+  json += "\"pitch\":" + String(sensorData.pitch, 2) + ",";
+  json += "\"yaw\":" + String(sensorData.yaw, 2);
+  json += "},";
+  json += "\"acceleration\":{";
+  json += "\"x\":" + String(sensorData.accel_x, 3) + ",";
+  json += "\"y\":" + String(sensorData.accel_y, 3) + ",";
+  json += "\"z\":" + String(sensorData.accel_z, 3);
+  json += "},";
+  json += "\"gyroscope\":{";
+  json += "\"x\":" + String(sensorData.gyro_x, 3) + ",";
+  json += "\"y\":" + String(sensorData.gyro_y, 3) + ",";
+  json += "\"z\":" + String(sensorData.gyro_z, 3);
+  json += "},";
+  json += "\"magnetometer\":{";
+  json += "\"x\":" + String(sensorData.mag_x, 3) + ",";
+  json += "\"y\":" + String(sensorData.mag_y, 3) + ",";
+  json += "\"z\":" + String(sensorData.mag_z, 3);
+  json += "}";
+  
+  // Add calibration status
+  uint8_t sys, gyro, accel, mag;
+  getCalibrationStatus(&sys, &gyro, &accel, &mag);
+  json += ",\"calibration\":{";
+  json += "\"system\":" + String(sys) + ",";
+  json += "\"gyro\":" + String(gyro) + ",";
+  json += "\"accel\":" + String(accel) + ",";
+  json += "\"mag\":" + String(mag);
+  json += "}";
+  
+  json += "}";
+  
+  server.send(200, "application/json", json);
+}
+
+void handleRoot() {
+  // Get calibration status
+  uint8_t sys, gyro, accel, mag;
+  getCalibrationStatus(&sys, &gyro, &accel, &mag);
+  
+  // Get time
+  struct tm timeinfo;
+  bool timeValid = getLocalTime(&timeinfo);
+  
+  // Get battery voltage
+  float voltage = getBatteryVoltage();
+  bool charging = isCharging();
+  
+  // Build HTML
+  String html = "<!DOCTYPE html><html><head><meta charset='UTF-8'>";
+  html += "<meta name='viewport' content='width=device-width, initial-scale=1'>";
+  html += "<title>BNO055 Logger Status</title>";
+  html += "<style>";
+  html += "body{font-family:Arial;margin:20px;background:#1a1a1a;color:#fff;}";
+  html += "h1{color:#4CAF50;}";
+  html += ".card{background:#2a2a2a;padding:15px;margin:10px 0;border-radius:5px;}";
+  html += ".cal{display:inline-block;margin:5px 10px;padding:5px 10px;background:#333;border-radius:3px;}";
+  html += ".cal-3{color:#0f0;}";
+  html += ".cal-2{color:#ff0;}";
+  html += ".cal-1{color:#f80;}";
+  html += ".cal-0{color:#f00;}";
+  html += "table{width:100%;border-collapse:collapse;}";
+  html += "td{padding:8px;border:1px solid #444;}";
+  html += ".status-badge{padding:5px 10px;border-radius:3px;display:inline-block;}";
+  html += ".status-ok{background:#0f0;color:#000;}";
+  html += ".status-warn{background:#ff0;color:#000;}";
+  html += ".status-error{background:#f00;}";
+  html += "</style>";
+  html += "<meta http-equiv='refresh' content='10'>";
+  html += "</head><body>";
+  html += "<h1>🎯 BNO055 Logger Status</h1>";
+  
+  // System Status
+  html += "<div class='card'><h3>System Status</h3>";
+  html += "<table>";
+  html += "<tr><td>Mode</td><td>" + String(charging ? "🔌 Charging" : "🔋 Battery") + "</td></tr>";
+  html += "<tr><td>Battery Voltage</td><td>" + String(voltage, 2) + "V</td></tr>";
+  html += "<tr><td>WiFi</td><td>" + String(WiFi.status() == WL_CONNECTED ? "✅ Connected" : "❌ Disconnected") + "</td></tr>";
+  if (WiFi.status() == WL_CONNECTED) {
+    html += "<tr><td>IP Address</td><td>" + WiFi.localIP().toString() + "</td></tr>";
+  }
+  html += "</table></div>";
+  
+  // Current Time
+  html += "<div class='card'><h3>🕐 Current Time</h3>";
+  if (timeValid) {
+    char timeStr[20];
+    strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", &timeinfo);
+    html += "<p style='font-size:18px;'>" + String(timeStr) + "</p>";
+  } else {
+    html += "<p class='status-badge status-error'>Not synchronized</p>";
+  }
+  html += "</div>";
+  
+  // Calibration Status
+  html += "<div class='card'><h3>Calibration Status</h3>";
+  html += "<span class='cal cal-" + String(sys) + "'>System: " + String(sys) + "</span>";
+  html += "<span class='cal cal-" + String(gyro) + "'>Gyro: " + String(gyro) + "</span>";
+  html += "<span class='cal cal-" + String(accel) + "'>Accel: " + String(accel) + "</span>";
+  html += "<span class='cal cal-" + String(mag) + "'>Mag: " + String(mag) + "</span>";
+  html += "</div>";
+  
+  // Logged Files (Stub)
+  html += "<div class='card'><h3>📁 Logged Files</h3>";
+  html += "<p><em>SD card module not yet available</em></p>";
+  html += "<p>Files will be listed here once SD card is connected</p>";
+  html += "</div>";
+  
+  // Sensor Data (Optional - can be shown for debugging)
+  html += "<div class='card'><h3>Sensor Data</h3>";
+  html += "<p><em>Live sensor data available for calibration monitoring</em></p>";
+  html += "<p><a href='/sensor' style='color:#4CAF50;'>View Sensor Data →</a></p>";
+  html += "</div>";
+  
+  html += "</body></html>";
+  
+  server.send(200, "text/html", html);
+}
+
+void startWebServer() {
+  server.on("/", handleRoot);
+  server.on("/sensor", handleSensor);
+  server.begin();
+  Serial.println("[WEB] Server started on http://" + WiFi.localIP().toString());
+}
+
+void handleWebRequests() {
+  server.handleClient();
+}

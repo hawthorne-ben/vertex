@@ -42,6 +42,14 @@ interface RideMatch {
     imuCoverage: number
     fitCoverage: number
   }
+  ridingTimeAnalysis?: {
+    ridingTimeSeconds: number
+    stationaryTimeSeconds: number
+    ridingPercentage: number
+    stationaryPercentage: number
+    ridingDataPointsCount: number
+    stationaryPeriodsCount: number
+  }
   validation: {
     valid: boolean
     errors: string[]
@@ -391,6 +399,37 @@ export default function RideBuilder() {
                       </div>
                     </div>
                   </div>
+
+                  {/* Riding Time Analysis */}
+                  {ridePreview.ridingTimeAnalysis && (
+                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                      <div className="font-medium text-blue-800 mb-3">Riding Time Analysis</div>
+                      <div className="grid md:grid-cols-2 gap-4">
+                        <div>
+                          <div className="text-sm text-blue-600 mb-1">Riding Time</div>
+                          <div className="text-lg font-semibold text-blue-800">
+                            {formatDuration(ridePreview.ridingTimeAnalysis.ridingTimeSeconds / 60)}
+                          </div>
+                          <div className="text-sm text-blue-600">
+                            {ridePreview.ridingTimeAnalysis.ridingPercentage.toFixed(1)}% of total time
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-sm text-blue-600 mb-1">Stationary Time</div>
+                          <div className="text-lg font-semibold text-blue-800">
+                            {formatDuration(ridePreview.ridingTimeAnalysis.stationaryTimeSeconds / 60)}
+                          </div>
+                          <div className="text-sm text-blue-600">
+                            {ridePreview.ridingTimeAnalysis.stationaryPercentage.toFixed(1)}% of total time
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-3 text-sm text-blue-600">
+                        <div>Riding data points: {ridePreview.ridingTimeAnalysis.ridingDataPointsCount.toLocaleString()}</div>
+                        <div>Stationary periods: {ridePreview.ridingTimeAnalysis.stationaryPeriodsCount}</div>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Validation Warnings */}
                   {ridePreview.validation.warnings.length > 0 && (

@@ -1,0 +1,32 @@
+#include "power_manager.h"
+#include "config.h"
+#include <esp_adc_cal.h>
+
+bool isCharging() {
+  // Read current voltage
+  float voltage = getBatteryVoltage();
+  
+  // Simple threshold-based detection
+  // If voltage is at or above charge threshold, we're charging
+  bool charging = voltage >= CHARGE_THRESHOLD_VOLTAGE;
+  
+  return charging;
+}
+
+float getBatteryVoltage() {
+  // Initialize ADC before first use (ESP32 requirement)
+  static bool adcInitialized = false;
+  if (!adcInitialized) {
+    analogReadResolution(12);  // Set ADC to 12-bit resolution (0-4095)
+    adcInitialized = true;
+  }
+  
+  // Read analog pin
+  int raw = analogRead(BATTERY_MONITOR_PIN);
+  
+  // Feather ESP32 V2: 3.3V reference with 2:1 voltage divider
+  // So actual voltage = (raw / 4095) * 3.3 * 2
+  float voltage = (raw / 4095.0) * 3.3 * 2;
+  
+  return voltage;
+}

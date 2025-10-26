@@ -93,51 +93,45 @@ export async function POST(request: NextRequest) {
     // Test each potential IMU file
     for (const imuFile of potentialImuFiles) {
       try {
-        // Get IMU data points for time range calculation
-        // Get total count first
-        const { count: totalCount } = await supabase
-          .from('imu_samples')
-          .select('*', { count: 'exact', head: true })
-          .eq('imu_file_id', imuFile.id)
+        // For auto-creation, use metadata from imu_data_files table for initial screening
+        if (!imuFile.start_time || !imuFile.end_time) {
+          continue // Skip files without complete metadata
+        }
 
-        // Fetch all IMU data points using pagination to handle Supabase 1k limit
-        let imuDataPoints: any[] = []
-        const PAGE_SIZE = 1000
+        // Calculate time range and overlap using metadata
+        const imuTimeRange = {
+          start: new Date(imuFile.start_time),
+          end: new Date(imuFile.end_time),
+          duration: new Date(imuFile.end_time).getTime() - new Date(imuFile.start_time).getTime()
+        }
+        // Fetch FIT data points for riding time analysis
+        const { data: fitDataPoints, error: fitDataPointsError } = await supabase
+          .from('fit_data_points')
+          .select('timestamp, speed_ms, latitude, longitude, altitude')
+          .eq('fit_file_id', fitFile.id)
+          .order('timestamp')
+
+        if (fitDataPointsError) {
+          console.error('Failed to fetch FIT data points:', fitDataPointsError)
+          continue // Skip this FIT file and try the next one
+        }
+
+        // Analyze riding time from FIT data points
+        const { FitRidingTimeFilter } = await import('@/lib/association/fit-riding-time-filter')
+        const ridingTimeAnalysis = FitRidingTimeFilter.filterRidingTime(fitDataPoints || [])
         
-        if (totalCount) {
-          const numPages = Math.ceil(totalCount / PAGE_SIZE)
-          
-          for (let page = 0; page < numPages; page++) {
-            const from = page * PAGE_SIZE
-            const to = from + PAGE_SIZE - 1
-            
-            const { data, error } = await supabase
-              .from('imu_samples')
-              .select('timestamp')
-              .eq('imu_file_id', imuFile.id)
-              .order('timestamp', { ascending: true })
-              .range(from, to)
-            
-            if (error) {
-              console.error('IMU data points query error:', error)
-              continue // Skip this IMU file and try the next one
-            }
-            
-            if (data) imuDataPoints.push(...data)
-          }
+        // Create riding time range for overlap calculation
+        const fitRidingTimeRange = {
+          start: ridingTimeAnalysis.ridingDataPoints.length > 0 
+            ? new Date(ridingTimeAnalysis.ridingDataPoints[0].timestamp)
+            : fitTimeRange.start,
+          end: ridingTimeAnalysis.ridingDataPoints.length > 0 
+            ? new Date(ridingTimeAnalysis.ridingDataPoints[ridingTimeAnalysis.ridingDataPoints.length - 1].timestamp)
+            : fitTimeRange.end,
+          duration: ridingTimeAnalysis.ridingTimeSeconds * 1000 // Convert to milliseconds
         }
 
-        if (!imuDataPoints || imuDataPoints.length === 0) {
-          continue
-        }
-
-        // Calculate time range and overlap
-        // Convert timestamp to Date objects for the time range calculator
-        const imuDataWithTimestamps = imuDataPoints.map(point => ({
-          timestamp: new Date(point.timestamp)
-        }))
-        const imuTimeRange = TimeOverlapCalculator.extractImuTimeRange(imuDataWithTimestamps)
-        const overlap = TimeOverlapCalculator.calculateOverlap(imuTimeRange, fitTimeRange)
+        const overlap = TimeOverlapCalculator.calculateOverlapWithRidingTime(imuTimeRange, fitRidingTimeRange)
 
         if (!overlap) {
           continue

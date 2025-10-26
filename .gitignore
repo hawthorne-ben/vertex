@@ -50,9 +50,14 @@ next-env.d.ts
 # Project organization folders - exclude from git
 scripts/
 sql/
+docs/SAVE_STATE.md
 
 # Database credentials and connection scripts - NEVER COMMIT
 .db-credentials.local
 
 # Environment templates
 env.local.dev.template
+
+# Debug and inspection files
+fit-inspection-output.txt
+*.txt

@@ -75,6 +75,11 @@ Which approach would you like me to implement?"
 - **For production**: Only commit when features are complete and tested
 - **Benefits**: Clean git history, faster iteration, easier rollbacks
 
+### Logging for local development
+- **For debugging**: Include verbose logs during development
+- **For production**: Remove all debug logs before committing
+- **Benefits**: Easier development, better observability, clean prod deployment
+
 ### Local Development Priority
 1. **Always suggest local dev first** for debugging
 2. **Start local servers**: `npm run dev` + `npx inngest-cli@latest dev`

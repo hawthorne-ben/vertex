@@ -483,8 +483,28 @@ export const parseFitFile = inngest.createFunction(
             gps_points_count: gpsPointsCount,
             has_gps_data: hasGpsData,
           },
-          dataPoints: dataPoints.slice(0, 10000) // Limit to 10k points for now
+          dataPoints: dataPoints.slice(0, 10000), // Limit to 10k points for now
+          ridingTimeAnalysis: null // Will be calculated in the next step
         }
+      })
+
+      // Step 3.5: Analyze riding time from data points
+      const ridingTimeAnalysis = await step.run('analyze-riding-time', async () => {
+        console.log(`🚴‍♂️ Analyzing riding time from ${extractedData.dataPoints.length} data points`)
+        
+        // Import the riding time filter
+        const { FitRidingTimeFilter } = await import('@/lib/association/fit-riding-time-filter')
+        
+        const analysis = FitRidingTimeFilter.filterRidingTime(extractedData.dataPoints)
+        
+        console.log(`📊 Riding analysis results:`)
+        console.log(`   - Riding time: ${(analysis.ridingTimeSeconds / 60).toFixed(1)} minutes`)
+        console.log(`   - Stationary time: ${(analysis.stationaryTimeSeconds / 60).toFixed(1)} minutes`)
+        console.log(`   - Riding data points: ${analysis.ridingDataPoints.length}`)
+        console.log(`   - Stationary periods: ${analysis.stationaryPeriods.length}`)
+        console.log(`   - Riding percentage: ${analysis.ridingPercentage.toFixed(1)}%`)
+        
+        return analysis
       })
 
       // Step 4: Update FIT file metadata
@@ -496,7 +516,11 @@ export const parseFitFile = inngest.createFunction(
           .update({
             status: 'ready',
             parsed_at: new Date().toISOString(),
-            ...extractedData.metadata
+            ...extractedData.metadata,
+            riding_time_seconds: Math.round(ridingTimeAnalysis.ridingTimeSeconds),
+            stationary_time_seconds: Math.round(ridingTimeAnalysis.stationaryTimeSeconds),
+            riding_data_points_count: ridingTimeAnalysis.ridingDataPoints.length,
+            stationary_periods_count: ridingTimeAnalysis.stationaryPeriods.length
           })
           .eq('id', fileId)
 

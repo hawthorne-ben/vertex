@@ -58,45 +58,10 @@ export async function POST(request: NextRequest) {
       }, { status: 404 })
     }
 
-    // Get total count first
-    const { count: totalCount } = await supabase
-      .from('imu_samples')
-      .select('*', { count: 'exact', head: true })
-      .eq('imu_file_id', imuFileId)
-
-    // Fetch all IMU data points using pagination to handle Supabase 1k limit
-    let imuDataPoints: any[] = []
-    const PAGE_SIZE = 1000
-    
-    if (totalCount) {
-      const numPages = Math.ceil(totalCount / PAGE_SIZE)
-      
-      for (let page = 0; page < numPages; page++) {
-        const from = page * PAGE_SIZE
-        const to = from + PAGE_SIZE - 1
-        
-        const { data, error } = await supabase
-          .from('imu_samples')
-          .select('timestamp')
-          .eq('imu_file_id', imuFileId)
-          .order('timestamp', { ascending: true })
-          .range(from, to)
-        
-        if (error) {
-          console.error('IMU data points query error:', error)
-          return NextResponse.json({ 
-            error: 'Failed to query IMU data points',
-            details: error.message 
-          }, { status: 500 })
-        }
-        
-        if (data) imuDataPoints.push(...data)
-      }
-    }
-
-    if (!imuDataPoints || imuDataPoints.length === 0) {
+    // For preview, use metadata from imu_data_files table instead of fetching all samples
+    if (!imuFile.start_time || !imuFile.end_time) {
       return NextResponse.json({ 
-        error: 'No IMU data points found for this file',
+        error: 'IMU file metadata incomplete',
         details: {
           imuFileId,
           imuFilename: imuFile.filename,
@@ -131,19 +96,14 @@ export async function POST(request: NextRequest) {
       }, { status: 404 })
     }
 
-    // Extract time ranges
-    // Convert timestamp to Date objects for the time range calculator
-    const imuDataWithTimestamps = imuDataPoints.map(point => ({
-      timestamp: new Date(point.timestamp)
-    }))
+    // Extract time ranges using metadata instead of raw samples
+    const imuTimeRange = {
+      start: new Date(imuFile.start_time),
+      end: new Date(imuFile.end_time),
+      duration: new Date(imuFile.end_time).getTime() - new Date(imuFile.start_time).getTime()
+    }
     
-    console.log('🔍 Debug: IMU data points count:', imuDataPoints.length)
-    console.log('🔍 Debug: First IMU timestamp:', imuDataPoints[0]?.timestamp)
-    console.log('🔍 Debug: Last IMU timestamp:', imuDataPoints[imuDataPoints.length - 1]?.timestamp)
-    
-    const imuTimeRange = TimeOverlapCalculator.extractImuTimeRange(imuDataWithTimestamps)
-    
-    console.log('🔍 Debug: IMU time range:', {
+    console.log('🔍 Debug: IMU time range from metadata:', {
       start: imuTimeRange.start.toISOString(),
       end: imuTimeRange.end.toISOString(),
       duration: imuTimeRange.duration / (1000 * 60) // minutes
@@ -162,8 +122,43 @@ export async function POST(request: NextRequest) {
       duration: fitTimeRange.duration / (1000 * 60) // minutes
     })
 
-    // Calculate overlap
-    const overlap = TimeOverlapCalculator.calculateOverlap(imuTimeRange, fitTimeRange)
+    // Fetch FIT data points for riding time analysis
+    const { data: fitDataPoints, error: fitDataPointsError } = await supabase
+      .from('fit_data_points')
+      .select('timestamp, speed_ms, latitude, longitude, altitude')
+      .eq('fit_file_id', fitFile.id)
+      .order('timestamp')
+
+    if (fitDataPointsError) {
+      console.error('Failed to fetch FIT data points:', fitDataPointsError)
+      return NextResponse.json({ error: 'Failed to fetch FIT data points' }, { status: 500 })
+    }
+
+    // Analyze riding time from FIT data points
+    const { FitRidingTimeFilter } = await import('@/lib/association/fit-riding-time-filter')
+    const ridingTimeAnalysis = FitRidingTimeFilter.filterRidingTime(fitDataPoints || [])
+    
+    console.log('🔍 Debug: Riding time analysis:', {
+      ridingTimeMinutes: ridingTimeAnalysis.ridingTimeSeconds / 60,
+      stationaryTimeMinutes: ridingTimeAnalysis.stationaryTimeSeconds / 60,
+      ridingDataPoints: ridingTimeAnalysis.ridingDataPoints.length,
+      stationaryPeriods: ridingTimeAnalysis.stationaryPeriods.length,
+      ridingPercentage: ridingTimeAnalysis.ridingPercentage.toFixed(1) + '%'
+    })
+    
+    // Create riding time range for overlap calculation
+    const fitRidingTimeRange = {
+      start: ridingTimeAnalysis.ridingDataPoints.length > 0 
+        ? new Date(ridingTimeAnalysis.ridingDataPoints[0].timestamp)
+        : fitTimeRange.start,
+      end: ridingTimeAnalysis.ridingDataPoints.length > 0 
+        ? new Date(ridingTimeAnalysis.ridingDataPoints[ridingTimeAnalysis.ridingDataPoints.length - 1].timestamp)
+        : fitTimeRange.end,
+      duration: ridingTimeAnalysis.ridingTimeSeconds * 1000 // Convert to milliseconds
+    }
+
+    // Calculate overlap using riding time
+    const overlap = TimeOverlapCalculator.calculateOverlapWithRidingTime(imuTimeRange, fitRidingTimeRange)
     
     console.log('🔍 Debug: Overlap result:', overlap ? {
       start: overlap.start.toISOString(),
@@ -218,13 +213,21 @@ export async function POST(request: NextRequest) {
         confidence,
         level: ConfidenceScorer.getConfidenceLevel(confidence),
         color: ConfidenceScorer.getConfidenceColor(confidence),
-        overlap: {
-          start: overlap.start.toISOString(),
-          end: overlap.end.toISOString(),
-          durationMinutes: overlap.duration / (1000 * 60),
-          imuCoverage: overlap.imuCoverage,
-          fitCoverage: overlap.fitCoverage
-        },
+      overlap: {
+        start: overlap.start.toISOString(),
+        end: overlap.end.toISOString(),
+        durationMinutes: overlap.duration / (1000 * 60),
+        imuCoverage: overlap.imuCoverage,
+        fitCoverage: overlap.fitCoverage
+      },
+      ridingTimeAnalysis: {
+        ridingTimeSeconds: ridingTimeAnalysis.ridingTimeSeconds,
+        stationaryTimeSeconds: ridingTimeAnalysis.stationaryTimeSeconds,
+        ridingPercentage: ridingTimeAnalysis.ridingPercentage,
+        stationaryPercentage: ridingTimeAnalysis.stationaryPercentage,
+        ridingDataPointsCount: ridingTimeAnalysis.ridingDataPoints.length,
+        stationaryPeriodsCount: ridingTimeAnalysis.stationaryPeriods.length
+      },
         validation,
         breakdown,
         statistics,
