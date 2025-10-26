@@ -129,22 +129,83 @@ void connectWiFi() {
   Serial.print("[WiFi] Connecting to: ");
   Serial.println(WIFI_SSID);
   
+  // Set WiFi mode and configure
   WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);
+  WiFi.setTxPower(WIFI_POWER_19dBm); // Max power
+  
+  // First, scan for networks to debug
+  Serial.println("[WiFi] Scanning for networks...");
+  int n = WiFi.scanNetworks();
+  if (n == 0) {
+    Serial.println("[DEBUG] No networks found");
+  } else {
+    Serial.printf("[DEBUG] Found %d networks:\n", n);
+    bool found = false;
+    for (int i = 0; i < n; i++) {
+      Serial.printf("  - %s (RSSI: %d, Ch: %d)\n", WiFi.SSID(i).c_str(), WiFi.RSSI(i), WiFi.channel(i));
+      if (WiFi.SSID(i) == WIFI_SSID) {
+        found = true;
+        Serial.printf("[DEBUG] Target network found! RSSI: %d, Channel: %d\n", WiFi.RSSI(i), WiFi.channel(i));
+      }
+    }
+    if (!found) {
+      Serial.println("[ERROR] Target network not found in scan!");
+    }
+  }
+  
+  // Attempt connection with detailed logging
+  Serial.println("[WiFi] Attempting connection...");
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   
+  unsigned long startTime = millis();
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 20) {
     delay(500);
     Serial.print(".");
+    
+    // Print status codes periodically
+    if (attempts % 10 == 9) {
+      wl_status_t status = WiFi.status();
+      Serial.printf("\n[DEBUG] Status: %d", status);
+      switch(status) {
+        case WL_IDLE_STATUS: Serial.println(" (IDLE)"); break;
+        case WL_NO_SSID_AVAIL: Serial.println(" (NO SSID)"); break;
+        case WL_CONNECT_FAILED: Serial.println(" (CONNECT FAILED)"); break;
+        case WL_CONNECTION_LOST: Serial.println(" (CONNECTION LOST)"); break;
+        case WL_DISCONNECTED: Serial.println(" (DISCONNECTED)"); break;
+        default: Serial.println(); break;
+      }
+    }
     attempts++;
   }
   Serial.println();
   
+  unsigned long connectTime = millis() - startTime;
+  
   if (WiFi.status() == WL_CONNECTED) {
     Serial.print("[OK] WiFi connected! IP: ");
-    Serial.println(WiFi.localIP());
+    Serial.print(WiFi.localIP());
+    Serial.print(" (RSSI: ");
+    Serial.print(WiFi.RSSI());
+    Serial.print(" dBm, Time: ");
+    Serial.print(connectTime);
+    Serial.println(" ms)");
   } else {
-    Serial.println("[ERROR] WiFi failed!");
+    Serial.print("[ERROR] WiFi failed! Status: ");
+    wl_status_t status = WiFi.status();
+    Serial.print(status);
+    Serial.print(" (");
+    switch(status) {
+      case WL_IDLE_STATUS: Serial.print("IDLE"); break;
+      case WL_NO_SSID_AVAIL: Serial.print("NO_SSID_AVAIL"); break;
+      case WL_CONNECT_FAILED: Serial.print("CONNECT_FAILED"); break;
+      case WL_CONNECTION_LOST: Serial.print("CONNECTION_LOST"); break;
+      case WL_DISCONNECTED: Serial.print("DISCONNECTED"); break;
+      default: Serial.print("UNKNOWN"); break;
+    }
+    Serial.println(")");
+    Serial.println("[DEBUG] Check: SSID, password, signal strength, router settings");
   }
 }
 
