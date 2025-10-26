@@ -71,15 +71,17 @@ const styles = StyleSheet.create({
     fontWeight: theme.typography.fontWeight.medium,
     color: theme.colors.textPrimary,
     flex: 1,
-    fontFamily: theme.typography.mono,
+    fontFamily: theme.typography.serif,
   },
   fileDate: {
     fontSize: theme.typography.fontSize.xs,
     color: theme.colors.textSecondary,
+    fontFamily: theme.typography.serif,
   },
   fileSize: {
     fontSize: theme.typography.fontSize.xs,
     color: theme.colors.textSecondary,
+    fontFamily: theme.typography.serif,
   },
 });
 

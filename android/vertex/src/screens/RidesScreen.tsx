@@ -73,10 +73,12 @@ const styles = StyleSheet.create({
     fontSize: theme.typography.fontSize.md,
     fontWeight: theme.typography.fontWeight.medium,
     color: theme.colors.textPrimary,
+    fontFamily: theme.typography.serif,
   },
   rideDate: {
     fontSize: theme.typography.fontSize.sm,
     color: theme.colors.textSecondary,
+    fontFamily: theme.typography.serif,
   },
   rideDetails: {
     flexDirection: 'row',
@@ -85,6 +87,7 @@ const styles = StyleSheet.create({
   rideDetail: {
     fontSize: theme.typography.fontSize.sm,
     color: theme.colors.textSecondary,
+    fontFamily: theme.typography.serif,
   },
 });
 

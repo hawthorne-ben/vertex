@@ -1,17 +1,18 @@
 /**
  * Auth Context
- * 
+ *
  * Manages authentication state and provides auth utilities
  */
 
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { User } from '@supabase/supabase-js';
 import { createClient } from '../lib/supabase';
 
 interface AuthContextType {
-  user: any | null;
+  user: User | null;
   loading: boolean;
   signOut: () => Promise<void>;
-  setUser: (user: any | null) => void;
+  setUser: (user: User | null) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -29,7 +30,7 @@ interface AuthProviderProps {
 }
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  const [user, setUser] = useState<any | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {

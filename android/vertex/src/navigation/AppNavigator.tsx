@@ -10,11 +10,14 @@ import { useAuth } from '../contexts/AuthContext';
 import LandingScreen from '../screens/LandingScreen';
 import LoginScreen from '../screens/LoginScreen';
 import TabNavigator from './TabNavigator';
+import LoadingScreen from '../components/LoadingScreen';
+import DeviceDetailScreen from '../screens/DeviceDetailScreen';
 
 export type RootStackParamList = {
   Landing: undefined;
   Login: undefined;
   Tabs: undefined;
+  DeviceDetail: { deviceId: string; deviceName: string };
 };
 
 const AuthStack = createNativeStackNavigator<RootStackParamList>();
@@ -23,9 +26,9 @@ const AppStack = createNativeStackNavigator<RootStackParamList>();
 const AppNavigator: React.FC = () => {
   const { user, loading } = useAuth();
 
-  // Show nothing while checking auth
+  // Show loading screen while checking auth
   if (loading) {
-    return null;
+    return <LoadingScreen />;
   }
 
   // Conditionally render different navigators
@@ -34,6 +37,7 @@ const AppNavigator: React.FC = () => {
       <AppStack.Navigator
         screenOptions={{ headerShown: false }}>
         <AppStack.Screen name="Tabs" component={TabNavigator} />
+        <AppStack.Screen name="DeviceDetail" component={DeviceDetailScreen} />
       </AppStack.Navigator>
     );
   }

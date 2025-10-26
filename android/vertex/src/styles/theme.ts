@@ -35,6 +35,10 @@ export const theme = {
     successBg: 'hsl(142, 76%, 95%)',
     error: 'hsl(0, 84%, 60%)',
     errorBg: 'hsl(0, 84%, 95%)',
+    warning: 'hsl(38, 92%, 50%)',
+    warningBg: 'hsl(38, 92%, 95%)',
+    info: 'hsl(199, 89%, 36%)',
+    infoBg: 'hsl(199, 89%, 95%)',
   },
   
   spacing: {

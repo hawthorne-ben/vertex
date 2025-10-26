@@ -123,11 +123,13 @@ const styles = StyleSheet.create({
     color: theme.colors.textSecondary,
     marginBottom: 4,
     fontWeight: theme.typography.fontWeight.medium,
+    fontFamily: theme.typography.serif,
   },
   statValue: {
     fontSize: theme.typography.fontSize.xl,
     fontWeight: theme.typography.fontWeight.semibold,
     color: theme.colors.textPrimary,
+    fontFamily: theme.typography.serif,
   },
   section: {
     marginBottom: theme.spacing.lg,
@@ -149,6 +151,7 @@ const styles = StyleSheet.create({
     fontSize: theme.typography.fontSize.sm,
     color: theme.colors.textPrimary,
     marginBottom: theme.spacing.sm,
+    fontFamily: theme.typography.serif,
   },
   quickStats: {
     backgroundColor: theme.colors.muted,
@@ -165,11 +168,13 @@ const styles = StyleSheet.create({
   quickStatLabel: {
     fontSize: theme.typography.fontSize.sm,
     color: theme.colors.textSecondary,
+    fontFamily: theme.typography.serif,
   },
   quickStatValue: {
     fontSize: theme.typography.fontSize.sm,
     fontWeight: theme.typography.fontWeight.semibold,
     color: theme.colors.textPrimary,
+    fontFamily: theme.typography.serif,
   },
 });
 
