@@ -8,8 +8,8 @@
 #define CONFIG_H
 
 // ===== WiFi Configuration =====
-#define WIFI_SSID "YOUR_WIFI_SSID"
-#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+#define WIFI_SSID "The Greenhouse 2.4"
+#define WIFI_PASSWORD "BeLeafInYourself"
 
 // WiFi connection settings
 #define WIFI_MAX_ATTEMPTS 3
@@ -34,11 +34,18 @@
 #define LED_BRIGHTNESS 20 // 0-255 (20 = low power)
 
 // ===== Power Management =====
-// USB charging detection: >3.70V = charging (observed 3.78-3.79V peak when charging)
-// Battery mode: 3.0-3.70V range (LiPo battery, 3.7V nominal)
-// Detection based on voltage trend (rising/falling) for immediate response
-#define CHARGE_THRESHOLD_VOLTAGE 4.0 // Volts (was 3.70V, reverting to test)
-#define BATTERY_MONITOR_PIN A13 // Feather ESP32 V2 battery monitor
+// LiPo Battery Voltage Ranges:
+//   - Fully charged: 4.2V
+//   - Nominal: 3.7V
+//   - Low battery (shutdown): 3.3V
+//   - Critical (damage risk): 3.0V
+//
+// USB charging detection: >3.9V indicates USB/charger connected
+// Battery mode: <3.9V indicates running on battery
+#define CHARGE_THRESHOLD_VOLTAGE 3.9  // Volts - distinguish USB vs battery
+#define LOW_BATTERY_VOLTAGE 3.3        // Volts - trigger low battery warning
+#define CRITICAL_BATTERY_VOLTAGE 3.0   // Volts - shutdown to protect battery
+#define BATTERY_MONITOR_PIN A13        // Feather ESP32 V2 battery monitor
 
 // ===== Timing Configuration =====
 #define CALIBRATION_CHECK_INTERVAL 5000 // 5 seconds (charging mode)

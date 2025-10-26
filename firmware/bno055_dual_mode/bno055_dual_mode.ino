@@ -31,6 +31,20 @@ enum OperatingMode {
 };
 OperatingMode currentMode;
 
+// ===== BNO055 LED Control =====
+// The BNO055 has an internal LED that can be controlled programmatically
+// This avoids the I2C conflicts caused by the NeoPixel on GPIO 2
+
+// LED register address (these may need adjustment based on your specific BNO055 module)
+#define BNO055_REG_PAGE_ID 0x07
+#define BNO055_REG_SYS_TRIGGER 0x3F
+#define BNO055_LED_CONTROL_REG 0x4B
+
+// LED status tracking
+bool ledEnabled = false;
+unsigned long lastLedToggle = 0;
+int ledBlinkInterval = 0;  // 0 = off, >0 = blink interval in ms
+
 // Sampling rate control
 unsigned long lastSampleTime = 0;
 const unsigned long SAMPLE_INTERVAL_MS = 100;  // 10 Hz
@@ -97,6 +111,11 @@ void setup() {
   
   startWebServer();
   
+  // Initialize BNO055 LED
+  Serial.print("[SETUP] Initializing BNO055 LED...");
+  setBNO055LED(true);  // Turn on LED initially
+  Serial.println(" OK");
+  
   Serial.println("\n========================================");
   Serial.println("Ready!");
   if (WiFi.status() == WL_CONNECTED) {
@@ -122,6 +141,27 @@ void loop() {
   if (now - lastModeCheck > 5000) {
     checkModeTransition();
     lastModeCheck = now;
+  }
+  
+  // Update BNO055 LED (check every 100ms for smooth blinking)
+  static unsigned long lastLEDCheck = 0;
+  if (now - lastLEDCheck > 100) {
+    updateBNO055LED();
+    lastLEDCheck = now;
+  }
+  
+  // Update LED status indicator (check every 2 seconds)
+  static unsigned long lastStatusLEDCheck = 0;
+  if (now - lastStatusLEDCheck > 2000) {
+    updateBNO055LEDStatus();
+    lastStatusLEDCheck = now;
+  }
+  
+  // Check battery level and handle low battery
+  static unsigned long lastBatteryCheck = 0;
+  if (now - lastBatteryCheck > 5000) {
+    checkBatteryLevel();
+    lastBatteryCheck = now;
   }
 }
 
@@ -333,4 +373,148 @@ float readBatteryVoltage() {
   analogReadResolution(12);
   int raw = analogRead(BATTERY_MONITOR_PIN);
   return (raw / 4095.0) * 3.3 * 2;
+}
+
+// ===== BNO055 LED Control Functions =====
+
+void setBNO055LED(bool enable) {
+  // Control the BNO055 internal LED via I2C
+  // Note: LED register address may vary by manufacturer
+  // This implementation writes directly to I2C register
+  
+  Wire.beginTransmission(0x28);  // BNO055 I2C address
+  Wire.write(BNO055_LED_CONTROL_REG);
+  Wire.write(enable ? 0x01 : 0x00);
+  uint8_t error = Wire.endTransmission();
+  
+  if (error == 0) {
+    ledEnabled = enable;
+    ledBlinkInterval = 0; // Disable blinking
+    Serial.printf("[LED] BNO055 LED %s\n", enable ? "ON" : "OFF");
+  } else {
+    Serial.printf("[LED] Failed to control LED (error: %d)\n", error);
+  }
+}
+
+void setBNO055LEDBlink(int intervalMs) {
+  // Set LED to blinking mode with specified interval
+  // This will be handled in loop()
+  ledBlinkInterval = intervalMs;
+  
+  // Start with LED on
+  if (intervalMs > 0) {
+    setBNO055LED(true);
+    lastLedToggle = millis();
+  } else {
+    setBNO055LED(false);
+  }
+}
+
+void updateBNO055LED() {
+  if (ledBlinkInterval > 0) {
+    unsigned long now = millis();
+    unsigned long timeInCycle = (now - lastLedToggle) % (ledBlinkInterval * 2);
+    
+    if (timeInCycle < ledBlinkInterval) {
+      // LED should be ON
+      if (!ledEnabled) {
+        setBNO055LED(true);
+      }
+    } else {
+      // LED should be OFF
+      if (ledEnabled) {
+        setBNO055LED(false);
+      }
+    }
+  }
+}
+
+void updateBNO055LEDStatus() {
+  // Update LED based on system status
+  if (!bno.begin()) {
+    // Sensor error - fast red blink
+    setBNO055LEDBlink(200);
+    return;
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    uint8_t sys, gyro, accel, mag;
+    bno.getCalibration(&sys, &gyro, &accel, &mag);
+    
+    if (sys == 3) {
+      // Fully calibrated - solid green
+      setBNO055LEDBlink(0);
+      setBNO055LED(true);
+    } else if (sys >= 1) {
+      // Calibrating - slow yellow blink
+      setBNO055LEDBlink(1000);
+    } else {
+      // Not calibrated - fast yellow blink
+      setBNO055LEDBlink(500);
+    }
+  } else {
+    // Not connected - slow red blink
+    setBNO055LEDBlink(1000);
+  }
+}
+
+// ===== Public LED Control API =====
+// You can call these functions from your code to control the LED programmatically
+
+void ledOn() {
+  // Turn LED on permanently
+  setBNO055LED(true);
+}
+
+void ledOff() {
+  // Turn LED off permanently
+  setBNO055LED(false);
+}
+
+void ledBlink(int intervalMs) {
+  // Make LED blink at specified interval (in milliseconds)
+  // Example: ledBlink(500) blinks once per second
+  setBNO055LEDBlink(intervalMs);
+}
+
+void ledFastBlink() {
+  // Fast blink (200ms interval)
+  setBNO055LEDBlink(200);
+}
+
+void ledSlowBlink() {
+  // Slow blink (1 second interval)
+  setBNO055LEDBlink(1000);
+}
+
+// ===== Battery Monitoring =====
+
+void checkBatteryLevel() {
+  float voltage = readBatteryVoltage();
+  
+  // Only check battery level when NOT charging
+  if (voltage < CHARGE_THRESHOLD_VOLTAGE) {
+    if (voltage <= CRITICAL_BATTERY_VOLTAGE) {
+      // Critical - shutdown to protect battery
+      Serial.println("\n[CRITICAL] Battery voltage too low! Shutting down...");
+      Serial.printf("[CRITICAL] Voltage: %.2fV (below %.2fV cutoff)\n", voltage, CRITICAL_BATTERY_VOLTAGE);
+      
+      // Blink LED rapidly to indicate critical state
+      setBNO055LEDBlink(100);
+      
+      // Add shutdown logic here if you have it
+      // ESP.deepSleep(0);  // Sleep forever until powered
+      
+      delay(10000);  // Wait before shutdown
+    } else if (voltage <= LOW_BATTERY_VOLTAGE) {
+      // Low battery warning
+      Serial.printf("[WARNING] Low battery: %.2fV (below %.2fV)\n", voltage, LOW_BATTERY_VOLTAGE);
+      
+      // Fast blink to indicate low battery
+      if (ledBlinkInterval != 300) {
+        setBNO055LEDBlink(300);
+        Serial.println("[WARNING] LED blinking fast - battery low!");
+      }
+    }
+  }
 }

@@ -24,7 +24,7 @@ import { request, check, PERMISSIONS, RESULTS } from 'react-native-permissions';
 import BleService from '../services/BleService';
 import { IMUDevice } from '../types';
 
-const HomeScreen: React.FC = () => {
+const DevicesScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const [isScanning, setIsScanning] = useState(false);
   const [devices, setDevices] = useState<IMUDevice[]>([]);
@@ -101,7 +101,7 @@ const HomeScreen: React.FC = () => {
             {
               id: device.id,
               name: device.name || 'Unknown Device',
-              rssi: device.rssi,
+              rssi: device.rssi ?? undefined,
             },
           ];
         }
@@ -324,5 +324,5 @@ const styles = StyleSheet.create({
   },
 });
 
-export default HomeScreen;
+export default DevicesScreen;
 
