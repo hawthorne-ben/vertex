@@ -107,22 +107,25 @@ const DataScreen: React.FC = () => {
   }
 
   return (
-    <ScrollView
-      style={[styles.container, { paddingTop: insets.top }]}
-      refreshControl={
-        <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={theme.colors.primary} />
-      }>
-      <View style={styles.content}>
-        <View style={styles.header}>
-          <Text style={styles.title}>Recordings</Text>
-          <TouchableOpacity onPress={handleRefresh} disabled={isRefreshing}>
-            <RefreshCw
-              size={24}
-              color={theme.colors.textSecondary}
-              style={isRefreshing ? styles.spinning : undefined}
-            />
-          </TouchableOpacity>
-        </View>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      {/* Static Header */}
+      <View style={styles.header}>
+        <Text style={styles.title}>Recordings</Text>
+        <TouchableOpacity onPress={handleRefresh} disabled={isRefreshing}>
+          <RefreshCw
+            size={24}
+            color={theme.colors.textSecondary}
+            style={isRefreshing ? styles.spinning : undefined}
+          />
+        </TouchableOpacity>
+      </View>
+
+      <ScrollView
+        style={styles.scrollView}
+        refreshControl={
+          <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={theme.colors.primary} />
+        }>
+        <View style={styles.content}>
 
         {recordings.length === 0 ? (
           <View style={styles.emptyState}>
@@ -188,6 +191,7 @@ const DataScreen: React.FC = () => {
         )}
       </View>
     </ScrollView>
+    </View>
   );
 };
 
@@ -200,6 +204,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  scrollView: {
+    flex: 1,
+  },
   content: {
     padding: theme.spacing.lg,
   },
@@ -207,7 +214,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: theme.spacing.md,
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
+    backgroundColor: theme.colors.background,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
   },
   title: {
     fontSize: theme.typography.fontSize.xxxl,

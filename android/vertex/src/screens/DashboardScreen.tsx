@@ -58,9 +58,14 @@ const DashboardScreen: React.FC = () => {
   const isVertexConnected = connectedDevice !== null;
 
   return (
-    <ScrollView style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={styles.content}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      {/* Static Header */}
+      <View style={styles.header}>
         <Text style={styles.title}>Dashboard</Text>
+      </View>
+
+      <ScrollView style={styles.scrollView}>
+        <View style={styles.content}>
 
         {/* Record CTA - Show when Vertex device is connected */}
         {isVertexConnected && (
@@ -138,6 +143,7 @@ const DashboardScreen: React.FC = () => {
         </View>
       </View>
     </ScrollView>
+    </View>
   );
 };
 
@@ -146,13 +152,22 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
+  scrollView: {
+    flex: 1,
+  },
+  header: {
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
+    backgroundColor: theme.colors.background,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
   content: {
     padding: theme.spacing.lg,
   },
   title: {
     fontSize: theme.typography.fontSize.xxxl,
     fontWeight: theme.typography.fontWeight.light,
-    marginBottom: theme.spacing.lg,
     color: theme.colors.textPrimary,
     fontFamily: theme.typography.serif,
   },

@@ -75,8 +75,11 @@ const ProfileScreen: React.FC = () => {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      <Text style={styles.title}>Settings</Text>
-      
+      {/* Static Header */}
+      <View style={styles.header}>
+        <Text style={styles.title}>Settings</Text>
+      </View>
+
       {/* Tabs */}
       <View style={styles.tabs}>
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
@@ -201,12 +204,15 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
+  header: {
+    paddingHorizontal: theme.spacing.lg,
+    paddingTop: theme.spacing.md,
+    paddingBottom: theme.spacing.md,
+    backgroundColor: theme.colors.background,
+  },
   title: {
     fontSize: theme.typography.fontSize.xxxl,
     fontWeight: theme.typography.fontWeight.light,
-    paddingHorizontal: theme.spacing.lg,
-    paddingTop: theme.spacing.lg,
-    paddingBottom: theme.spacing.md,
     color: theme.colors.textPrimary,
     fontFamily: theme.typography.serif,
   },
@@ -214,6 +220,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: theme.colors.border,
     paddingHorizontal: theme.spacing.lg,
+    backgroundColor: theme.colors.background,
   },
   tabRow: {
     flexDirection: 'row',

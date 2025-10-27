@@ -25,6 +25,7 @@ class BleService {
   private connectedDevice: Device | null = null;
   private activeSubscriptions: any[] = [];
   private isHandlingDisconnection: boolean = false;
+  private isConnecting: boolean = false;
 
   constructor() {
     this.manager = new BleManager();
@@ -130,48 +131,108 @@ class BleService {
    */
   async connectToDevice(deviceId: string): Promise<Device> {
     try {
+      // Prevent multiple simultaneous connection attempts
+      if (this.isConnecting) {
+        console.warn('[BLE] Already connecting, rejecting new attempt');
+        throw new Error('Connection already in progress');
+      }
+
+      this.isConnecting = true;
+      console.log('[BLE] Connecting to device:', deviceId);
+
+      // Check if already connected to this device
+      if (this.connectedDevice?.id === deviceId) {
+        console.log('[BLE] Already connected to this device');
+        try {
+          const isConnected = await this.connectedDevice.isConnected().catch(() => false);
+          if (isConnected) {
+            console.log('[BLE] Device is still connected, reusing connection');
+            this.isConnecting = false;
+            return this.connectedDevice;
+          }
+        } catch (checkError) {
+          console.warn('[BLE] Error checking connection status:', checkError);
+        }
+        console.log('[BLE] Device was disconnected, cleaning up');
+        this.connectedDevice = null;
+      }
+
+      // If connected to a different device, just clear the reference
+      // Don't call disconnect() as it might trigger native crashes
+      if (this.connectedDevice && this.connectedDevice.id !== deviceId) {
+        console.log('[BLE] Clearing previous device connection');
+        this.cleanupSubscriptions();
+        this.connectedDevice = null;
+      }
+
+      // Use the library's built-in timeout option (5 seconds)
+      // This avoids race conditions with manual Promise.race() timeouts
       const device = await this.manager.connectToDevice(deviceId, {
-        timeout: 10000,
+        timeout: 5000,
+      }).catch((err: any) => {
+        this.isConnecting = false;
+        // Handle the error properly - the library should provide an error object
+        const errorMessage = err?.message || err?.toString() || 'Connection failed';
+        throw new Error(errorMessage);
       });
+
       this.connectedDevice = device;
+      console.log('[BLE] Device connected successfully');
 
       // Request larger MTU for 56-byte sensor data packets
       try {
         await device.requestMTU(185);
+        console.log('[BLE] MTU negotiated');
       } catch (mtuError: any) {
-        console.warn('MTU negotiation failed:', mtuError?.message);
+        console.warn('[BLE] MTU negotiation failed:', mtuError?.message);
       }
 
-      // Set up disconnection handler
-      device.onDisconnected((error, disconnectedDevice) => {
-        if (this.isHandlingDisconnection) {
-          return;
-        }
-        this.isHandlingDisconnection = true;
+      // Set up disconnection handler with error boundary
+      try {
+        device.onDisconnected((error, disconnectedDevice) => {
+          try {
+            if (this.isHandlingDisconnection) {
+              return;
+            }
+            this.isHandlingDisconnection = true;
 
-        if (error) {
-          console.log('Device disconnected:', error.message);
-        }
+            if (error) {
+              console.log('[BLE] Device disconnected:', error.message);
+            }
 
-        this.cleanupSubscriptions();
-        this.connectedDevice = null;
+            this.cleanupSubscriptions();
+            this.connectedDevice = null;
 
-        setTimeout(() => {
-          this.isHandlingDisconnection = false;
-        }, 100);
-      });
+            setTimeout(() => {
+              this.isHandlingDisconnection = false;
+            }, 100);
+          } catch (handlerError) {
+            console.error('[BLE] Disconnect handler error:', handlerError);
+          }
+        });
+      } catch (setupError) {
+        console.error('[BLE] Failed to setup disconnect handler:', setupError);
+      }
 
+      // Discover services with error handling
       try {
         await device.discoverAllServicesAndCharacteristics();
+        console.log('[BLE] Services discovered');
       } catch (discoverError: any) {
-        console.error('Service discovery error:', discoverError?.message);
+        console.error('[BLE] Service discovery error:', discoverError?.message);
+        // Continue anyway - some devices work without full discovery
       }
 
+      this.isConnecting = false; // Clear flag on success
       return device;
     } catch (error: any) {
-      console.error('Connection error:', error?.message || error);
+      console.error('[BLE] Connection error:', error?.message || error);
       this.connectedDevice = null;
-      throw new Error(`Failed to connect: ${error?.message || 'Unknown error'}`);
+      this.isConnecting = false; // Clear flag on error
+
+      // Ensure we always throw a proper Error object
+      const errorMessage = error?.message || error?.toString() || 'Unknown connection error';
+      throw new Error(`Failed to connect: ${errorMessage}`);
     }
   }
 

@@ -3,6 +3,7 @@
  *
  * Based on working bno055_dual_mode implementation
  * Boot + sensor init + basic BLE
+ * Power Control: BOOT button (GPIO0) for on/off
  */
 
 #include <Wire.h>
@@ -14,6 +15,8 @@
 #include <BLEUtils.h>
 #include <BLE2902.h>
 #include "esp_log.h"
+#include "esp_sleep.h"
+#include "driver/gpio.h"
 
 // BLE UUIDs
 #define SERVICE_UUID        "12345678-1234-5678-1234-56789abcdef0"
@@ -35,6 +38,10 @@ const unsigned long CONNECTION_STABILIZE_MS = 1000; // Wait 1s after connection
 
 // LED
 #define LED_PIN 13
+
+// User button (GPIO38) - button next to Neopixel LED on Feather ESP32 V2
+// Hold for 500ms to power off, press again to wake from sleep
+#define USER_BUTTON_PIN 38
 
 // Battery monitoring (ESP32 Feather V2 has battery voltage on A13/GPIO35)
 #define BATTERY_PIN 35
@@ -93,18 +100,42 @@ class MyCharacteristicCallbacks: public BLECharacteristicCallbacks {
 void setup() {
   Serial.begin(115200);
   delay(1000);
+  
+  // Disable I2C logging noise IMMEDIATELY to suppress error logs
+  esp_log_level_set("i2c", ESP_LOG_NONE);
+  esp_log_level_set("i2c.master", ESP_LOG_NONE);
+  esp_log_level_set("i2c.slave", ESP_LOG_NONE);
+  esp_log_level_set("i2c_main", ESP_LOG_NONE);
+  // Suppress all ESP-IDF error logs
+  esp_log_level_set("*", ESP_LOG_WARN);  // Only show warnings and above
 
-  Serial.println("\n========================================");
-  Serial.println("  Vertex Sensor Notify - MINIMAL TEST");
-  Serial.println("========================================\n");
+  // Configure user button (GPIO38) - the power off button
+  pinMode(USER_BUTTON_PIN, INPUT);
+  delay(10);
+  
+  // Check if we're waking from deep sleep
+  esp_sleep_wakeup_cause_t wakeup_reason;
+  wakeup_reason = esp_sleep_get_wakeup_cause();
+  
+  if (wakeup_reason != ESP_SLEEP_WAKEUP_UNDEFINED) {
+    // Woke from some sleep mode
+    Serial.println("\n========================================");
+    Serial.println("  Vertex Sensor Notify - WOKE FROM SLEEP");
+    Serial.println("========================================");
+    
+    // Add extra delay for I2C to stabilize after deep sleep
+    Serial.println("[POWER] Stabilizing I2C after deep sleep...");
+    delay(500);
+  } else {
+    // Fresh boot or reset
+    Serial.println("\n========================================");
+    Serial.println("  Vertex Sensor Notify - MINIMAL TEST");
+    Serial.println("========================================");
+  }
 
   // Initialize LED
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH);
-
-  // Disable I2C logging noise BEFORE sensor init
-  Serial.println("[SETUP] Suppressing I2C logs...");
-  esp_log_level_set("i2c", ESP_LOG_NONE);
 
   // Initialize sensor
   Serial.print("[SETUP] Initializing sensor...");
@@ -176,6 +207,26 @@ void setup() {
 void loop() {
   unsigned long loopStart = micros();
   unsigned long now = millis();
+
+  // Check for power button press (USER button - GPIO38)
+  // Any press immediately enters deep sleep
+  static unsigned long lastButtonCheck = 0;
+  
+  if (now - lastButtonCheck > 10) {  // Check every 10ms
+    bool currentButtonState = digitalRead(USER_BUTTON_PIN);
+    
+    if (currentButtonState == LOW) {  // Button is pressed
+      Serial.println("\n[POWER] Button pressed - entering deep sleep");
+      Serial.println("[POWER] Press RESET button to wake\n");
+      digitalWrite(LED_PIN, LOW);
+      
+      // Enter deep sleep with NO wake source
+      // Only hardware reset will wake the device
+      esp_deep_sleep_start();
+    }
+    
+    lastButtonCheck = now;
+  }
 
   // Update sensor data and send notifications every 1 second when connected
   if (now - lastSampleTime >= SAMPLE_INTERVAL_MS) {
@@ -360,3 +411,4 @@ void reportPerformance() {
 
   perfMetrics.sampleCount = 0;
 }
+

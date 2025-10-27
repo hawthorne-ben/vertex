@@ -165,6 +165,32 @@ vertex/
 - `@react-navigation/native` - Navigation
 - `zustand` - State management (optional, can use Context)
 
+## Known Issues & Patches
+
+### react-native-ble-plx Android Crash Fix
+
+The project includes a critical patch for `react-native-ble-plx@3.5.0` to fix Android crashes caused by null error codes in promise rejections.
+
+**Issue:** The library's native Android code passes `null` as the error code parameter when rejecting promises, which crashes React Native's bridge with:
+```
+java.lang.NullPointerException: Parameter specified as non-null is null:
+method com.facebook.react.bridge.PromiseImpl.reject, parameter code
+```
+
+**Fix Applied:** All 17 instances of `safePromise.reject(null, ...)` in `BlePlxModule.java` have been patched to use `safePromise.reject(error.errorCode.name(), ...)`.
+
+**Maintenance:**
+- The patch is automatically applied via `patch-package` during `npm install`
+- Patch file location: `patches/react-native-ble-plx+3.5.0.patch`
+- If upgrading the library, the patch may need to be regenerated:
+  ```bash
+  # After making changes to node_modules/react-native-ble-plx
+  npx patch-package react-native-ble-plx
+  ```
+
+**Related Issues:**
+- [react-native-ble-plx #1303](https://github.com/dotintent/react-native-ble-plx/issues/1303)
+
 ## Resources
 
 - [React Native BLE Documentation](https://github.com/dotintent/react-native-ble-plx)

@@ -19,26 +19,30 @@ export const theme = {
     mutedForeground: 'hsl(0, 0%, 45.1%)',
     border: 'hsl(0, 0%, 89.8%)',
     input: 'hsl(0, 0%, 89.8%)',
-    
+
     // Form elements
     formBackground: 'hsl(0, 0%, 100%)',
     formBorder: 'hsl(0, 0%, 89.8%)',
     formText: 'hsl(0, 0%, 3.9%)',
-    
+
     // Text
     textPrimary: 'hsl(0, 0%, 3.9%)',
     textSecondary: 'hsl(0, 0%, 45.1%)',
     textTertiary: 'hsl(0, 0%, 63.9%)',
-    
+
     // Semantic
     success: 'hsl(142, 76%, 36%)',
     successBg: 'hsl(142, 76%, 95%)',
+    successBorder: 'rgba(34, 197, 94, 0.2)',
     error: 'hsl(0, 84%, 60%)',
-    errorBg: 'hsl(0, 84%, 95%)',
+    errorBg: 'rgba(239, 68, 68, 0.08)',
+    errorBorder: 'rgba(239, 68, 68, 0.25)',
     warning: 'hsl(38, 92%, 50%)',
     warningBg: 'hsl(38, 92%, 95%)',
+    warningBorder: 'rgba(245, 158, 11, 0.2)',
     info: 'hsl(199, 89%, 36%)',
     infoBg: 'hsl(199, 89%, 95%)',
+    infoBorder: 'rgba(14, 165, 233, 0.2)',
   },
   
   spacing: {

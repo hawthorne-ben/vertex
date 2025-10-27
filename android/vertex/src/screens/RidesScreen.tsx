@@ -20,9 +20,14 @@ const RidesScreen: React.FC = () => {
   ];
 
   return (
-    <ScrollView style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={styles.content}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      {/* Static Header */}
+      <View style={styles.header}>
         <Text style={styles.title}>Rides</Text>
+      </View>
+
+      <ScrollView style={styles.scrollView}>
+        <View style={styles.content}>
 
         {rides.map((ride, index) => (
           <View key={index} style={styles.rideCard}>
@@ -38,6 +43,7 @@ const RidesScreen: React.FC = () => {
         ))}
       </View>
     </ScrollView>
+    </View>
   );
 };
 
@@ -46,13 +52,22 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: theme.colors.background,
   },
+  scrollView: {
+    flex: 1,
+  },
+  header: {
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
+    backgroundColor: theme.colors.background,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
+  },
   content: {
     padding: theme.spacing.lg,
   },
   title: {
     fontSize: theme.typography.fontSize.xxxl,
     fontWeight: theme.typography.fontWeight.light,
-    marginBottom: theme.spacing.lg,
     color: theme.colors.textPrimary,
     fontFamily: theme.typography.serif,
   },

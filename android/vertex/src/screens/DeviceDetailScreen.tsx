@@ -75,10 +75,10 @@ const DeviceDetailScreenContent: React.FC = () => {
       try {
         await initializeDevice();
       } catch (err: any) {
-        console.error('Init error caught in useEffect:', err);
+        // Connection failure has UI feedback via error banner - no console logging needed
         if (isMountedRef.current) {
           try {
-            safeSetState(setError, err?.message || 'Failed to initialize');
+            safeSetState(setError, 'Connection failed');
             safeSetState(setIsConnecting, false);
           } catch (stateError) {
             console.error('Failed to set error state:', stateError);
@@ -152,19 +152,12 @@ const DeviceDetailScreenContent: React.FC = () => {
           console.warn('Service discovery failed:', err);
         }
       } else {
-        // Connect to device with timeout
+        // Connect to device (timeout handled by BleService)
         if (!isMountedRef.current) return;
         safeSetState(setConnectionStatus, 'Connecting...');
 
         try {
-          const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Connection timeout after 15s')), 15000)
-          );
-
-          await Promise.race([
-            BleService.connectToDevice(deviceId),
-            timeoutPromise
-          ]);
+          await BleService.connectToDevice(deviceId);
 
           if (!isMountedRef.current) return;
           safeSetState(setIsConnected, true);
@@ -191,13 +184,13 @@ const DeviceDetailScreenContent: React.FC = () => {
         }
       }
     } catch (error: any) {
-      console.error('Connection error:', error);
+      // Connection failure has UI feedback via error banner - no console logging needed
       if (!isMountedRef.current) return;
 
       safeSetState(setIsConnected, false);
-      safeSetState(setConnectionStatus, 'Connection Failed');
-      const errorMsg = error?.message || 'Failed to connect to device';
-      safeSetState(setError, errorMsg);
+      safeSetState(setConnectionStatus, 'Failed');
+      // Show error banner with reconnect button, but no detailed error message
+      safeSetState(setError, 'Connection failed');
     } finally {
       if (isMountedRef.current) {
         safeSetState(setIsConnecting, false);
@@ -854,10 +847,10 @@ const styles = StyleSheet.create({
     padding: theme.spacing.lg,
   },
   errorBanner: {
-    backgroundColor: theme.colors.error + '15', // 15 is hex for ~8% opacity
+    backgroundColor: theme.colors.errorBg,
     borderRadius: theme.borderRadius.md,
     borderWidth: 1,
-    borderColor: theme.colors.error + '40',
+    borderColor: theme.colors.errorBorder,
     padding: theme.spacing.md,
     marginBottom: theme.spacing.lg,
     flexDirection: 'row',

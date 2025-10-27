@@ -178,15 +178,17 @@ const DataDetailScreen: React.FC = () => {
   const screenWidth = Dimensions.get('window').width;
 
   return (
-    <ScrollView style={[styles.container, { paddingTop: insets.top }]}>
-      <View style={styles.content}>
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-            <ChevronLeft size={24} color={theme.colors.textPrimary} />
-          </TouchableOpacity>
-          <Text style={styles.title} numberOfLines={1}>Detail</Text>
-        </View>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
+      {/* Static Header */}
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
+          <ChevronLeft size={24} color={theme.colors.textPrimary} />
+        </TouchableOpacity>
+        <Text style={styles.title} numberOfLines={1}>Detail</Text>
+      </View>
+
+      <ScrollView style={styles.scrollView}>
+        <View style={styles.content}>
 
         {/* File Info */}
         <View style={styles.infoCard}>
@@ -334,6 +336,7 @@ const DataDetailScreen: React.FC = () => {
         </View>
       </View>
     </ScrollView>
+    </View>
   );
 };
 
@@ -349,10 +352,17 @@ const styles = StyleSheet.create({
   content: {
     padding: theme.spacing.lg,
   },
+  scrollView: {
+    flex: 1,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: theme.spacing.lg,
+    paddingHorizontal: theme.spacing.lg,
+    paddingVertical: theme.spacing.md,
+    backgroundColor: theme.colors.background,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border,
   },
   backButton: {
     marginRight: theme.spacing.md,
