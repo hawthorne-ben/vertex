@@ -32,7 +32,7 @@ export const theme = {
 
     // Semantic
     success: 'hsl(142, 76%, 36%)',
-    successBg: 'hsl(142, 76%, 95%)',
+    successBg: 'hsl(142, 76%, 88%)',
     successBorder: 'rgba(34, 197, 94, 0.2)',
     error: 'hsl(0, 84%, 60%)',
     errorBg: 'rgba(239, 68, 68, 0.08)',

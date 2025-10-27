@@ -20,28 +20,35 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   Bluetooth,
   Battery,
+  BatteryFull,
   Activity,
   Zap,
   Trash2,
   RefreshCw,
   Heart,
-  ArrowLeft,
   Circle,
 } from 'lucide-react-native';
-import { theme } from '../styles/theme';
+import { theme as staticTheme } from '../styles/theme';
+import { useTheme } from '../contexts/ThemeContext';
+import { useToast } from '../contexts/ToastContext';
+import { BackButton, ConfirmDialog } from '../components/ui';
 import BleService from '../services/BleService';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ErrorBoundary from '../components/ErrorBoundary';
+import IMUVisualization3D from '../components/IMUVisualization3D';
 
 type DeviceDetailRouteProp = RouteProp<RootStackParamList, 'DeviceDetail'>;
 
 const SAVED_DEVICES_KEY = '@vertex_saved_devices';
+const ZERO_POINT_KEY = '@vertex_zero_point_';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 const DeviceDetailScreenContent: React.FC = () => {
   const insets = useSafeAreaInsets();
+  const { theme } = useTheme();
+  const { showToast } = useToast();
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<DeviceDetailRouteProp>();
   const { deviceId, deviceName } = route.params;
@@ -57,12 +64,17 @@ const DeviceDetailScreenContent: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [streamingError, setStreamingError] = useState<string | null>(null);
   const [sampleRate, setSampleRate] = useState<number | null>(null);
+  const [zeroPoint, setZeroPoint] = useState<any | null>(null);
+  const [isZeroing, setIsZeroing] = useState(false);
+  const [showClearZeroDialog, setShowClearZeroDialog] = useState(false);
 
   // Track if component is mounted to prevent state updates after unmount
   const isMountedRef = useRef(true);
   const lastUpdateTimeRef = useRef<number>(0);
   const updateCountRef = useRef<number>(0);
   const sampleRateHistoryRef = useRef<number[]>([]);
+  const readingBufferRef = useRef<any[]>([]);
+  const zeroPointRef = useRef<any | null>(null);
 
   // Detect if this is a Vertex IMU device
   const isVertexDevice = deviceName?.toLowerCase().includes('vertex');
@@ -70,30 +82,60 @@ const DeviceDetailScreenContent: React.FC = () => {
   useEffect(() => {
     isMountedRef.current = true;
 
-    // Initialize device with error boundary
-    const init = async () => {
-      try {
-        await initializeDevice();
-      } catch (err: any) {
-        // Connection failure has UI feedback via error banner - no console logging needed
-        if (isMountedRef.current) {
-          try {
-            safeSetState(setError, 'Connection failed');
-            safeSetState(setIsConnecting, false);
-          } catch (stateError) {
-            console.error('Failed to set error state:', stateError);
-          }
+    // Load zero point from storage
+    loadZeroPoint();
+
+    // Listen for connection state changes FIRST
+    const unsubscribe = BleService.addConnectionListener((device, isConn) => {
+      console.log('[DeviceDetailScreen] Connection state changed:', device?.id, isConn);
+      if (!isMountedRef.current) return;
+
+      // Only update if this is our device
+      if (device?.id === deviceId || !isConn) {
+        safeSetState(setIsConnected, isConn);
+        safeSetState(setConnectionStatus, isConn ? 'Connected' : 'Disconnected');
+
+        if (!isConn) {
+          // Device disconnected
+          safeSetState(setIsStreaming, false);
+          safeSetState(setError, 'Device disconnected');
+        } else {
+          // Device connected, clear error
+          safeSetState(setError, null);
         }
       }
-    };
+    });
 
-    init();
+    // Defer connection attempt slightly to let UI render first
+    const initTimer = setTimeout(() => {
+      if (!isMountedRef.current) return;
+
+      const init = async () => {
+        try {
+          await initializeDevice();
+        } catch (err: any) {
+          // Connection failure has UI feedback via error banner - no console logging needed
+          if (isMountedRef.current) {
+            try {
+              safeSetState(setError, 'Connection failed');
+              safeSetState(setIsConnecting, false);
+            } catch (stateError) {
+              console.error('Failed to set error state:', stateError);
+            }
+          }
+        }
+      };
+
+      init();
+    }, 100); // Small delay to let UI render
 
     return () => {
       isMountedRef.current = false;
+      clearTimeout(initTimer);
+      unsubscribe();
       // Don't disconnect on unmount - user controls disconnect
     };
-  }, []);
+  }, [deviceId]);
 
   // Safely set state only if mounted
   const safeSetState = (setter: Function, value: any) => {
@@ -202,6 +244,100 @@ const DeviceDetailScreenContent: React.FC = () => {
     await initializeDevice();
   };
 
+  const loadZeroPoint = async () => {
+    try {
+      const stored = await AsyncStorage.getItem(ZERO_POINT_KEY + deviceId);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        safeSetState(setZeroPoint, parsed);
+        zeroPointRef.current = parsed;
+        console.log('[DeviceDetail] Loaded zero point for device:', deviceId);
+      }
+    } catch (error) {
+      console.error('[DeviceDetail] Error loading zero point:', error);
+    }
+  };
+
+  const saveZeroPoint = async (point: any) => {
+    try {
+      await AsyncStorage.setItem(ZERO_POINT_KEY + deviceId, JSON.stringify(point));
+      safeSetState(setZeroPoint, point);
+      zeroPointRef.current = point;
+      console.log('[DeviceDetail] Saved zero point for device:', deviceId);
+    } catch (error) {
+      console.error('[DeviceDetail] Error saving zero point:', error);
+    }
+  };
+
+  const handleZero = async () => {
+    if (readingBufferRef.current.length < 5) {
+      showToast({
+        message: `Need at least 5 readings. Currently have ${readingBufferRef.current.length}. Please wait...`,
+        variant: 'warning',
+        duration: 3000,
+      });
+      return;
+    }
+
+    safeSetState(setIsZeroing, true);
+
+    try {
+      // Calculate average of last 5 readings
+      const last5 = readingBufferRef.current.slice(-5);
+
+      const avgReading = {
+        roll: last5.reduce((sum, r) => sum + (r.roll || 0), 0) / 5,
+        pitch: last5.reduce((sum, r) => sum + (r.pitch || 0), 0) / 5,
+        yaw: last5.reduce((sum, r) => sum + (r.yaw || 0), 0) / 5,
+        accelX: last5.reduce((sum, r) => sum + (r.accelX || 0), 0) / 5,
+        accelY: last5.reduce((sum, r) => sum + (r.accelY || 0), 0) / 5,
+        accelZ: last5.reduce((sum, r) => sum + (r.accelZ || 0), 0) / 5,
+        gyroX: last5.reduce((sum, r) => sum + (r.gyroX || 0), 0) / 5,
+        gyroY: last5.reduce((sum, r) => sum + (r.gyroY || 0), 0) / 5,
+        gyroZ: last5.reduce((sum, r) => sum + (r.gyroZ || 0), 0) / 5,
+        magX: last5.reduce((sum, r) => sum + (r.magX || 0), 0) / 5,
+        magY: last5.reduce((sum, r) => sum + (r.magY || 0), 0) / 5,
+        magZ: last5.reduce((sum, r) => sum + (r.magZ || 0), 0) / 5,
+      };
+
+      await saveZeroPoint(avgReading);
+
+      showToast({
+        message: 'Zero point set',
+        variant: 'success',
+        duration: 2000,
+      });
+    } catch (error) {
+      console.error('[DeviceDetail] Error setting zero point:', error);
+      showToast({
+        message: 'Failed to set zero point',
+        variant: 'error',
+      });
+    } finally {
+      safeSetState(setIsZeroing, false);
+    }
+  };
+
+  const confirmClearZero = async () => {
+    try {
+      await AsyncStorage.removeItem(ZERO_POINT_KEY + deviceId);
+      safeSetState(setZeroPoint, null);
+      zeroPointRef.current = null;
+      console.log('[DeviceDetail] Cleared zero point for device:', deviceId);
+      showToast({
+        message: 'Zero point cleared',
+        variant: 'success',
+        duration: 2000,
+      });
+    } catch (error) {
+      console.error('[DeviceDetail] Error clearing zero point:', error);
+      showToast({
+        message: 'Failed to clear zero point',
+        variant: 'error',
+      });
+    }
+  };
+
   const discoverServices = async () => {
     try {
       // Attempt to read battery level
@@ -228,7 +364,34 @@ const DeviceDetailScreenContent: React.FC = () => {
         (data) => {
           if (!isMountedRef.current) return;
 
-          safeSetState(setSensorReading, data);
+          // Add to reading buffer (keep last 10 readings)
+          readingBufferRef.current.push(data);
+          if (readingBufferRef.current.length > 10) {
+            readingBufferRef.current.shift();
+          }
+
+          // Apply zero point offset if set (use ref to get current value)
+          let displayData = data;
+          const currentZeroPoint = zeroPointRef.current;
+          if (currentZeroPoint) {
+            displayData = {
+              ...data,
+              roll: (data.roll || 0) - (currentZeroPoint.roll || 0),
+              pitch: (data.pitch || 0) - (currentZeroPoint.pitch || 0),
+              yaw: (data.yaw || 0) - (currentZeroPoint.yaw || 0),
+              accelX: (data.accelX || 0) - (currentZeroPoint.accelX || 0),
+              accelY: (data.accelY || 0) - (currentZeroPoint.accelY || 0),
+              accelZ: (data.accelZ || 0) - (currentZeroPoint.accelZ || 0),
+              gyroX: (data.gyroX || 0) - (currentZeroPoint.gyroX || 0),
+              gyroY: (data.gyroY || 0) - (currentZeroPoint.gyroY || 0),
+              gyroZ: (data.gyroZ || 0) - (currentZeroPoint.gyroZ || 0),
+              magX: (data.magX || 0) - (currentZeroPoint.magX || 0),
+              magY: (data.magY || 0) - (currentZeroPoint.magY || 0),
+              magZ: (data.magZ || 0) - (currentZeroPoint.magZ || 0),
+            };
+          }
+
+          safeSetState(setSensorReading, displayData);
           safeSetState(setLastReadingTime, new Date());
           safeSetState(setStreamingError, null);
 
@@ -449,98 +612,135 @@ const DeviceDetailScreenContent: React.FC = () => {
     navigation.navigate('Record', { deviceId, deviceName });
   };
 
-  const renderStatusCard = () => (
-    <View style={styles.card}>
-      <Text style={styles.cardTitle}>Device Status</Text>
+  const renderStatusCard = () => {
+    const batteryVoltage = sensorReading?.batteryVoltage;
+    const batteryGood = batteryVoltage && batteryVoltage > 3.7;
+    const BatteryIcon = batteryGood ? BatteryFull : Battery;
 
-      <View style={styles.statusRow}>
-        <View style={styles.statusItem}>
-          <Bluetooth
-            size={20}
-            color={isConnected ? theme.colors.success : theme.colors.error}
-          />
-          <View style={styles.statusInfo}>
-            <Text style={styles.statusLabel}>Connection</Text>
-            <Text style={[
-              styles.statusValue,
-              { color: isConnected ? theme.colors.success : theme.colors.error }
-            ]}>
-              {connectionStatus}
-            </Text>
+    return (
+      <View style={[styles.card, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}>
+        <View style={styles.statusGrid}>
+          {/* Row 1 */}
+          <View style={styles.statusGridRow}>
+            {/* Connection Status */}
+            <View style={styles.statusCompactItem}>
+              <Bluetooth
+                size={18}
+                color={
+                  isConnecting ? theme.colors.warning :
+                  isConnected ? theme.colors.success :
+                  theme.colors.error
+                }
+                style={styles.statusIcon}
+              />
+              <Text style={[styles.statusCompactValue, {
+                color: isConnecting ? theme.colors.warning :
+                       isConnected ? theme.colors.success :
+                       theme.colors.error,
+                fontFamily: staticTheme.typography.mono,
+              }]}>
+                {isConnecting ? 'Connecting' : isConnected ? 'Connected' : 'Disconnected'}
+              </Text>
+            </View>
+
+            {/* Battery Status */}
+            <View style={styles.statusCompactItem}>
+              <BatteryIcon
+                size={18}
+                color={
+                  batteryVoltage === undefined ? theme.colors.textTertiary :
+                  batteryVoltage > 3.7 ? theme.colors.success :
+                  batteryVoltage > 3.4 ? theme.colors.warning :
+                  theme.colors.error
+                }
+                style={styles.statusIcon}
+              />
+              <Text style={[styles.statusCompactValue, {
+                color: batteryVoltage === undefined ? theme.colors.textTertiary : theme.colors.textPrimary,
+                fontFamily: staticTheme.typography.mono,
+              }]}>
+                {batteryVoltage !== undefined ? `${batteryVoltage.toFixed(2)}V` : 'Battery'}
+              </Text>
+            </View>
           </View>
-        </View>
 
-        <View style={styles.statusItem}>
-          <Battery
-            size={20}
-            color={
-              sensorReading?.batteryVoltage === undefined ? theme.colors.textTertiary :
-              sensorReading.batteryVoltage > 3.7 ? theme.colors.success :
-              sensorReading.batteryVoltage > 3.4 ? theme.colors.warning :
-              theme.colors.error
-            }
-          />
-          <View style={styles.statusInfo}>
-            <Text style={styles.statusLabel}>Battery</Text>
-            <Text style={styles.statusValue}>
-              {sensorReading?.batteryVoltage !== undefined
-                ? `${sensorReading.batteryVoltage.toFixed(2)}V`
-                : 'N/A'}
-            </Text>
+          {/* Row 2 */}
+          <View style={styles.statusGridRow}>
+            {/* Calibration Status */}
+            <View style={styles.statusCompactItem}>
+              <Activity
+                size={18}
+                color={
+                  sensorReading?.calibration?.system === 3 ? theme.colors.success :
+                  sensorReading?.calibration?.system >= 2 ? theme.colors.warning :
+                  theme.colors.textTertiary
+                }
+                style={styles.statusIcon}
+              />
+              <Text style={[styles.statusCompactValue, {
+                color: sensorReading?.calibration?.system === 3 ? theme.colors.success :
+                       sensorReading?.calibration?.system >= 2 ? theme.colors.warning :
+                       theme.colors.textTertiary,
+                fontFamily: staticTheme.typography.mono,
+              }]}>
+                Calibration
+              </Text>
+            </View>
+
+            {/* Sample Rate */}
+            <View style={styles.statusCompactItem}>
+              <Zap
+                size={18}
+                color={
+                  sampleRate && sampleRate >= 8 ? theme.colors.success :
+                  sampleRate && sampleRate >= 5 ? theme.colors.warning :
+                  theme.colors.textTertiary
+                }
+                style={styles.statusIcon}
+              />
+              <Text style={[styles.statusCompactValue, {
+                color: sampleRate ? theme.colors.textPrimary : theme.colors.textTertiary,
+                fontFamily: staticTheme.typography.mono,
+              }]}>
+                {sampleRate ? `${sampleRate}Hz` : 'Frequency'}
+              </Text>
+            </View>
           </View>
         </View>
       </View>
+    );
+  };
 
-      <View style={styles.divider} />
+  const renderOrientationVisualization = () => {
+    if (!sensorReading || (sensorReading.roll === undefined && sensorReading.pitch === undefined && sensorReading.yaw === undefined)) {
+      return null;
+    }
 
-      <View style={styles.statusRow}>
-        <View style={styles.statusItem}>
-          <Activity
-            size={20}
-            color={
-              sensorReading?.calibration?.system === 3 ? theme.colors.success :
-              sensorReading?.calibration?.system >= 2 ? theme.colors.warning :
-              theme.colors.textSecondary
-            }
+    return (
+      <View style={[styles.card, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}>
+        <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>Orientation</Text>
+        <View style={[styles.visualizationContainer, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+          <IMUVisualization3D
+            roll={sensorReading.roll || 0}
+            pitch={sensorReading.pitch || 0}
+            yaw={sensorReading.yaw || 0}
+            accelX={sensorReading.accelX || 0}
+            accelY={sensorReading.accelY || 0}
+            accelZ={sensorReading.accelZ || 0}
           />
-          <View style={styles.statusInfo}>
-            <Text style={styles.statusLabel}>Calibration</Text>
-            <Text style={styles.statusValue}>
-              {sensorReading?.calibration?.system !== undefined
-                ? sensorReading.calibration.system
-                : 'N/A'}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.statusItem}>
-          <Zap
-            size={20}
-            color={
-              sampleRate && sampleRate >= 8 ? theme.colors.success :
-              sampleRate && sampleRate >= 5 ? theme.colors.warning :
-              theme.colors.textSecondary
-            }
-          />
-          <View style={styles.statusInfo}>
-            <Text style={styles.statusLabel}>Sample Rate</Text>
-            <Text style={styles.statusValue}>
-              {sampleRate ? `${sampleRate} Hz` : 'N/A'}
-            </Text>
-          </View>
         </View>
       </View>
-    </View>
-  );
+    );
+  };
 
   const renderSensorData = () => {
     if (!sensorReading) {
       return (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Sensor Reading</Text>
+        <View style={[styles.card, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}>
+          <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>Sensor Reading</Text>
           <View style={styles.emptyReading}>
             <Activity size={48} color={theme.colors.textTertiary} />
-            <Text style={styles.emptyReadingText}>
+            <Text style={[styles.emptyReadingText, { color: theme.colors.textSecondary }]}>
               {isVertexDevice
                 ? (isStreaming ? 'Waiting for data stream...' : 'No data yet. Starting stream...')
                 : 'No data yet. Tap "Poll Sensor" to get a reading.'}
@@ -551,13 +751,13 @@ const DeviceDetailScreenContent: React.FC = () => {
     }
 
     return (
-      <View style={styles.card}>
+      <View style={[styles.card, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}>
         <View style={styles.cardHeader}>
-          <Text style={styles.cardTitle}>
-            {isVertexDevice ? 'Live Sensor Stream' : 'Sensor Reading'}
+          <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>
+            Sensor Data
           </Text>
           {lastReadingTime && (
-            <Text style={styles.timestamp}>
+            <Text style={[styles.timestamp, { color: theme.colors.textSecondary }]}>
               {lastReadingTime.toLocaleTimeString()}
             </Text>
           )}
@@ -566,19 +766,19 @@ const DeviceDetailScreenContent: React.FC = () => {
         {/* Streaming error indicator */}
         {streamingError && (
           <View style={styles.streamingErrorBanner}>
-            <Text style={styles.streamingErrorText}>{streamingError}</Text>
+            <Text style={[styles.streamingErrorText, { color: theme.colors.error }]}>{streamingError}</Text>
           </View>
         )}
 
         {/* For Whoop: Show Heart Rate */}
         {sensorReading.heartRate !== undefined && (
-          <View style={styles.readingCard}>
+          <View style={[styles.readingCard, { backgroundColor: theme.colors.background, borderColor: theme.colors.border }]}>
             <Heart size={32} color={theme.colors.error} />
             <View style={styles.readingInfo}>
-              <Text style={styles.readingLabel}>Heart Rate</Text>
-              <Text style={styles.readingValue}>{sensorReading.heartRate} BPM</Text>
+              <Text style={[styles.readingLabel, { color: theme.colors.textSecondary }]}>Heart Rate</Text>
+              <Text style={[styles.readingValue, { color: theme.colors.textPrimary }]}>{sensorReading.heartRate} BPM</Text>
               {sensorReading.contactDetected !== undefined && (
-                <Text style={styles.readingMeta}>
+                <Text style={[styles.readingMeta, { color: theme.colors.textTertiary }]}>
                   Contact: {sensorReading.contactDetected ? 'Detected' : 'Not Detected'}
                 </Text>
               )}
@@ -589,39 +789,39 @@ const DeviceDetailScreenContent: React.FC = () => {
         {/* For Vertex IMU: Show orientation data */}
         {(sensorReading.roll !== undefined || sensorReading.pitch !== undefined || sensorReading.yaw !== undefined) && (
           <>
-            <Text style={styles.sectionLabel}>Orientation (degrees)</Text>
+            <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Orientation (degrees)</Text>
             <View style={styles.sensorGrid}>
-              <View style={styles.sensorValue}>
-                <Text style={styles.sensorLabel}>Roll</Text>
-                <Text style={styles.sensorNumber}>{sensorReading.roll?.toFixed(1) ?? '0.0'}°</Text>
+              <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
+                <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Roll</Text>
+                <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.roll?.toFixed(1) ?? '0.0'}°</Text>
               </View>
-              <View style={styles.sensorValue}>
-                <Text style={styles.sensorLabel}>Pitch</Text>
-                <Text style={styles.sensorNumber}>{sensorReading.pitch?.toFixed(1) ?? '0.0'}°</Text>
+              <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
+                <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Pitch</Text>
+                <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.pitch?.toFixed(1) ?? '0.0'}°</Text>
               </View>
-              <View style={styles.sensorValue}>
-                <Text style={styles.sensorLabel}>Yaw</Text>
-                <Text style={styles.sensorNumber}>{sensorReading.yaw?.toFixed(1) ?? '0.0'}°</Text>
+              <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
+                <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Yaw</Text>
+                <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.yaw?.toFixed(1) ?? '0.0'}°</Text>
               </View>
             </View>
 
             {/* Accelerometer */}
             {(sensorReading.accelX !== undefined || sensorReading.accelY !== undefined || sensorReading.accelZ !== undefined) && (
               <>
-                <View style={styles.divider} />
-                <Text style={styles.sectionLabel}>Acceleration (m/s²)</Text>
+                <View style={[styles.divider, { backgroundColor: theme.colors.border }]} />
+                <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Acceleration (m/s²)</Text>
                 <View style={styles.sensorGrid}>
-                  <View style={styles.sensorValue}>
-                    <Text style={styles.sensorLabel}>X</Text>
-                    <Text style={styles.sensorNumber}>{sensorReading.accelX?.toFixed(2) ?? '0.00'}</Text>
+                  <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
+                    <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>X</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.accelX?.toFixed(2) ?? '0.00'}</Text>
                   </View>
-                  <View style={styles.sensorValue}>
-                    <Text style={styles.sensorLabel}>Y</Text>
-                    <Text style={styles.sensorNumber}>{sensorReading.accelY?.toFixed(2) ?? '0.00'}</Text>
+                  <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
+                    <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Y</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.accelY?.toFixed(2) ?? '0.00'}</Text>
                   </View>
-                  <View style={styles.sensorValue}>
-                    <Text style={styles.sensorLabel}>Z</Text>
-                    <Text style={styles.sensorNumber}>{sensorReading.accelZ?.toFixed(2) ?? '0.00'}</Text>
+                  <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
+                    <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Z</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.accelZ?.toFixed(2) ?? '0.00'}</Text>
                   </View>
                 </View>
               </>
@@ -630,20 +830,20 @@ const DeviceDetailScreenContent: React.FC = () => {
             {/* Gyroscope */}
             {(sensorReading.gyroX !== undefined || sensorReading.gyroY !== undefined || sensorReading.gyroZ !== undefined) && (
               <>
-                <View style={styles.divider} />
-                <Text style={styles.sectionLabel}>Angular Velocity (rad/s)</Text>
+                <View style={[styles.divider, { backgroundColor: theme.colors.border }]} />
+                <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Angular Velocity (rad/s)</Text>
                 <View style={styles.sensorGrid}>
-                  <View style={styles.sensorValue}>
-                    <Text style={styles.sensorLabel}>X</Text>
-                    <Text style={styles.sensorNumber}>{sensorReading.gyroX?.toFixed(2) ?? '0.00'}</Text>
+                  <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
+                    <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>X</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.gyroX?.toFixed(2) ?? '0.00'}</Text>
                   </View>
-                  <View style={styles.sensorValue}>
-                    <Text style={styles.sensorLabel}>Y</Text>
-                    <Text style={styles.sensorNumber}>{sensorReading.gyroY?.toFixed(2) ?? '0.00'}</Text>
+                  <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
+                    <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Y</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.gyroY?.toFixed(2) ?? '0.00'}</Text>
                   </View>
-                  <View style={styles.sensorValue}>
-                    <Text style={styles.sensorLabel}>Z</Text>
-                    <Text style={styles.sensorNumber}>{sensorReading.gyroZ?.toFixed(2) ?? '0.00'}</Text>
+                  <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
+                    <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Z</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.gyroZ?.toFixed(2) ?? '0.00'}</Text>
                   </View>
                 </View>
               </>
@@ -652,20 +852,20 @@ const DeviceDetailScreenContent: React.FC = () => {
             {/* Magnetometer */}
             {(sensorReading.magX !== undefined || sensorReading.magY !== undefined || sensorReading.magZ !== undefined) && (
               <>
-                <View style={styles.divider} />
-                <Text style={styles.sectionLabel}>Magnetic Field (µT)</Text>
+                <View style={[styles.divider, { backgroundColor: theme.colors.border }]} />
+                <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Magnetic Field (µT)</Text>
                 <View style={styles.sensorGrid}>
-                  <View style={styles.sensorValue}>
-                    <Text style={styles.sensorLabel}>X</Text>
-                    <Text style={styles.sensorNumber}>{sensorReading.magX?.toFixed(1) ?? '0.0'}</Text>
+                  <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
+                    <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>X</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.magX?.toFixed(1) ?? '0.0'}</Text>
                   </View>
-                  <View style={styles.sensorValue}>
-                    <Text style={styles.sensorLabel}>Y</Text>
-                    <Text style={styles.sensorNumber}>{sensorReading.magY?.toFixed(1) ?? '0.0'}</Text>
+                  <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
+                    <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Y</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.magY?.toFixed(1) ?? '0.0'}</Text>
                   </View>
-                  <View style={styles.sensorValue}>
-                    <Text style={styles.sensorLabel}>Z</Text>
-                    <Text style={styles.sensorNumber}>{sensorReading.magZ?.toFixed(1) ?? '0.0'}</Text>
+                  <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
+                    <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Z</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.magZ?.toFixed(1) ?? '0.0'}</Text>
                   </View>
                 </View>
               </>
@@ -674,20 +874,20 @@ const DeviceDetailScreenContent: React.FC = () => {
             {/* Sensor Calibration Status */}
             {sensorReading.calibration && (
               <>
-                <View style={styles.divider} />
-                <Text style={styles.sectionLabel}>Sensor Calibration (0-3)</Text>
+                <View style={[styles.divider, { backgroundColor: theme.colors.border }]} />
+                <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Sensor Calibration (0-3)</Text>
                 <View style={styles.sensorGrid}>
-                  <View style={styles.sensorValue}>
-                    <Text style={styles.sensorLabel}>Gyro</Text>
-                    <Text style={styles.sensorNumber}>{sensorReading.calibration.gyro}</Text>
+                  <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
+                    <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Gyro</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.calibration.gyro}</Text>
                   </View>
-                  <View style={styles.sensorValue}>
-                    <Text style={styles.sensorLabel}>Accel</Text>
-                    <Text style={styles.sensorNumber}>{sensorReading.calibration.accel}</Text>
+                  <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
+                    <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Accel</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.calibration.accel}</Text>
                   </View>
-                  <View style={styles.sensorValue}>
-                    <Text style={styles.sensorLabel}>Mag</Text>
-                    <Text style={styles.sensorNumber}>{sensorReading.calibration.mag}</Text>
+                  <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
+                    <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Mag</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.calibration.mag}</Text>
                   </View>
                 </View>
               </>
@@ -699,32 +899,30 @@ const DeviceDetailScreenContent: React.FC = () => {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: theme.colors.background }]}>
       {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <ArrowLeft size={24} color={theme.colors.textPrimary} />
-        </TouchableOpacity>
+      <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
+        <BackButton onPress={() => navigation.goBack()} />
         <View style={styles.headerInfo}>
-          <Text style={styles.title}>{deviceName}</Text>
-          <Text style={styles.deviceId}>{deviceId}</Text>
+          <Text style={[styles.title, { color: theme.colors.textPrimary }]}>{deviceName}</Text>
+          <Text style={[styles.deviceId, { color: theme.colors.textTertiary }]}>{deviceId}</Text>
         </View>
       </View>
 
       <ScrollView style={styles.content}>
         {/* Error Banner */}
         {error && (
-          <View style={styles.errorBanner}>
-            <Text style={styles.errorText}>{error}</Text>
+          <View style={[styles.errorBanner, { backgroundColor: theme.colors.errorBg, borderColor: theme.colors.errorBorder }]}>
+            <Text style={[styles.errorText, { color: theme.colors.error }]}>{error}</Text>
             {!isConnected && (
               <TouchableOpacity
-                style={styles.reconnectButton}
+                style={[styles.reconnectButton, { backgroundColor: theme.colors.primary }]}
                 onPress={handleReconnect}
                 disabled={isConnecting}>
                 {isConnecting ? (
                   <ActivityIndicator size="small" color={theme.colors.primary} />
                 ) : (
-                  <Text style={styles.reconnectButtonText}>Reconnect</Text>
+                  <Text style={[styles.reconnectButtonText, { color: theme.colors.primaryForeground }]}>Reconnect</Text>
                 )}
               </TouchableOpacity>
             )}
@@ -733,39 +931,74 @@ const DeviceDetailScreenContent: React.FC = () => {
 
         {renderStatusCard()}
 
-        {/* Record and Streaming status for Vertex devices */}
+        {/* Record and Zero Buttons for Vertex devices */}
         {isVertexDevice && (
-          <>
-            {/* Primary Record Button */}
+          <View style={styles.actionButtonsRow}>
             <TouchableOpacity
-              style={[styles.recordButton, !isConnected && styles.buttonDisabled]}
+              style={[
+                styles.halfWidthButton,
+                {
+                  backgroundColor: isConnected ? theme.colors.error : theme.colors.muted,
+                  borderColor: isConnected ? theme.colors.error : theme.colors.border,
+                }
+              ]}
               onPress={handleStartRecording}
               disabled={!isConnected}>
-              <Circle size={24} color={theme.colors.primaryForeground} fill={theme.colors.error} />
-              <Text style={styles.recordButtonText}>Start Recording</Text>
+              <Text style={[
+                styles.halfWidthButtonText,
+                {
+                  color: isConnected ? theme.colors.primaryForeground : theme.colors.textTertiary,
+                  fontFamily: staticTheme.typography.serif,
+                }
+              ]}>
+                Record
+              </Text>
+              <Circle
+                size={16}
+                color={isConnected ? theme.colors.primaryForeground : theme.colors.textTertiary}
+                fill={isConnected ? theme.colors.error : 'transparent'}
+              />
             </TouchableOpacity>
 
-            {/* Streaming status */}
-            <View style={styles.streamingStatusCard}>
-              <Activity size={20} color={isStreaming ? theme.colors.success : theme.colors.textSecondary} />
-              <Text style={[
-                styles.streamingStatusText,
-                { color: isStreaming ? theme.colors.success : theme.colors.textSecondary }
-              ]}>
-                {isStreaming
-                  ? (sampleRate ? `Live streaming at ${sampleRate} Hz` : 'Live streaming...')
-                  : 'Stream inactive'}
-              </Text>
-            </View>
-          </>
+            <TouchableOpacity
+              style={[
+                styles.halfWidthButton,
+                {
+                  backgroundColor: zeroPoint ? theme.colors.primary : theme.colors.muted,
+                  borderColor: zeroPoint ? theme.colors.primary : theme.colors.border,
+                }
+              ]}
+              onPress={zeroPoint ? () => setShowClearZeroDialog(true) : handleZero}
+              disabled={!isConnected || isZeroing}>
+              {isZeroing ? (
+                <ActivityIndicator size="small" color={theme.colors.textPrimary} />
+              ) : (
+                <>
+                  <Text style={[
+                    styles.halfWidthButtonText,
+                    { color: zeroPoint ? theme.colors.primaryForeground : theme.colors.textPrimary }
+                  ]}>
+                    {zeroPoint ? 'Clear Zero' : 'Zero'}
+                  </Text>
+                  <Activity
+                    size={16}
+                    color={zeroPoint ? theme.colors.primaryForeground : theme.colors.textPrimary}
+                  />
+                </>
+              )}
+            </TouchableOpacity>
+          </View>
         )}
+
+        {/* 3D Orientation Visualization for Vertex devices */}
+        {isVertexDevice && renderOrientationVisualization()}
 
         {renderSensorData()}
 
         {/* Primary Action - Only show poll button for non-Vertex devices */}
         {!isVertexDevice && (
           <TouchableOpacity
-            style={[styles.primaryButton, !isConnected && styles.buttonDisabled]}
+            style={[styles.primaryButton, { backgroundColor: theme.colors.primary }, !isConnected && styles.buttonDisabled]}
             onPress={handlePollSensor}
             disabled={!isConnected || isPolling}>
             {isPolling ? (
@@ -773,7 +1006,7 @@ const DeviceDetailScreenContent: React.FC = () => {
             ) : (
               <>
                 <RefreshCw size={20} color={theme.colors.primaryForeground} />
-                <Text style={styles.primaryButtonText}>Poll Sensor</Text>
+                <Text style={[styles.primaryButtonText, { color: theme.colors.primaryForeground }]}>Poll Sensor</Text>
               </>
             )}
           </TouchableOpacity>
@@ -782,31 +1015,51 @@ const DeviceDetailScreenContent: React.FC = () => {
         {/* Secondary Actions */}
         <View style={styles.actionsGrid}>
           <TouchableOpacity
-            style={styles.secondaryButton}
+            style={[styles.secondaryButton, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}
             onPress={handleCalibrate}
             disabled={!isConnected}>
             <Activity size={20} color={theme.colors.textPrimary} />
-            <Text style={styles.secondaryButtonText}>Calibrate</Text>
+            <Text style={[styles.secondaryButtonText, { color: theme.colors.textPrimary }]}>Calibrate</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.secondaryButton}
+            style={[styles.secondaryButton, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}
             onPress={handleDisconnect}
             disabled={!isConnected}>
             <Bluetooth size={20} color={theme.colors.textPrimary} />
-            <Text style={styles.secondaryButtonText}>Disconnect</Text>
+            <Text style={[styles.secondaryButtonText, { color: theme.colors.textPrimary }]}>Disconnect</Text>
           </TouchableOpacity>
         </View>
 
         {/* Danger Zone */}
-        <View style={styles.dangerZone}>
-          <Text style={styles.dangerTitle}>Danger Zone</Text>
-          <TouchableOpacity style={styles.dangerButton} onPress={handleForget}>
+        <View style={[styles.dangerZone, { borderTopColor: theme.colors.border }]}>
+          <Text style={[styles.dangerTitle, { color: theme.colors.error }]}>Danger Zone</Text>
+          <TouchableOpacity style={[styles.dangerButton, { borderColor: theme.colors.error }]} onPress={handleForget}>
             <Trash2 size={20} color={theme.colors.error} />
-            <Text style={styles.dangerButtonText}>Forget Device</Text>
+            <Text style={[styles.dangerButtonText, { color: theme.colors.error }]}>Forget Device</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      <ConfirmDialog
+        visible={showClearZeroDialog}
+        onDismiss={() => setShowClearZeroDialog(false)}
+        title="Clear Zero Point"
+        message="Remove the zero point calibration? Readings will return to raw values."
+        icon={<Activity size={48} color={theme.colors.primary} />}
+        actions={[
+          {
+            label: 'Cancel',
+            onPress: () => setShowClearZeroDialog(false),
+            variant: 'default',
+          },
+          {
+            label: 'Clear',
+            onPress: confirmClearZero,
+            variant: 'primary',
+          },
+        ]}
+      />
     </View>
   );
 };
@@ -814,333 +1067,340 @@ const DeviceDetailScreenContent: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: staticTheme.colors.background,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: theme.spacing.lg,
-    paddingVertical: theme.spacing.md,
+    paddingHorizontal: staticTheme.spacing.lg,
+    paddingVertical: staticTheme.spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
+    borderBottomColor: staticTheme.colors.border,
   },
   backButton: {
-    marginRight: theme.spacing.md,
+    marginRight: staticTheme.spacing.md,
   },
   headerInfo: {
     flex: 1,
   },
   title: {
-    fontSize: theme.typography.fontSize.xl,
-    fontWeight: theme.typography.fontWeight.semibold,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
+    fontSize: staticTheme.typography.fontSize.xl,
+    fontWeight: staticTheme.typography.fontWeight.semibold,
+    color: staticTheme.colors.textPrimary,
+    fontFamily: staticTheme.typography.serif,
   },
   deviceId: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.textTertiary,
-    fontFamily: theme.typography.mono,
+    fontSize: staticTheme.typography.fontSize.xs,
+    color: staticTheme.colors.textTertiary,
+    fontFamily: staticTheme.typography.mono,
     marginTop: 2,
   },
   content: {
     flex: 1,
-    padding: theme.spacing.lg,
+    padding: staticTheme.spacing.lg,
   },
   errorBanner: {
-    backgroundColor: theme.colors.errorBg,
-    borderRadius: theme.borderRadius.md,
+    backgroundColor: staticTheme.colors.errorBg,
+    borderRadius: staticTheme.borderRadius.md,
     borderWidth: 1,
-    borderColor: theme.colors.errorBorder,
-    padding: theme.spacing.md,
-    marginBottom: theme.spacing.lg,
+    borderColor: staticTheme.colors.errorBorder,
+    padding: staticTheme.spacing.md,
+    marginBottom: staticTheme.spacing.lg,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
   errorText: {
-    fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.error,
-    fontFamily: theme.typography.serif,
+    fontSize: staticTheme.typography.fontSize.sm,
+    color: staticTheme.colors.error,
+    fontFamily: staticTheme.typography.serif,
     flex: 1,
-    marginRight: theme.spacing.sm,
+    marginRight: staticTheme.spacing.sm,
   },
   reconnectButton: {
-    backgroundColor: theme.colors.primary,
-    paddingVertical: theme.spacing.sm,
-    paddingHorizontal: theme.spacing.md,
-    borderRadius: theme.borderRadius.sm,
+    backgroundColor: staticTheme.colors.primary,
+    paddingVertical: staticTheme.spacing.sm,
+    paddingHorizontal: staticTheme.spacing.md,
+    borderRadius: staticTheme.borderRadius.sm,
     minWidth: 80,
     alignItems: 'center',
   },
   reconnectButtonText: {
-    color: theme.colors.primaryForeground,
-    fontSize: theme.typography.fontSize.sm,
-    fontWeight: theme.typography.fontWeight.medium,
-    fontFamily: theme.typography.serif,
+    color: staticTheme.colors.primaryForeground,
+    fontSize: staticTheme.typography.fontSize.sm,
+    fontWeight: staticTheme.typography.fontWeight.medium,
+    fontFamily: staticTheme.typography.serif,
   },
   card: {
-    backgroundColor: theme.colors.muted,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.lg,
-    marginBottom: theme.spacing.lg,
+    backgroundColor: staticTheme.colors.muted,
+    borderRadius: staticTheme.borderRadius.md,
+    padding: staticTheme.spacing.lg,
+    marginBottom: staticTheme.spacing.lg,
     borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderColor: staticTheme.colors.border,
   },
   cardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: theme.spacing.md,
+    marginBottom: staticTheme.spacing.md,
   },
   cardTitle: {
-    fontSize: theme.typography.fontSize.lg,
-    fontWeight: theme.typography.fontWeight.medium,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
-    marginBottom: theme.spacing.md,
+    fontSize: staticTheme.typography.fontSize.lg,
+    fontWeight: staticTheme.typography.fontWeight.medium,
+    color: staticTheme.colors.textPrimary,
+    fontFamily: staticTheme.typography.serif,
+    marginBottom: staticTheme.spacing.md,
   },
   timestamp: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.mono,
+    fontSize: staticTheme.typography.fontSize.xs,
+    color: staticTheme.colors.textSecondary,
+    fontFamily: staticTheme.typography.mono,
   },
-  statusRow: {
+  statusGrid: {
+    gap: staticTheme.spacing.md,
+  },
+  statusGridRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: theme.spacing.md,
+    gap: staticTheme.spacing.md,
   },
-  statusItem: {
+  statusCompactItem: {
     flexDirection: 'row',
     alignItems: 'center',
+    gap: staticTheme.spacing.xs,
     flex: 1,
   },
-  statusInfo: {
-    marginLeft: theme.spacing.sm,
+  statusIcon: {
+    marginRight: staticTheme.spacing.xs,
   },
-  statusLabel: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
-  },
-  statusValue: {
-    fontSize: theme.typography.fontSize.md,
-    fontWeight: theme.typography.fontWeight.medium,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
+  statusCompactValue: {
+    fontSize: staticTheme.typography.fontSize.sm,
+    fontWeight: staticTheme.typography.fontWeight.medium,
   },
   divider: {
     height: 1,
-    backgroundColor: theme.colors.border,
-    marginVertical: theme.spacing.md,
+    backgroundColor: staticTheme.colors.border,
+    marginVertical: staticTheme.spacing.md,
   },
   emptyReading: {
     alignItems: 'center',
-    padding: theme.spacing.xl,
+    padding: staticTheme.spacing.xl,
   },
   emptyReadingText: {
-    marginTop: theme.spacing.md,
-    fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
+    marginTop: staticTheme.spacing.md,
+    fontSize: staticTheme.typography.fontSize.sm,
+    color: staticTheme.colors.textSecondary,
+    fontFamily: staticTheme.typography.serif,
     textAlign: 'center',
   },
   readingCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: theme.colors.background,
-    padding: theme.spacing.lg,
-    borderRadius: theme.borderRadius.md,
+    backgroundColor: staticTheme.colors.background,
+    padding: staticTheme.spacing.lg,
+    borderRadius: staticTheme.borderRadius.md,
     borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderColor: staticTheme.colors.border,
   },
   readingInfo: {
-    marginLeft: theme.spacing.md,
+    marginLeft: staticTheme.spacing.md,
     flex: 1,
   },
   readingLabel: {
-    fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
+    fontSize: staticTheme.typography.fontSize.sm,
+    color: staticTheme.colors.textSecondary,
+    fontFamily: staticTheme.typography.serif,
   },
   readingValue: {
-    fontSize: theme.typography.fontSize.xxxl,
-    fontWeight: theme.typography.fontWeight.semibold,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
+    fontSize: staticTheme.typography.fontSize.xxxl,
+    fontWeight: staticTheme.typography.fontWeight.semibold,
+    color: staticTheme.colors.textPrimary,
+    fontFamily: staticTheme.typography.serif,
   },
   readingMeta: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.textTertiary,
-    fontFamily: theme.typography.serif,
+    fontSize: staticTheme.typography.fontSize.xs,
+    color: staticTheme.colors.textTertiary,
+    fontFamily: staticTheme.typography.serif,
     marginTop: 4,
   },
   sectionLabel: {
-    fontSize: theme.typography.fontSize.sm,
-    fontWeight: theme.typography.fontWeight.medium,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
-    marginBottom: theme.spacing.sm,
+    fontSize: staticTheme.typography.fontSize.sm,
+    fontWeight: staticTheme.typography.fontWeight.medium,
+    color: staticTheme.colors.textSecondary,
+    fontFamily: staticTheme.typography.serif,
+    marginBottom: staticTheme.spacing.sm,
   },
   sensorGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: theme.spacing.sm,
+    gap: staticTheme.spacing.sm,
   },
   sensorValue: {
     flex: 1,
-    backgroundColor: theme.colors.background,
-    padding: theme.spacing.md,
-    borderRadius: theme.borderRadius.sm,
+    backgroundColor: staticTheme.colors.background,
+    padding: staticTheme.spacing.md,
+    borderRadius: staticTheme.borderRadius.sm,
     alignItems: 'center',
   },
   sensorLabel: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
+    fontSize: staticTheme.typography.fontSize.xs,
+    color: staticTheme.colors.textSecondary,
+    fontFamily: staticTheme.typography.serif,
     marginBottom: 4,
   },
   sensorNumber: {
-    fontSize: theme.typography.fontSize.md,
-    fontWeight: theme.typography.fontWeight.semibold,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.mono,
+    fontSize: staticTheme.typography.fontSize.md,
+    fontWeight: staticTheme.typography.fontWeight.semibold,
+    color: staticTheme.colors.textPrimary,
+    fontFamily: staticTheme.typography.mono,
     minWidth: 60,
     textAlign: 'center',
   },
   rawData: {
-    marginTop: theme.spacing.md,
-    padding: theme.spacing.sm,
-    backgroundColor: theme.colors.background,
-    borderRadius: theme.borderRadius.sm,
+    marginTop: staticTheme.spacing.md,
+    padding: staticTheme.spacing.sm,
+    backgroundColor: staticTheme.colors.background,
+    borderRadius: staticTheme.borderRadius.sm,
   },
   rawDataLabel: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
+    fontSize: staticTheme.typography.fontSize.xs,
+    color: staticTheme.colors.textSecondary,
+    fontFamily: staticTheme.typography.serif,
     marginBottom: 4,
   },
   rawDataText: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.mono,
+    fontSize: staticTheme.typography.fontSize.xs,
+    color: staticTheme.colors.textPrimary,
+    fontFamily: staticTheme.typography.mono,
   },
   primaryButton: {
-    backgroundColor: theme.colors.primary,
+    backgroundColor: staticTheme.colors.primary,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: theme.spacing.lg,
-    borderRadius: theme.borderRadius.md,
-    marginBottom: theme.spacing.md,
-    gap: theme.spacing.sm,
+    padding: staticTheme.spacing.lg,
+    borderRadius: staticTheme.borderRadius.md,
+    marginBottom: staticTheme.spacing.md,
+    gap: staticTheme.spacing.sm,
   },
   primaryButtonText: {
-    color: theme.colors.primaryForeground,
-    fontSize: theme.typography.fontSize.lg,
-    fontWeight: theme.typography.fontWeight.semibold,
-    fontFamily: theme.typography.serif,
+    color: staticTheme.colors.primaryForeground,
+    fontSize: staticTheme.typography.fontSize.lg,
+    fontWeight: staticTheme.typography.fontWeight.semibold,
+    fontFamily: staticTheme.typography.serif,
   },
   buttonDisabled: {
     opacity: 0.5,
   },
   actionsGrid: {
     flexDirection: 'row',
-    gap: theme.spacing.md,
-    marginBottom: theme.spacing.lg,
+    gap: staticTheme.spacing.md,
+    marginBottom: staticTheme.spacing.lg,
   },
   secondaryButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: theme.spacing.md,
-    backgroundColor: theme.colors.muted,
-    borderRadius: theme.borderRadius.md,
+    padding: staticTheme.spacing.md,
+    backgroundColor: staticTheme.colors.muted,
+    borderRadius: staticTheme.borderRadius.md,
     borderWidth: 1,
-    borderColor: theme.colors.border,
-    gap: theme.spacing.sm,
+    borderColor: staticTheme.colors.border,
+    gap: staticTheme.spacing.sm,
   },
   secondaryButtonText: {
-    color: theme.colors.textPrimary,
-    fontSize: theme.typography.fontSize.md,
-    fontWeight: theme.typography.fontWeight.medium,
-    fontFamily: theme.typography.serif,
+    color: staticTheme.colors.textPrimary,
+    fontSize: staticTheme.typography.fontSize.md,
+    fontWeight: staticTheme.typography.fontWeight.medium,
+    fontFamily: staticTheme.typography.serif,
   },
   dangerZone: {
-    marginTop: theme.spacing.xl,
-    paddingTop: theme.spacing.lg,
+    marginTop: staticTheme.spacing.xl,
+    paddingTop: staticTheme.spacing.lg,
     borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
-    marginBottom: theme.spacing.xxl,
+    borderTopColor: staticTheme.colors.border,
+    marginBottom: staticTheme.spacing.xxl,
   },
   dangerTitle: {
-    fontSize: theme.typography.fontSize.md,
-    fontWeight: theme.typography.fontWeight.medium,
-    color: theme.colors.error,
-    fontFamily: theme.typography.serif,
-    marginBottom: theme.spacing.md,
+    fontSize: staticTheme.typography.fontSize.md,
+    fontWeight: staticTheme.typography.fontWeight.medium,
+    color: staticTheme.colors.error,
+    fontFamily: staticTheme.typography.serif,
+    marginBottom: staticTheme.spacing.md,
   },
   dangerButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: theme.spacing.md,
+    padding: staticTheme.spacing.md,
     backgroundColor: 'transparent',
-    borderRadius: theme.borderRadius.md,
+    borderRadius: staticTheme.borderRadius.md,
     borderWidth: 1,
-    borderColor: theme.colors.error,
-    gap: theme.spacing.sm,
+    borderColor: staticTheme.colors.error,
+    gap: staticTheme.spacing.sm,
   },
   dangerButtonText: {
-    color: theme.colors.error,
-    fontSize: theme.typography.fontSize.md,
-    fontWeight: theme.typography.fontWeight.medium,
-    fontFamily: theme.typography.serif,
+    color: staticTheme.colors.error,
+    fontSize: staticTheme.typography.fontSize.md,
+    fontWeight: staticTheme.typography.fontWeight.medium,
+    fontFamily: staticTheme.typography.serif,
   },
   streamingErrorBanner: {
-    backgroundColor: theme.colors.error + '15',
-    borderRadius: theme.borderRadius.sm,
-    padding: theme.spacing.sm,
-    marginBottom: theme.spacing.md,
+    backgroundColor: staticTheme.colors.error + '15',
+    borderRadius: staticTheme.borderRadius.sm,
+    padding: staticTheme.spacing.sm,
+    marginBottom: staticTheme.spacing.md,
   },
   streamingErrorText: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.error,
-    fontFamily: theme.typography.serif,
+    fontSize: staticTheme.typography.fontSize.xs,
+    color: staticTheme.colors.error,
+    fontFamily: staticTheme.typography.serif,
+  },
+  visualizationContainer: {
+    backgroundColor: staticTheme.colors.card,
+    borderRadius: staticTheme.borderRadius.md,
+    borderWidth: 1,
+    borderColor: staticTheme.colors.border,
+    padding: staticTheme.spacing.md,
+    marginBottom: staticTheme.spacing.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  actionButtonsRow: {
+    flexDirection: 'row',
+    gap: staticTheme.spacing.md,
+    marginBottom: staticTheme.spacing.md,
+  },
+  halfWidthButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: staticTheme.spacing.md,
+    paddingHorizontal: staticTheme.spacing.md,
+    borderRadius: staticTheme.borderRadius.md,
+    borderWidth: 1,
+  },
+  halfWidthButtonText: {
+    fontSize: staticTheme.typography.fontSize.md,
+    fontWeight: staticTheme.typography.fontWeight.medium,
   },
   recordButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    padding: theme.spacing.lg,
-    backgroundColor: theme.colors.error,
-    borderRadius: theme.borderRadius.md,
-    marginBottom: theme.spacing.md,
-    gap: theme.spacing.sm,
-    minHeight: 60,
+    justifyContent: 'space-between',
+    paddingVertical: staticTheme.spacing.md,
+    paddingHorizontal: staticTheme.spacing.lg,
+    borderRadius: staticTheme.borderRadius.md,
+    borderWidth: 1,
+    marginBottom: staticTheme.spacing.md,
   },
   recordButtonText: {
-    color: theme.colors.primaryForeground,
-    fontSize: theme.typography.fontSize.lg,
-    fontWeight: theme.typography.fontWeight.semibold,
-    fontFamily: theme.typography.serif,
-  },
-  streamingStatusCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: theme.spacing.md,
-    backgroundColor: theme.colors.muted,
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    gap: theme.spacing.sm,
-    marginBottom: theme.spacing.md,
-  },
-  streamingStatusText: {
-    fontSize: theme.typography.fontSize.md,
-    fontWeight: theme.typography.fontWeight.medium,
-    fontFamily: theme.typography.serif,
+    fontSize: staticTheme.typography.fontSize.md,
+    fontWeight: staticTheme.typography.fontWeight.medium,
   },
 });
 

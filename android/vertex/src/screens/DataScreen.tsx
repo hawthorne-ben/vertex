@@ -9,8 +9,11 @@ import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, A
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { FileText, Trash2, RefreshCw, Clock, Database, Activity } from 'lucide-react-native';
-import { theme } from '../styles/theme';
+import { FileText, Trash2, RefreshCw, Clock, Database, Activity, AlertCircle } from 'lucide-react-native';
+import { theme as staticTheme } from '../styles/theme';
+import { useTheme } from '../contexts/ThemeContext';
+import { useToast } from '../contexts/ToastContext';
+import { ConfirmDialog } from '../components/ui';
 import FileService, { RecordingMetadata } from '../services/FileService';
 import { RootStackParamList } from '../navigation/AppNavigator';
 
@@ -18,10 +21,13 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 const DataScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
+  const { theme } = useTheme();
+  const { showToast } = useToast();
   const navigation = useNavigation<NavigationProp>();
   const [recordings, setRecordings] = useState<RecordingMetadata[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [recordingToDelete, setRecordingToDelete] = useState<RecordingMetadata | null>(null);
 
   // Reload recordings when screen comes into focus
   useFocusEffect(
@@ -53,26 +59,34 @@ const DataScreen: React.FC = () => {
   };
 
   const handleDeleteRecording = (recording: RecordingMetadata) => {
-    Alert.alert(
-      'Delete Recording',
-      `Delete ${recording.fileName}?\n\nThis cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await FileService.deleteRecording(recording.fileName);
-              loadRecordings();
-            } catch (error) {
-              console.error('[DataScreen] Error deleting recording:', error);
-              Alert.alert('Error', 'Failed to delete recording');
-            }
-          },
-        },
-      ]
-    );
+    setRecordingToDelete(recording);
+  };
+
+  const confirmDelete = async () => {
+    if (!recordingToDelete) return;
+
+    try {
+      await FileService.deleteRecording(recordingToDelete.fileName);
+      setRecordingToDelete(null);
+      loadRecordings();
+
+      // Show success toast
+      showToast({
+        message: 'Recording deleted',
+        variant: 'success',
+        duration: 2000,
+        hasTabBar: true, // Data screen has bottom tabs
+      });
+    } catch (error) {
+      console.error('[DataScreen] Error deleting recording:', error);
+      setRecordingToDelete(null);
+      showToast({
+        message: 'Failed to delete recording',
+        variant: 'error',
+        duration: 3000,
+        hasTabBar: true, // Data screen has bottom tabs
+      });
+    }
   };
 
   const formatFileSize = (bytes: number): string => {
@@ -97,20 +111,71 @@ const DataScreen: React.FC = () => {
     return date.toLocaleDateString();
   };
 
+  const formatDateRange = (startTime: Date, endTime?: Date): string => {
+    const now = new Date();
+    const isToday = startTime.toDateString() === now.toDateString();
+    const isYesterday = startTime.toDateString() === new Date(now.getTime() - 86400000).toDateString();
+    const isSameYear = startTime.getFullYear() === now.getFullYear();
+
+    const startTimeStr = startTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+    let prefix = '';
+    if (isToday) {
+      prefix = '';
+    } else if (isYesterday) {
+      prefix = 'Yesterday, ';
+    } else {
+      // Older than yesterday - show truncated date
+      const dateOptions: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' };
+      if (!isSameYear) {
+        dateOptions.year = 'numeric';
+      }
+      prefix = startTime.toLocaleDateString([], dateOptions) + ', ';
+    }
+
+    if (endTime) {
+      const endTimeStr = endTime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+      return `${prefix}${startTimeStr} - ${endTimeStr}`;
+    }
+
+    return `${prefix}${startTimeStr}`;
+  };
+
+  const formatDuration = (startTime: Date, endTime?: Date): string => {
+    if (!endTime) return 'In progress';
+
+    const durationMs = endTime.getTime() - startTime.getTime();
+    const durationSecs = Math.floor(durationMs / 1000);
+    const durationMins = Math.floor(durationSecs / 60);
+    const durationHours = Math.floor(durationMins / 60);
+
+    if (durationHours > 0) {
+      const remainingMins = durationMins % 60;
+      return remainingMins > 0 ? `${durationHours}h ${remainingMins}m` : `${durationHours}h`;
+    }
+
+    if (durationMins > 0) {
+      const remainingSecs = durationSecs % 60;
+      return remainingSecs > 0 ? `${durationMins}m ${remainingSecs}s` : `${durationMins}m`;
+    }
+
+    return `${durationSecs}s`;
+  };
+
   if (isLoading) {
     return (
-      <View style={[styles.container, styles.centerContent, { paddingTop: insets.top }]}>
+      <View style={[styles.container, styles.centerContent, { paddingTop: insets.top, backgroundColor: theme.colors.background }]}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
-        <Text style={styles.loadingText}>Loading recordings...</Text>
+        <Text style={[styles.loadingText, { color: theme.colors.textSecondary }]}>Loading recordings...</Text>
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       {/* Static Header */}
-      <View style={styles.header}>
-        <Text style={styles.title}>Recordings</Text>
+      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: theme.colors.background, borderBottomColor: theme.colors.border }]}>
+        <Text style={[styles.title, { color: theme.colors.textPrimary }]}>Data</Text>
         <TouchableOpacity onPress={handleRefresh} disabled={isRefreshing}>
           <RefreshCw
             size={24}
@@ -130,60 +195,65 @@ const DataScreen: React.FC = () => {
         {recordings.length === 0 ? (
           <View style={styles.emptyState}>
             <FileText size={64} color={theme.colors.textTertiary} />
-            <Text style={styles.emptyTitle}>No Recordings</Text>
-            <Text style={styles.emptyText}>
+            <Text style={[styles.emptyTitle, { color: theme.colors.textPrimary }]}>No Data</Text>
+            <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
               Start recording from a connected device to save sensor data
             </Text>
           </View>
         ) : (
           <>
-            <Text style={styles.subtitle}>{recordings.length} recording{recordings.length !== 1 ? 's' : ''}</Text>
+            <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
+              {recordings.length} recording{recordings.length !== 1 ? 's' : ''}
+            </Text>
 
             {recordings.map((recording, index) => {
-              // Extract a display name from filename if deviceName is missing
-              const displayName = recording.deviceName ||
-                recording.fileName.split('_imu_')[0].replace(/_/g, ' ') ||
-                'IMU Recording';
+              const dateRange = formatDateRange(recording.startTime, recording.endTime);
+              const duration = formatDuration(recording.startTime, recording.endTime);
 
               return (
                 <TouchableOpacity
                   key={index}
-                  style={styles.fileCard}
+                  style={[
+                    styles.fileRow,
+                    { borderBottomColor: theme.colors.border },
+                    index === recordings.length - 1 && styles.lastFileRow
+                  ]}
                   onPress={() => navigation.navigate('DataDetail', {
                     fileName: recording.fileName,
                     filePath: recording.filePath
                   })}>
-                  <View style={styles.fileHeader}>
-                    <View style={styles.fileIcon}>
-                      <Activity size={24} color={theme.colors.primary} />
-                    </View>
-                    <View style={styles.fileInfo}>
-                      <Text style={styles.fileName} numberOfLines={1}>
-                        {displayName}
-                      </Text>
-                      <Text style={styles.fileDate}>{formatDate(recording.startTime)}</Text>
+                  <View style={styles.fileRowContent}>
+                    <View style={styles.fileRowLeft}>
+                      <Activity size={20} color={theme.colors.primary} />
+                      <View style={styles.fileRowInfo}>
+                        <Text style={[styles.fileRowName, { color: theme.colors.textPrimary }]} numberOfLines={1}>
+                          {dateRange}
+                        </Text>
+                        <View style={styles.fileRowMeta}>
+                          <Text style={[styles.fileRowMetaText, { color: theme.colors.textSecondary }]}>
+                            {duration}
+                          </Text>
+                          <Text style={[styles.fileRowDivider, { color: theme.colors.textTertiary }]}> • </Text>
+                          <Text style={[styles.fileRowMetaText, { color: theme.colors.textSecondary }]}>
+                            {recording.sampleCount.toLocaleString()} samples
+                          </Text>
+                          <Text style={[styles.fileRowDivider, { color: theme.colors.textTertiary }]}> • </Text>
+                          <Text style={[styles.fileRowMetaText, { color: theme.colors.textSecondary }]}>
+                            {formatFileSize(recording.fileSize)}
+                          </Text>
+                        </View>
+                      </View>
                     </View>
                     <TouchableOpacity
-                      onPress={() => handleDeleteRecording(recording)}
-                      style={styles.deleteButton}>
-                      <Trash2 size={20} color={theme.colors.error} />
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleDeleteRecording(recording);
+                      }}
+                      style={styles.fileRowDelete}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                      <Trash2 size={18} color={theme.colors.error} />
                     </TouchableOpacity>
                   </View>
-
-                <View style={styles.fileStats}>
-                  <View style={styles.statItem}>
-                    <Database size={14} color={theme.colors.textSecondary} />
-                    <Text style={styles.statText}>{recording.sampleCount.toLocaleString()} samples</Text>
-                  </View>
-                  <View style={styles.statItem}>
-                    <Clock size={14} color={theme.colors.textSecondary} />
-                    <Text style={styles.statText}>{formatFileSize(recording.fileSize)}</Text>
-                  </View>
-                </View>
-
-                <Text style={styles.fileNameSmall} numberOfLines={1}>
-                  {recording.fileName}
-                </Text>
                 </TouchableOpacity>
               );
             })}
@@ -191,6 +261,26 @@ const DataScreen: React.FC = () => {
         )}
       </View>
     </ScrollView>
+
+    <ConfirmDialog
+      visible={recordingToDelete !== null}
+      onDismiss={() => setRecordingToDelete(null)}
+      title="Delete Recording"
+      message={recordingToDelete ? `Delete recording from ${formatDateRange(recordingToDelete.startTime, recordingToDelete.endTime)}? This cannot be undone.` : ''}
+      icon={<AlertCircle size={48} color={theme.colors.error} />}
+      actions={[
+        {
+          label: 'Cancel',
+          onPress: () => setRecordingToDelete(null),
+          variant: 'default',
+        },
+        {
+          label: 'Delete',
+          onPress: confirmDelete,
+          variant: 'danger',
+        },
+      ]}
+    />
     </View>
   );
 };
@@ -198,7 +288,7 @@ const DataScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: staticTheme.colors.background,
   },
   centerContent: {
     justifyContent: 'center',
@@ -208,115 +298,101 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   content: {
-    padding: theme.spacing.lg,
+    padding: staticTheme.spacing.lg,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: theme.spacing.lg,
-    paddingVertical: theme.spacing.md,
-    backgroundColor: theme.colors.background,
+    paddingHorizontal: staticTheme.spacing.lg,
+    paddingVertical: staticTheme.spacing.md,
+    backgroundColor: staticTheme.colors.background,
     borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
+    borderBottomColor: staticTheme.colors.border,
   },
   title: {
-    fontSize: theme.typography.fontSize.xxxl,
-    fontWeight: theme.typography.fontWeight.light,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
+    fontSize: staticTheme.typography.fontSize.xxl,
+    fontWeight: staticTheme.typography.fontWeight.light,
+    fontFamily: staticTheme.typography.serif,
+    color: staticTheme.colors.textPrimary,
   },
   subtitle: {
-    fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
-    marginBottom: theme.spacing.md,
+    fontSize: staticTheme.typography.fontSize.sm,
+    color: staticTheme.colors.textSecondary,
+    fontFamily: staticTheme.typography.serif,
+    marginBottom: staticTheme.spacing.md,
   },
   loadingText: {
-    fontSize: theme.typography.fontSize.md,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
-    marginTop: theme.spacing.md,
+    fontSize: staticTheme.typography.fontSize.md,
+    color: staticTheme.colors.textSecondary,
+    fontFamily: staticTheme.typography.serif,
+    marginTop: staticTheme.spacing.md,
   },
   spinning: {
     transform: [{ rotate: '45deg' }],
   },
   emptyState: {
     alignItems: 'center',
-    padding: theme.spacing.xxl,
-    marginTop: theme.spacing.xxl,
+    padding: staticTheme.spacing.xxl,
+    marginTop: staticTheme.spacing.xxl,
   },
   emptyTitle: {
-    fontSize: theme.typography.fontSize.xl,
-    fontWeight: theme.typography.fontWeight.semibold,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
-    marginTop: theme.spacing.lg,
-    marginBottom: theme.spacing.sm,
+    fontSize: staticTheme.typography.fontSize.xl,
+    fontWeight: staticTheme.typography.fontWeight.semibold,
+    color: staticTheme.colors.textPrimary,
+    fontFamily: staticTheme.typography.serif,
+    marginTop: staticTheme.spacing.lg,
+    marginBottom: staticTheme.spacing.sm,
   },
   emptyText: {
-    fontSize: theme.typography.fontSize.md,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
+    fontSize: staticTheme.typography.fontSize.md,
+    color: staticTheme.colors.textSecondary,
+    fontFamily: staticTheme.typography.serif,
     textAlign: 'center',
     lineHeight: 22,
   },
-  fileCard: {
-    backgroundColor: theme.colors.muted,
-    padding: theme.spacing.lg,
-    borderRadius: theme.borderRadius.md,
-    marginBottom: theme.spacing.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
+  fileRow: {
+    borderBottomWidth: 1,
+    paddingVertical: staticTheme.spacing.md,
   },
-  fileHeader: {
+  lastFileRow: {
+    borderBottomWidth: 0,
+  },
+  fileRowContent: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: theme.spacing.md,
+    justifyContent: 'space-between',
   },
-  fileIcon: {
-    marginRight: theme.spacing.md,
-    paddingVertical: theme.spacing.xs,
+  fileRowLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+    gap: staticTheme.spacing.md,
   },
-  fileInfo: {
+  fileRowInfo: {
     flex: 1,
   },
-  fileName: {
-    fontSize: theme.typography.fontSize.md,
-    fontWeight: theme.typography.fontWeight.semibold,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
-    marginBottom: 2,
+  fileRowName: {
+    fontSize: staticTheme.typography.fontSize.md,
+    fontWeight: staticTheme.typography.fontWeight.medium,
+    fontFamily: staticTheme.typography.serif,
+    marginBottom: 4,
   },
-  fileDate: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
-  },
-  deleteButton: {
-    padding: theme.spacing.sm,
-    marginLeft: theme.spacing.sm,
-  },
-  fileStats: {
-    flexDirection: 'row',
-    gap: theme.spacing.md,
-    marginBottom: theme.spacing.sm,
-  },
-  statItem: {
+  fileRowMeta: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    flexWrap: 'wrap',
   },
-  statText: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
+  fileRowMetaText: {
+    fontSize: staticTheme.typography.fontSize.xs,
+    fontFamily: staticTheme.typography.mono,
   },
-  fileNameSmall: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.textTertiary,
-    fontFamily: theme.typography.mono,
-    marginTop: theme.spacing.xs,
+  fileRowDivider: {
+    fontSize: staticTheme.typography.fontSize.xs,
+  },
+  fileRowDelete: {
+    padding: staticTheme.spacing.xs,
+    marginLeft: staticTheme.spacing.sm,
   },
 });
 

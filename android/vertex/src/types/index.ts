@@ -1,10 +1,18 @@
+// Re-export all types for convenient imports
+export * from './api.types';
+export * from './components.types';
+export * from './errors.types';
+export * from './navigation.types';
+export * from './theme.types';
+
 // Device and sensor data types
+import { AdvertisementData } from './api.types';
 
 export interface IMUDevice {
   id: string;
   name: string;
   rssi?: number;
-  advertisementData?: any;
+  advertisementData?: AdvertisementData;
 }
 
 export interface SensorReading {
@@ -30,4 +38,3 @@ export interface LogFile {
   recordCount: number;
   duration_ms: number;
 }
-

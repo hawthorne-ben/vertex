@@ -20,12 +20,15 @@ const BATTERY_LEVEL = '00002a19-0000-1000-8000-00805f9b34fb';
 const IMU_SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef0';
 const IMU_CHARACTERISTIC_UUID = '12345678-1234-5678-1234-56789abcdef1';
 
+type ConnectionListener = (device: Device | null, isConnected: boolean) => void;
+
 class BleService {
   private manager: BleManager;
   private connectedDevice: Device | null = null;
   private activeSubscriptions: any[] = [];
   private isHandlingDisconnection: boolean = false;
   private isConnecting: boolean = false;
+  private connectionListeners: ConnectionListener[] = [];
 
   constructor() {
     this.manager = new BleManager();
@@ -56,6 +59,7 @@ class BleService {
           if (this.connectedDevice) {
             this.cleanupSubscriptions();
             this.connectedDevice = null;
+            this.notifyConnectionListeners(null, false);
           }
           return;
         }
@@ -64,6 +68,36 @@ class BleService {
           originalHandler(error, isFatal);
         }
       });
+    }
+  }
+
+  /**
+   * Add a connection state listener
+   */
+  addConnectionListener(listener: ConnectionListener): () => void {
+    this.connectionListeners.push(listener);
+    // Immediately notify with current state
+    listener(this.connectedDevice, this.connectedDevice !== null);
+    // Return unsubscribe function
+    return () => {
+      const index = this.connectionListeners.indexOf(listener);
+      if (index > -1) {
+        this.connectionListeners.splice(index, 1);
+      }
+    };
+  }
+
+  /**
+   * Notify all listeners of connection state change
+   */
+  private notifyConnectionListeners(device: Device | null, isConnected: boolean): void {
+    console.log('[BLE] Notifying listeners - isConnected:', isConnected, 'device:', device?.name);
+    for (const listener of this.connectionListeners) {
+      try {
+        listener(device, isConnected);
+      } catch (error) {
+        console.error('[BLE] Error in connection listener:', error);
+      }
     }
   }
 
@@ -179,6 +213,9 @@ class BleService {
       this.connectedDevice = device;
       console.log('[BLE] Device connected successfully');
 
+      // Notify listeners of connection
+      this.notifyConnectionListeners(device, true);
+
       // Request larger MTU for 56-byte sensor data packets
       try {
         await device.requestMTU(185);
@@ -198,10 +235,15 @@ class BleService {
 
             if (error) {
               console.log('[BLE] Device disconnected:', error.message);
+            } else {
+              console.log('[BLE] Device disconnected normally');
             }
 
             this.cleanupSubscriptions();
             this.connectedDevice = null;
+
+            // Notify listeners of disconnection
+            this.notifyConnectionListeners(null, false);
 
             setTimeout(() => {
               this.isHandlingDisconnection = false;
@@ -864,6 +906,9 @@ class BleService {
       }
 
       this.connectedDevice = null;
+
+      // Notify listeners of disconnection
+      this.notifyConnectionListeners(null, false);
     }
   }
 

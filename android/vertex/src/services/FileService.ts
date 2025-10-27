@@ -121,19 +121,39 @@ class FileService {
         const nameMatch = file.name.match(/^(?:(.+?)_)?imu_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\.csv$/);
         const deviceName = nameMatch?.[1]?.replace(/_/g, ' ');
 
-        // Count lines for sample count (subtract 1 for header)
+        // Read file to get sample count and timestamps
         let sampleCount = 0;
+        let startTime: Date | undefined;
+        let endTime: Date | undefined;
+
         try {
           const content = await RNFS.readFile(file.path, 'utf8');
-          sampleCount = Math.max(0, content.split('\n').length - 2); // -2 for header and trailing newline
+          const lines = content.split('\n').filter(line => line.trim());
+          sampleCount = Math.max(0, lines.length - 1); // Subtract header
+
+          // Extract first and last timestamps from CSV data
+          if (lines.length > 1) {
+            // First data line (skip header)
+            const firstDataLine = lines[1]?.split(',');
+            if (firstDataLine && firstDataLine[0]) {
+              startTime = new Date(parseInt(firstDataLine[0]));
+            }
+
+            // Last data line
+            const lastDataLine = lines[lines.length - 1]?.split(',');
+            if (lastDataLine && lastDataLine[0]) {
+              endTime = new Date(parseInt(lastDataLine[0]));
+            }
+          }
         } catch (err) {
-          console.warn(`[FileService] Could not read file for sample count: ${file.name}`);
+          console.warn(`[FileService] Could not read file for metadata: ${file.name}`);
         }
 
         recordings.push({
           fileName: file.name,
           filePath: file.path,
-          startTime: file.mtime || new Date(file.ctime || Date.now()),
+          startTime: startTime || file.mtime || new Date(file.ctime || Date.now()),
+          endTime,
           sampleCount,
           fileSize: file.size,
           deviceName

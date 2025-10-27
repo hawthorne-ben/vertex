@@ -23,6 +23,7 @@ export interface RecordingSession {
   isPaused: boolean;
   lastSampleTime?: Date;
   connectionLostTime?: Date;
+  zeroPoint?: any; // Zero point calibration applied to this recording
 }
 
 export type RecordingStatusCallback = (session: RecordingSession) => void;
@@ -36,6 +37,7 @@ class RecordingService {
   private statusCallback: RecordingStatusCallback | null = null;
   private errorCallback: RecordingErrorCallback | null = null;
   private writeInterval: NodeJS.Timeout | null = null;
+  private zeroPoint: any = null; // Current zero point for offset calculations
 
   // Buffer configuration
   private readonly BUFFER_SIZE = 50; // Write every 50 samples
@@ -48,7 +50,8 @@ class RecordingService {
     deviceId: string,
     deviceName: string,
     onStatus?: RecordingStatusCallback,
-    onError?: RecordingErrorCallback
+    onError?: RecordingErrorCallback,
+    zeroPoint?: any
   ): Promise<RecordingSession> {
     if (this.currentSession?.isRecording) {
       throw new Error('Recording already in progress');
@@ -56,9 +59,10 @@ class RecordingService {
 
     console.log(`[RecordingService] Starting recording for device: ${deviceName}`);
 
-    // Store callbacks
+    // Store callbacks and zero point
     this.statusCallback = onStatus || null;
     this.errorCallback = onError || null;
+    this.zeroPoint = zeroPoint || null;
 
     try {
       // Create new recording file
@@ -74,7 +78,8 @@ class RecordingService {
         startTime: new Date(),
         sampleCount: 0,
         isRecording: true,
-        isPaused: false
+        isPaused: false,
+        zeroPoint: this.zeroPoint
       };
 
       // Start data subscription
@@ -136,6 +141,7 @@ class RecordingService {
       this.currentSession = null;
       this.statusCallback = null;
       this.errorCallback = null;
+      this.zeroPoint = null;
 
       return session;
     } catch (error: any) {
@@ -220,18 +226,35 @@ class RecordingService {
     }
 
     try {
-      // Convert BLE data to IMU format
+      // Apply zero point offset if set
+      let processedData = data;
+      if (this.zeroPoint) {
+        processedData = {
+          ...data,
+          accelX: (data.accelX ?? 0) - (this.zeroPoint.accelX || 0),
+          accelY: (data.accelY ?? 0) - (this.zeroPoint.accelY || 0),
+          accelZ: (data.accelZ ?? 0) - (this.zeroPoint.accelZ || 0),
+          gyroX: (data.gyroX ?? 0) - (this.zeroPoint.gyroX || 0),
+          gyroY: (data.gyroY ?? 0) - (this.zeroPoint.gyroY || 0),
+          gyroZ: (data.gyroZ ?? 0) - (this.zeroPoint.gyroZ || 0),
+          magX: data.magX !== undefined ? (data.magX - (this.zeroPoint.magX || 0)) : undefined,
+          magY: data.magY !== undefined ? (data.magY - (this.zeroPoint.magY || 0)) : undefined,
+          magZ: data.magZ !== undefined ? (data.magZ - (this.zeroPoint.magZ || 0)) : undefined,
+        };
+      }
+
+      // Convert BLE data to IMU format (with offsets applied)
       const imuData: IMUSensorData = {
         timestamp: new Date(),
-        accel_x: data.accelX ?? 0,
-        accel_y: data.accelY ?? 0,
-        accel_z: data.accelZ ?? 0,
-        gyro_x: data.gyroX ?? 0,
-        gyro_y: data.gyroY ?? 0,
-        gyro_z: data.gyroZ ?? 0,
-        mag_x: data.magX,
-        mag_y: data.magY,
-        mag_z: data.magZ
+        accel_x: processedData.accelX ?? 0,
+        accel_y: processedData.accelY ?? 0,
+        accel_z: processedData.accelZ ?? 0,
+        gyro_x: processedData.gyroX ?? 0,
+        gyro_y: processedData.gyroY ?? 0,
+        gyro_z: processedData.gyroZ ?? 0,
+        mag_x: processedData.magX,
+        mag_y: processedData.magY,
+        mag_z: processedData.magZ
         // Note: BNO055 doesn't provide quaternions in current firmware
       };
 
@@ -362,6 +385,7 @@ class RecordingService {
     this.currentSession = null;
     this.statusCallback = null;
     this.errorCallback = null;
+    this.zeroPoint = null;
   }
 }
 

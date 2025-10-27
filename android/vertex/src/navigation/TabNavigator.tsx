@@ -7,7 +7,8 @@
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { theme } from '../styles/theme';
+import { useTheme } from '../contexts/ThemeContext';
+import { theme as staticTheme } from '../styles/theme';
 import { Home, Bike, FileText, Wifi, User } from 'lucide-react-native';
 
 // Screens
@@ -29,6 +30,7 @@ const Tab = createBottomTabNavigator<TabParamList>();
 
 const TabNavigator: React.FC = () => {
   const insets = useSafeAreaInsets();
+  const { theme } = useTheme();
 
   return (
     <Tab.Navigator
@@ -43,8 +45,9 @@ const TabNavigator: React.FC = () => {
         tabBarActiveTintColor: theme.colors.textPrimary,
         tabBarInactiveTintColor: theme.colors.textTertiary,
         tabBarLabelStyle: {
-          fontSize: theme.typography.fontSize.xs,
-          fontWeight: theme.typography.fontWeight.medium,
+          fontSize: 12,
+          fontWeight: '500',
+          fontFamily: staticTheme.typography.serif,
         },
       }}>
       <Tab.Screen

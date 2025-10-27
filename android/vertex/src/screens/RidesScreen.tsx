@@ -1,16 +1,18 @@
 /**
  * Rides Screen
- * 
+ *
  * Lists all recorded rides
  */
 
 import React from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { theme } from '../styles/theme';
+import { useTheme } from '../contexts/ThemeContext';
+import { theme as staticTheme } from '../styles/theme';
 
 const RidesScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
+  const { theme } = useTheme();
 
   // Placeholder rides data
   const rides = [
@@ -20,29 +22,45 @@ const RidesScreen: React.FC = () => {
   ];
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Static Header */}
-      <View style={styles.header}>
-        <Text style={styles.title}>Rides</Text>
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      {/* Fixed Header */}
+      <View style={[styles.header, {
+        paddingTop: insets.top,
+        backgroundColor: theme.colors.background,
+        borderBottomColor: theme.colors.border
+      }]}>
+        <Text style={[styles.title, { color: theme.colors.textPrimary }]}>
+          Rides
+        </Text>
       </View>
 
       <ScrollView style={styles.scrollView}>
         <View style={styles.content}>
-
-        {rides.map((ride, index) => (
-          <View key={index} style={styles.rideCard}>
-            <View style={styles.rideHeader}>
-              <Text style={styles.rideName}>{ride.name}</Text>
-              <Text style={styles.rideDate}>{ride.date}</Text>
+          {rides.map((ride, index) => (
+            <View key={index} style={[styles.rideCard, {
+              backgroundColor: theme.colors.card,
+              borderColor: theme.colors.border
+            }]}>
+              <View style={styles.rideHeader}>
+                <Text style={[styles.rideName, { color: theme.colors.textPrimary }]}>
+                  {ride.name}
+                </Text>
+                <Text style={[styles.rideDate, { color: theme.colors.textSecondary }]}>
+                  {ride.date}
+                </Text>
+              </View>
+              <View style={styles.rideDetails}>
+                <Text style={[styles.rideDetail, { color: theme.colors.textSecondary }]}>
+                  Distance: {ride.distance}
+                </Text>
+                <Text style={[styles.rideDetail, { color: theme.colors.textSecondary }]}>
+                  Duration: {ride.duration}
+                </Text>
+              </View>
             </View>
-            <View style={styles.rideDetails}>
-              <Text style={styles.rideDetail}>Distance: {ride.distance}</Text>
-              <Text style={styles.rideDetail}>Duration: {ride.duration}</Text>
-            </View>
-          </View>
-        ))}
-      </View>
-    </ScrollView>
+          ))}
+        </View>
+      </ScrollView>
     </View>
   );
 };
@@ -50,61 +68,51 @@ const RidesScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+  },
+  header: {
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+  },
+  title: {
+    fontSize: 32,
+    fontWeight: '300',
+    fontFamily: staticTheme.typography.serif,
   },
   scrollView: {
     flex: 1,
   },
-  header: {
-    paddingHorizontal: theme.spacing.lg,
-    paddingVertical: theme.spacing.md,
-    backgroundColor: theme.colors.background,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
-  },
   content: {
-    padding: theme.spacing.lg,
-  },
-  title: {
-    fontSize: theme.typography.fontSize.xxxl,
-    fontWeight: theme.typography.fontWeight.light,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
+    padding: 24,
   },
   rideCard: {
-    backgroundColor: theme.colors.muted,
-    padding: theme.spacing.lg,
-    borderRadius: theme.borderRadius.md,
-    marginBottom: theme.spacing.md,
+    padding: 24,
+    borderRadius: 8,
+    marginBottom: 16,
     borderWidth: 1,
-    borderColor: theme.colors.border,
   },
   rideHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    marginBottom: theme.spacing.sm,
+    alignItems: 'center',
+    marginBottom: 12,
   },
   rideName: {
-    fontSize: theme.typography.fontSize.md,
-    fontWeight: theme.typography.fontWeight.medium,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
+    fontSize: 18,
+    fontWeight: '600',
+    fontFamily: staticTheme.typography.serif,
   },
   rideDate: {
-    fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
+    fontSize: 14,
+    fontFamily: staticTheme.typography.serif,
   },
   rideDetails: {
-    flexDirection: 'row',
-    gap: theme.spacing.lg,
+    gap: 8,
   },
   rideDetail: {
-    fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
+    fontSize: 14,
+    fontFamily: staticTheme.typography.serif,
   },
 });
 
 export default RidesScreen;
-

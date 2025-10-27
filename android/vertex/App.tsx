@@ -9,8 +9,12 @@ import React, { useEffect } from 'react';
 import { StatusBar, useColorScheme } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthProvider } from './src/contexts/AuthContext';
+import { ThemeProvider } from './src/contexts/ThemeContext';
+import { ToastProvider } from './src/contexts/ToastContext';
 import AppNavigator from './src/navigation/AppNavigator';
+import BleService from './src/services/BleService';
 
 // Global error handlers to prevent crashes
 const setupGlobalErrorHandlers = () => {
@@ -43,21 +47,75 @@ const setupGlobalErrorHandlers = () => {
   });
 };
 
+// Auto-connect to most recently connected device
+const SAVED_DEVICES_KEY = '@vertex_saved_devices';
+
+interface SavedDevice {
+  id: string;
+  name: string;
+  lastConnected?: string;
+}
+
+const autoConnectToDevice = async () => {
+  try {
+    const saved = await AsyncStorage.getItem(SAVED_DEVICES_KEY);
+    if (!saved) {
+      console.log('[AutoConnect] No saved devices found');
+      return;
+    }
+
+    const devices: SavedDevice[] = JSON.parse(saved);
+    if (devices.length === 0) {
+      console.log('[AutoConnect] No devices in list');
+      return;
+    }
+
+    // Find most recently connected device
+    const sortedDevices = devices
+      .filter(d => d.lastConnected)
+      .sort((a, b) => {
+        const aTime = new Date(a.lastConnected!).getTime();
+        const bTime = new Date(b.lastConnected!).getTime();
+        return bTime - aTime;
+      });
+
+    if (sortedDevices.length === 0) {
+      console.log('[AutoConnect] No devices with lastConnected timestamp');
+      return;
+    }
+
+    const deviceToConnect = sortedDevices[0];
+    console.log('[AutoConnect] Attempting to connect to:', deviceToConnect.name, deviceToConnect.id);
+
+    // Attempt connection
+    await BleService.connectToDevice(deviceToConnect.id);
+    console.log('[AutoConnect] Successfully connected to:', deviceToConnect.name);
+  } catch (error) {
+    console.log('[AutoConnect] Failed to auto-connect:', error);
+    // Fail silently - user can manually connect if needed
+  }
+};
+
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
 
   useEffect(() => {
     setupGlobalErrorHandlers();
+    autoConnectToDevice();
   }, []);
 
   return (
     <SafeAreaProvider>
-      <AuthProvider>
-        <NavigationContainer key="main-nav">
-          <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-          <AppNavigator />
-        </NavigationContainer>
-      </AuthProvider>
+      <ThemeProvider>
+        <ToastProvider>
+          <AuthProvider>
+            <NavigationContainer key="main-nav">
+              <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
+              <AppNavigator />
+            </NavigationContainer>
+          </AuthProvider>
+        </ToastProvider>
+      </ThemeProvider>
     </SafeAreaProvider>
   );
 }

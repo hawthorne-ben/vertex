@@ -1,40 +1,62 @@
 /**
  * Login Screen
- * 
+ *
  * Matches web app's login design
+ * Refactored to use new component library and hooks
  */
 
 import React, { useState } from 'react';
 import {
   View,
   Text,
-  TextInput,
-  TouchableOpacity,
   StyleSheet,
-  Alert,
   ScrollView,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useNavigation } from '@react-navigation/native';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { RootStackParamList } from '../navigation/AppNavigator';
 import { useAuth } from '../contexts/AuthContext';
+import { useTheme } from '../contexts/ThemeContext';
+import { useToast } from '../contexts/ToastContext';
 import { createClient } from '../lib/supabase';
-import { theme } from '../styles/theme';
-
-type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+import { Button, Input } from '../components/ui';
+import { AuthError } from '../types/errors.types';
+import { getUserFriendlyError } from '../utils/errorUtils';
 
 const LoginScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
-  const navigation = useNavigation<NavigationProp>();
+  const { theme } = useTheme();
+  const { showToast } = useToast();
   const auth = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [errors, setErrors] = useState({ email: '', password: '' });
+
+  const validateForm = (): boolean => {
+    const newErrors = { email: '', password: '' };
+    let isValid = true;
+
+    if (!email) {
+      newErrors.email = 'Email is required';
+      isValid = false;
+    } else if (!/\S+@\S+\.\S+/.test(email)) {
+      newErrors.email = 'Please enter a valid email';
+      isValid = false;
+    }
+
+    if (!password) {
+      newErrors.password = 'Password is required';
+      isValid = false;
+    } else if (password.length < 6) {
+      newErrors.password = 'Password must be at least 6 characters';
+      isValid = false;
+    }
+
+    setErrors(newErrors);
+    return isValid;
+  };
 
   const handleLogin = async () => {
-    if (!email || !password) {
-      Alert.alert('Error', 'Please enter both email and password');
+    if (!validateForm()) {
       return;
     }
 
@@ -47,62 +69,83 @@ const LoginScreen: React.FC = () => {
       });
 
       if (error) {
-        Alert.alert('Error', error.message);
-      } else {
-        // Manually update auth state for immediate navigation
-        auth.setUser(data.user);
+        // Convert to AuthError for consistent handling
+        const authError = new AuthError(
+          error.message,
+          error.message.includes('Invalid') ? 'INVALID_CREDENTIALS' : 'UNKNOWN',
+          error.message
+        );
+        throw authError;
       }
-    } catch (error: any) {
-      Alert.alert('Error', error.message || 'Failed to sign in');
+
+      // Manually update auth state for immediate navigation
+      auth.setUser(data.user);
+
+      showToast({
+        message: 'Welcome back!',
+        variant: 'success',
+        duration: 2000,
+      });
+    } catch (error) {
+      showToast({
+        message: getUserFriendlyError(error),
+        variant: 'error',
+        duration: 4000,
+      });
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <ScrollView 
-      style={[styles.container, { paddingTop: insets.top }]}
+    <ScrollView
+      style={[styles.container, { paddingTop: insets.top, backgroundColor: theme.colors.background }]}
       contentContainerStyle={styles.scrollContent}>
       <View style={styles.content}>
-        <Text style={styles.title}>Sign In</Text>
-        <Text style={styles.subtitle}>Access your cycling insights</Text>
+        <Text style={[styles.title, { color: theme.colors.textPrimary }]}>
+          Sign In
+        </Text>
+        <Text style={[styles.subtitle, { color: theme.colors.textSecondary }]}>
+          Access your cycling insights
+        </Text>
 
         <View style={styles.form}>
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Email</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="you@example.com"
-              placeholderTextColor={theme.colors.textTertiary}
-              value={email}
-              onChangeText={setEmail}
-              autoCapitalize="none"
-              keyboardType="email-address"
-              editable={!loading}
-            />
-          </View>
+          <Input
+            label="Email"
+            placeholder="you@example.com"
+            value={email}
+            onChangeText={(text) => {
+              setEmail(text);
+              setErrors({ ...errors, email: '' });
+            }}
+            error={errors.email}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            disabled={loading}
+            required
+          />
 
-          <View style={styles.inputContainer}>
-            <Text style={styles.label}>Password</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="••••••••"
-              placeholderTextColor={theme.colors.textTertiary}
-              value={password}
-              onChangeText={setPassword}
-              secureTextEntry
-              editable={!loading}
-            />
-          </View>
+          <Input
+            label="Password"
+            placeholder="••••••••"
+            value={password}
+            onChangeText={(text) => {
+              setPassword(text);
+              setErrors({ ...errors, password: '' });
+            }}
+            error={errors.password}
+            secureTextEntry
+            disabled={loading}
+            required
+          />
 
-          <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
+          <Button
+            variant="primary"
+            loading={loading}
             onPress={handleLogin}
-            disabled={loading}>
-            <Text style={styles.buttonText}>
-              {loading ? 'Signing in...' : 'Sign In'}
-            </Text>
-          </TouchableOpacity>
+            style={styles.button}>
+            Sign In
+          </Button>
         </View>
       </View>
     </ScrollView>
@@ -112,7 +155,6 @@ const LoginScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
   },
   scrollContent: {
     flexGrow: 1,
@@ -120,59 +162,25 @@ const styles = StyleSheet.create({
   content: {
     flex: 1,
     justifyContent: 'center',
-    paddingHorizontal: theme.spacing.xl,
+    paddingHorizontal: 32,
   },
   title: {
-    fontSize: theme.typography.fontSize.xxxl,
-    fontWeight: theme.typography.fontWeight.light,
+    fontSize: 48,
+    fontWeight: '300',
     textAlign: 'center',
-    marginBottom: theme.spacing.sm,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
+    marginBottom: 8,
   },
   subtitle: {
-    fontSize: theme.typography.fontSize.md,
+    fontSize: 16,
     textAlign: 'center',
-    marginBottom: theme.spacing.xxl,
-    color: theme.colors.textSecondary,
+    marginBottom: 48,
   },
   form: {
-    gap: theme.spacing.lg,
-  },
-  inputContainer: {
-    gap: theme.spacing.sm,
-  },
-  label: {
-    fontSize: theme.typography.fontSize.sm,
-    fontWeight: theme.typography.fontWeight.medium,
-    color: theme.colors.textPrimary,
-  },
-  input: {
-    backgroundColor: theme.colors.formBackground,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: theme.borderRadius.md,
-    paddingVertical: theme.spacing.md,
-    paddingHorizontal: theme.spacing.lg,
-    fontSize: theme.typography.fontSize.md,
-    color: theme.colors.textPrimary,
+    gap: 24,
   },
   button: {
-    backgroundColor: theme.colors.primary,
-    paddingVertical: theme.spacing.md,
-    borderRadius: theme.borderRadius.md,
-    marginTop: theme.spacing.sm,
-  },
-  buttonDisabled: {
-    opacity: 0.5,
-  },
-  buttonText: {
-    color: theme.colors.primaryForeground,
-    fontSize: theme.typography.fontSize.md,
-    fontWeight: theme.typography.fontWeight.medium,
-    textAlign: 'center',
+    marginTop: 8,
   },
 });
 
 export default LoginScreen;
-

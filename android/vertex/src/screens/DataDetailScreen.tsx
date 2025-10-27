@@ -17,9 +17,11 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { ChevronLeft, Activity } from 'lucide-react-native';
+import { Activity } from 'lucide-react-native';
 import { LineChart } from 'react-native-gifted-charts';
-import { theme } from '../styles/theme';
+import { theme as staticTheme } from '../styles/theme';
+import { useTheme } from '../contexts/ThemeContext';
+import { BackButton } from '../components/ui';
 import FileService, { IMUSensorData, RecordingMetadata } from '../services/FileService';
 import { RootStackParamList } from '../navigation/AppNavigator';
 
@@ -41,6 +43,7 @@ interface Statistics {
 
 const DataDetailScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
+  const { theme } = useTheme();
   const navigation = useNavigation();
   const route = useRoute<DataDetailRouteProp>();
   const { fileName, filePath } = route.params;
@@ -166,9 +169,9 @@ const DataDetailScreen: React.FC = () => {
 
   if (isLoading) {
     return (
-      <View style={[styles.container, styles.centerContent, { paddingTop: insets.top }]}>
+      <View style={[styles.container, styles.centerContent, { paddingTop: insets.top, backgroundColor: theme.colors.background }]}>
         <ActivityIndicator size="large" color={theme.colors.primary} />
-        <Text style={styles.loadingText}>Loading data...</Text>
+        <Text style={[styles.loadingText, { color: theme.colors.textSecondary }]}>Loading data...</Text>
       </View>
     );
   }
@@ -178,63 +181,73 @@ const DataDetailScreen: React.FC = () => {
   const screenWidth = Dimensions.get('window').width;
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       {/* Static Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-          <ChevronLeft size={24} color={theme.colors.textPrimary} />
-        </TouchableOpacity>
-        <Text style={styles.title} numberOfLines={1}>Detail</Text>
+      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: theme.colors.background, borderBottomColor: theme.colors.border }]}>
+        <BackButton onPress={() => navigation.goBack()} />
+        <Text style={[styles.title, { color: theme.colors.textPrimary }]} numberOfLines={1}>Detail</Text>
       </View>
 
       <ScrollView style={styles.scrollView}>
         <View style={styles.content}>
 
         {/* File Info */}
-        <View style={styles.infoCard}>
+        <View style={[styles.infoCard, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}>
           <View style={styles.infoRow}>
             <Activity size={20} color={theme.colors.primary} />
             <View style={styles.infoText}>
-              <Text style={styles.infoLabel}>File</Text>
-              <Text style={styles.infoValue} numberOfLines={1}>{fileName}</Text>
+              <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>File</Text>
+              <Text style={[styles.infoValue, { color: theme.colors.textPrimary }]} numberOfLines={1}>{fileName}</Text>
             </View>
           </View>
           {data.length > 0 && (
             <>
               <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Duration</Text>
-                <Text style={styles.infoValue}>
+                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Duration</Text>
+                <Text style={[styles.infoValue, { color: theme.colors.textPrimary }]}>
                   {formatDate(data[0].timestamp)} - {formatDate(data[data.length - 1].timestamp)}
                 </Text>
               </View>
               <View style={styles.infoRow}>
-                <Text style={styles.infoLabel}>Samples</Text>
-                <Text style={styles.infoValue}>{data.length.toLocaleString()}</Text>
+                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Samples</Text>
+                <Text style={[styles.infoValue, { color: theme.colors.textPrimary }]}>{data.length.toLocaleString()}</Text>
               </View>
             </>
           )}
         </View>
 
         {/* Data Type Selector */}
-        <View style={styles.selectorContainer}>
+        <View style={[styles.selectorContainer, { backgroundColor: theme.colors.muted }]}>
           <TouchableOpacity
-            style={[styles.selectorButton, selectedDataType === 'accelerometer' && styles.selectorButtonActive]}
+            style={[styles.selectorButton, selectedDataType === 'accelerometer' && { backgroundColor: theme.colors.card }]}
             onPress={() => setSelectedDataType('accelerometer')}>
-            <Text style={[styles.selectorText, selectedDataType === 'accelerometer' && styles.selectorTextActive]}>
+            <Text style={[
+              styles.selectorText,
+              { color: theme.colors.textSecondary },
+              selectedDataType === 'accelerometer' && { color: theme.colors.primary, fontWeight: staticTheme.typography.fontWeight.semibold }
+            ]}>
               Accel
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.selectorButton, selectedDataType === 'gyroscope' && styles.selectorButtonActive]}
+            style={[styles.selectorButton, selectedDataType === 'gyroscope' && { backgroundColor: theme.colors.card }]}
             onPress={() => setSelectedDataType('gyroscope')}>
-            <Text style={[styles.selectorText, selectedDataType === 'gyroscope' && styles.selectorTextActive]}>
+            <Text style={[
+              styles.selectorText,
+              { color: theme.colors.textSecondary },
+              selectedDataType === 'gyroscope' && { color: theme.colors.primary, fontWeight: staticTheme.typography.fontWeight.semibold }
+            ]}>
               Gyro
             </Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.selectorButton, selectedDataType === 'magnetometer' && styles.selectorButtonActive]}
+            style={[styles.selectorButton, selectedDataType === 'magnetometer' && { backgroundColor: theme.colors.card }]}
             onPress={() => setSelectedDataType('magnetometer')}>
-            <Text style={[styles.selectorText, selectedDataType === 'magnetometer' && styles.selectorTextActive]}>
+            <Text style={[
+              styles.selectorText,
+              { color: theme.colors.textSecondary },
+              selectedDataType === 'magnetometer' && { color: theme.colors.primary, fontWeight: staticTheme.typography.fontWeight.semibold }
+            ]}>
               Mag
             </Text>
           </TouchableOpacity>
@@ -242,25 +255,25 @@ const DataDetailScreen: React.FC = () => {
 
         {/* Statistics Cards */}
         <View style={styles.statsContainer}>
-          <Text style={styles.sectionTitle}>Statistics</Text>
+          <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>Statistics</Text>
           <View style={styles.statsGrid}>
             {['x', 'y', 'z'].map((axis) => {
               const axisKey = axis as 'x' | 'y' | 'z';
               const axisStats = currentStats[axisKey];
               return (
-                <View key={axis} style={styles.statCard}>
-                  <Text style={styles.statAxisLabel}>{axis.toUpperCase()} Axis</Text>
+                <View key={axis} style={[styles.statCard, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}>
+                  <Text style={[styles.statAxisLabel, { color: theme.colors.textPrimary }]}>{axis.toUpperCase()} Axis</Text>
                   <View style={styles.statRow}>
-                    <Text style={styles.statLabel}>Min</Text>
-                    <Text style={styles.statValue}>{formatStatValue(axisStats.min)}</Text>
+                    <Text style={[styles.statLabel, { color: theme.colors.textSecondary }]}>Min</Text>
+                    <Text style={[styles.statValue, { color: theme.colors.textPrimary }]}>{formatStatValue(axisStats.min)}</Text>
                   </View>
                   <View style={styles.statRow}>
-                    <Text style={styles.statLabel}>Max</Text>
-                    <Text style={styles.statValue}>{formatStatValue(axisStats.max)}</Text>
+                    <Text style={[styles.statLabel, { color: theme.colors.textSecondary }]}>Max</Text>
+                    <Text style={[styles.statValue, { color: theme.colors.textPrimary }]}>{formatStatValue(axisStats.max)}</Text>
                   </View>
                   <View style={styles.statRow}>
-                    <Text style={styles.statLabel}>Mean</Text>
-                    <Text style={styles.statValue}>{formatStatValue(axisStats.mean)}</Text>
+                    <Text style={[styles.statLabel, { color: theme.colors.textSecondary }]}>Mean</Text>
+                    <Text style={[styles.statValue, { color: theme.colors.textPrimary }]}>{formatStatValue(axisStats.mean)}</Text>
                   </View>
                 </View>
               );
@@ -270,25 +283,25 @@ const DataDetailScreen: React.FC = () => {
 
         {/* Chart */}
         <View style={styles.chartContainer}>
-          <Text style={styles.sectionTitle}>{getDataTypeLabel(selectedDataType)}</Text>
+          <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>{getDataTypeLabel(selectedDataType)}</Text>
 
           {/* Legend */}
           <View style={styles.legend}>
             <View style={styles.legendItem}>
               <View style={[styles.legendColor, { backgroundColor: '#ef4444' }]} />
-              <Text style={styles.legendText}>X</Text>
+              <Text style={[styles.legendText, { color: theme.colors.textPrimary }]}>X</Text>
             </View>
             <View style={styles.legendItem}>
               <View style={[styles.legendColor, { backgroundColor: '#22c55e' }]} />
-              <Text style={styles.legendText}>Y</Text>
+              <Text style={[styles.legendText, { color: theme.colors.textPrimary }]}>Y</Text>
             </View>
             <View style={styles.legendItem}>
               <View style={[styles.legendColor, { backgroundColor: '#3b82f6' }]} />
-              <Text style={styles.legendText}>Z</Text>
+              <Text style={[styles.legendText, { color: theme.colors.textPrimary }]}>Z</Text>
             </View>
           </View>
 
-          <View style={styles.chartWrapper}>
+          <View style={[styles.chartWrapper, { backgroundColor: theme.colors.card }]}>
             {chartData.xData.length > 0 ? (
               <LineChart
                 data={chartData.xData}
@@ -329,7 +342,7 @@ const DataDetailScreen: React.FC = () => {
               />
             ) : (
               <View style={styles.noDataContainer}>
-                <Text style={styles.noDataText}>No data available</Text>
+                <Text style={[styles.noDataText, { color: theme.colors.textSecondary }]}>No data available</Text>
               </View>
             )}
           </View>
@@ -343,14 +356,14 @@ const DataDetailScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+    backgroundColor: staticTheme.colors.background,
   },
   centerContent: {
     justifyContent: 'center',
     alignItems: 'center',
   },
   content: {
-    padding: theme.spacing.lg,
+    padding: staticTheme.spacing.lg,
   },
   scrollView: {
     flex: 1,
@@ -358,93 +371,93 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: theme.spacing.lg,
-    paddingVertical: theme.spacing.md,
-    backgroundColor: theme.colors.background,
+    paddingHorizontal: staticTheme.spacing.lg,
+    paddingVertical: staticTheme.spacing.md,
+    backgroundColor: staticTheme.colors.background,
     borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
+    borderBottomColor: staticTheme.colors.border,
   },
   backButton: {
-    marginRight: theme.spacing.md,
-    padding: theme.spacing.xs,
+    marginRight: staticTheme.spacing.md,
+    padding: staticTheme.spacing.xs,
   },
   title: {
-    fontSize: theme.typography.fontSize.xxxl,
-    fontWeight: theme.typography.fontWeight.light,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
+    fontSize: staticTheme.typography.fontSize.xxl,
+    fontWeight: staticTheme.typography.fontWeight.light,
+    color: staticTheme.colors.textPrimary,
+    fontFamily: staticTheme.typography.serif,
   },
   loadingText: {
-    fontSize: theme.typography.fontSize.md,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
-    marginTop: theme.spacing.md,
+    fontSize: staticTheme.typography.fontSize.md,
+    color: staticTheme.colors.textSecondary,
+    fontFamily: staticTheme.typography.serif,
+    marginTop: staticTheme.spacing.md,
   },
   infoCard: {
-    backgroundColor: theme.colors.card,
-    padding: theme.spacing.lg,
-    borderRadius: theme.borderRadius.md,
-    marginBottom: theme.spacing.lg,
+    backgroundColor: staticTheme.colors.card,
+    padding: staticTheme.spacing.lg,
+    borderRadius: staticTheme.borderRadius.md,
+    marginBottom: staticTheme.spacing.lg,
     borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderColor: staticTheme.colors.border,
   },
   infoRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: theme.spacing.md,
+    marginBottom: staticTheme.spacing.md,
   },
   infoText: {
-    marginLeft: theme.spacing.md,
+    marginLeft: staticTheme.spacing.md,
     flex: 1,
   },
   infoLabel: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
+    fontSize: staticTheme.typography.fontSize.xs,
+    color: staticTheme.colors.textSecondary,
+    fontFamily: staticTheme.typography.serif,
     marginBottom: 2,
   },
   infoValue: {
-    fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.mono,
+    fontSize: staticTheme.typography.fontSize.sm,
+    color: staticTheme.colors.textPrimary,
+    fontFamily: staticTheme.typography.mono,
   },
   selectorContainer: {
     flexDirection: 'row',
-    marginBottom: theme.spacing.lg,
-    backgroundColor: theme.colors.muted,
-    borderRadius: theme.borderRadius.md,
+    marginBottom: staticTheme.spacing.lg,
+    backgroundColor: staticTheme.colors.muted,
+    borderRadius: staticTheme.borderRadius.md,
     padding: 4,
   },
   selectorButton: {
     flex: 1,
-    paddingVertical: theme.spacing.sm,
-    paddingHorizontal: theme.spacing.md,
-    borderRadius: theme.borderRadius.sm,
+    paddingVertical: staticTheme.spacing.sm,
+    paddingHorizontal: staticTheme.spacing.md,
+    borderRadius: staticTheme.borderRadius.sm,
     alignItems: 'center',
   },
   selectorButtonActive: {
-    backgroundColor: theme.colors.card,
+    backgroundColor: staticTheme.colors.card,
   },
   selectorText: {
-    fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
-    fontWeight: theme.typography.fontWeight.medium,
+    fontSize: staticTheme.typography.fontSize.sm,
+    color: staticTheme.colors.textSecondary,
+    fontFamily: staticTheme.typography.serif,
+    fontWeight: staticTheme.typography.fontWeight.medium,
   },
   selectorTextActive: {
-    color: theme.colors.primary,
-    fontWeight: theme.typography.fontWeight.semibold,
+    color: staticTheme.colors.primary,
+    fontWeight: staticTheme.typography.fontWeight.semibold,
   },
   statsContainer: {
-    marginBottom: theme.spacing.lg,
+    marginBottom: staticTheme.spacing.lg,
   },
   sectionTitle: {
-    fontSize: theme.typography.fontSize.lg,
-    fontWeight: theme.typography.fontWeight.medium,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
-    marginBottom: theme.spacing.md,
+    fontSize: staticTheme.typography.fontSize.lg,
+    fontWeight: staticTheme.typography.fontWeight.medium,
+    color: staticTheme.colors.textPrimary,
+    fontFamily: staticTheme.typography.serif,
+    marginBottom: staticTheme.spacing.md,
   },
   statsGrid: {
     flexDirection: 'row',
@@ -452,18 +465,18 @@ const styles = StyleSheet.create({
   },
   statCard: {
     flex: 1,
-    backgroundColor: theme.colors.card,
-    padding: theme.spacing.md,
-    borderRadius: theme.borderRadius.md,
+    backgroundColor: staticTheme.colors.card,
+    padding: staticTheme.spacing.md,
+    borderRadius: staticTheme.borderRadius.md,
     borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderColor: staticTheme.colors.border,
   },
   statAxisLabel: {
-    fontSize: theme.typography.fontSize.xs,
-    fontWeight: theme.typography.fontWeight.semibold,
-    color: theme.colors.primary,
-    fontFamily: theme.typography.serif,
-    marginBottom: theme.spacing.sm,
+    fontSize: staticTheme.typography.fontSize.xs,
+    fontWeight: staticTheme.typography.fontWeight.semibold,
+    color: staticTheme.colors.primary,
+    fontFamily: staticTheme.typography.serif,
+    marginBottom: staticTheme.spacing.sm,
     textAlign: 'center',
   },
   statRow: {
@@ -472,24 +485,24 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   statLabel: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
+    fontSize: staticTheme.typography.fontSize.xs,
+    color: staticTheme.colors.textSecondary,
+    fontFamily: staticTheme.typography.serif,
   },
   statValue: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.mono,
-    fontWeight: theme.typography.fontWeight.medium,
+    fontSize: staticTheme.typography.fontSize.xs,
+    color: staticTheme.colors.textPrimary,
+    fontFamily: staticTheme.typography.mono,
+    fontWeight: staticTheme.typography.fontWeight.medium,
   },
   chartContainer: {
-    marginBottom: theme.spacing.xxl * 2,
+    marginBottom: staticTheme.spacing.xxl * 2,
   },
   legend: {
     flexDirection: 'row',
     justifyContent: 'center',
-    gap: theme.spacing.lg,
-    marginBottom: theme.spacing.md,
+    gap: staticTheme.spacing.lg,
+    marginBottom: staticTheme.spacing.md,
   },
   legendItem: {
     flexDirection: 'row',
@@ -502,19 +515,19 @@ const styles = StyleSheet.create({
     borderRadius: 1.5,
   },
   legendText: {
-    fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
-    fontWeight: theme.typography.fontWeight.medium,
+    fontSize: staticTheme.typography.fontSize.sm,
+    color: staticTheme.colors.textPrimary,
+    fontFamily: staticTheme.typography.serif,
+    fontWeight: staticTheme.typography.fontWeight.medium,
   },
   chartWrapper: {
-    backgroundColor: theme.colors.card,
-    borderRadius: theme.borderRadius.md,
-    paddingTop: theme.spacing.lg,
-    paddingBottom: theme.spacing.xl,
-    paddingHorizontal: theme.spacing.md,
+    backgroundColor: staticTheme.colors.card,
+    borderRadius: staticTheme.borderRadius.md,
+    paddingTop: staticTheme.spacing.lg,
+    paddingBottom: staticTheme.spacing.xl,
+    paddingHorizontal: staticTheme.spacing.md,
     borderWidth: 1,
-    borderColor: theme.colors.border,
+    borderColor: staticTheme.colors.border,
     alignItems: 'center',
     overflow: 'hidden',
   },
@@ -524,9 +537,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   noDataText: {
-    fontSize: theme.typography.fontSize.md,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
+    fontSize: staticTheme.typography.fontSize.md,
+    color: staticTheme.colors.textSecondary,
+    fontFamily: staticTheme.typography.serif,
   },
 });
 

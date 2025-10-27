@@ -1,7 +1,8 @@
 /**
  * Devices Screen
- * 
+ *
  * Display saved BLE devices and scan for new ones
+ * Refactored with proper header and new component library
  */
 
 import React, { useState, useEffect } from 'react';
@@ -12,23 +13,23 @@ import {
   TouchableOpacity,
   ScrollView,
   FlatList,
-  Alert,
   Platform,
   ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
-import { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Wifi, Plus, Bluetooth, X, ChevronRight } from 'lucide-react-native';
-import { theme } from '../styles/theme';
+import { Bluetooth, Plus, Trash2, AlertCircle } from 'lucide-react-native';
+import { useTheme } from '../contexts/ThemeContext';
+import { theme as staticTheme } from '../styles/theme';
+import { useToast } from '../contexts/ToastContext';
+import { Button, Modal, EmptyState, Card, ConfirmDialog } from '../components/ui';
 import BleService from '../services/BleService';
 import { request, check, PERMISSIONS, RESULTS } from 'react-native-permissions';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Device } from 'react-native-ble-plx';
-import { IMUDevice } from '../types';
-import { RootStackParamList } from '../navigation/AppNavigator';
-
-type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+import { RootStackNavigationProp } from '../types/navigation.types';
+import { BleError } from '../types/errors.types';
+import { getUserFriendlyError } from '../utils/errorUtils';
 
 const SAVED_DEVICES_KEY = '@vertex_saved_devices';
 
@@ -46,16 +47,30 @@ interface ScannedDevice {
 
 const DevicesScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
-  const navigation = useNavigation<NavigationProp>();
+  const { theme } = useTheme();
+  const { showToast } = useToast();
+  const navigation = useNavigation<RootStackNavigationProp<'Tabs'>>();
   const [savedDevices, setSavedDevices] = useState<SavedDevice[]>([]);
   const [scannedDevices, setScannedDevices] = useState<Map<string, ScannedDevice>>(new Map());
   const [isScanning, setIsScanning] = useState(false);
   const [hasPermissions, setHasPermissions] = useState(false);
   const [showScanModal, setShowScanModal] = useState(false);
+  const [deviceToDelete, setDeviceToDelete] = useState<SavedDevice | null>(null);
+  const [connectedDeviceId, setConnectedDeviceId] = useState<string | null>(null);
 
   useEffect(() => {
     checkAndRequestPermissions();
     loadSavedDevices();
+
+    // Listen for connection state changes
+    const unsubscribe = BleService.addConnectionListener((device, isConnected) => {
+      console.log('[DevicesScreen] Connection state changed:', device?.id, isConnected);
+      setConnectedDeviceId(isConnected ? device?.id || null : null);
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, []);
 
   const loadSavedDevices = async () => {
@@ -105,11 +120,14 @@ const DevicesScreen: React.FC = () => {
 
   const startScanning = async () => {
     if (!hasPermissions) {
-      Alert.alert(
-        'Permissions Required',
-        'Grant Bluetooth and Location permissions to scan for devices',
-        [{ text: 'OK', onPress: checkAndRequestPermissions }]
-      );
+      showToast({
+        message: 'Grant Bluetooth and Location permissions to scan for devices',
+        variant: 'warning',
+        action: {
+          label: 'Settings',
+          onPress: checkAndRequestPermissions,
+        },
+      });
       return;
     }
 
@@ -138,7 +156,10 @@ const DevicesScreen: React.FC = () => {
       }, 10000);
     } catch (error) {
       console.error('Scan error:', error);
-      Alert.alert('Scan Error', 'Failed to start BLE scan');
+      showToast({
+        message: getUserFriendlyError(error),
+        variant: 'error',
+      });
       setIsScanning(false);
     }
   };
@@ -177,36 +198,37 @@ const DevicesScreen: React.FC = () => {
     });
   };
 
+  const handleRemoveDevice = (device: SavedDevice) => {
+    setDeviceToDelete(device);
+  };
 
-  const handleRemoveDevice = async (deviceId: string) => {
-    Alert.alert(
-      'Remove Device',
-      'Are you sure you want to remove this device?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              // Check if this device is currently connected
-              const connectedDevice = BleService.getConnectedDevice();
-              if (connectedDevice && connectedDevice.id === deviceId) {
-                console.log('[DevicesScreen] Disconnecting device before removal:', deviceId);
-                await BleService.disconnect();
-              }
+  const confirmDelete = async () => {
+    if (!deviceToDelete) return;
 
-              // Remove from saved devices
-              const updated = savedDevices.filter(d => d.id !== deviceId);
-              await saveDevices(updated);
-            } catch (error) {
-              console.error('[DevicesScreen] Error removing device:', error);
-              Alert.alert('Error', 'Failed to remove device');
-            }
-          },
-        },
-      ]
-    );
+    try {
+      // Check if this device is currently connected
+      const connectedDevice = BleService.getConnectedDevice();
+      if (connectedDevice && connectedDevice.id === deviceToDelete.id) {
+        console.log('[DevicesScreen] Disconnecting device before removal:', deviceToDelete.id);
+        await BleService.disconnect();
+      }
+
+      // Remove from saved devices
+      const updated = savedDevices.filter(d => d.id !== deviceToDelete.id);
+      await saveDevices(updated);
+
+      showToast({
+        message: 'Device removed',
+        variant: 'success',
+        duration: 2000,
+      });
+    } catch (error) {
+      console.error('[DevicesScreen] Error removing device:', error);
+      showToast({
+        message: 'Failed to remove device',
+        variant: 'error',
+      });
+    }
   };
 
   const saveDevices = async (devices: SavedDevice[]) => {
@@ -219,53 +241,75 @@ const DevicesScreen: React.FC = () => {
   };
 
   const renderSavedDevice = ({ item }: { item: SavedDevice }) => {
+    // Check if device is currently connected
+    const isConnected = connectedDeviceId === item.id;
+
     return (
-      <View style={styles.deviceCard}>
+      <Card
+        variant="default"
+        padding="none"
+        style={styles.deviceCard}
+        header={null}>
         <TouchableOpacity
-          style={styles.deviceMain}
+          style={styles.deviceCardMain}
           onPress={() => handleConnectSaved(item)}>
           <View style={styles.deviceHeader}>
-            <Bluetooth size={24} color={theme.colors.textPrimary} />
+            <Bluetooth
+              size={24}
+              color={isConnected ? theme.colors.success : theme.colors.textTertiary}
+            />
             <View style={styles.deviceInfo}>
-              <Text style={styles.deviceName}>{item.name}</Text>
-              <Text style={styles.deviceId}>{item.id}</Text>
-              {item.lastConnected && (
-                <Text style={styles.lastConnected}>
+              <Text style={[styles.deviceName, { color: theme.colors.textPrimary }]}>
+                {item.name}
+              </Text>
+              <Text style={[styles.deviceId, { color: theme.colors.textTertiary }]}>
+                {item.id}
+              </Text>
+              {item.lastConnected && !isConnected && (
+                <Text style={[styles.lastConnected, { color: theme.colors.textSecondary }]}>
                   Last: {new Date(item.lastConnected).toLocaleDateString()}
                 </Text>
               )}
             </View>
-            <ChevronRight size={20} color={theme.colors.textTertiary} />
+            <TouchableOpacity
+              onPress={(e) => {
+                e.stopPropagation();
+                handleRemoveDevice(item);
+              }}
+              style={styles.removeButton}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Trash2 size={20} color={theme.colors.error} />
+            </TouchableOpacity>
           </View>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.removeButton}
-          onPress={() => handleRemoveDevice(item.id)}>
-          <X size={20} color={theme.colors.error} />
-        </TouchableOpacity>
-      </View>
+      </Card>
     );
   };
 
   const renderScannedDevice = (scannedDevice: ScannedDevice) => (
     <TouchableOpacity
       key={scannedDevice.device.id}
-      style={styles.scannedDeviceCard}
+      style={[styles.scannedDeviceCard, {
+        backgroundColor: theme.colors.muted,
+        borderColor: theme.colors.border,
+      }]}
       onPress={() => handleDeviceSelect(scannedDevice)}>
       <Bluetooth size={20} color={theme.colors.textPrimary} />
       <View style={styles.scannedDeviceInfo}>
-        <Text style={styles.scannedDeviceName}>
+        <Text style={[styles.scannedDeviceName, { color: theme.colors.textPrimary }]}>
           {scannedDevice.device.name || 'Unknown Device'}
         </Text>
-        <Text style={styles.scannedDeviceId}>{scannedDevice.device.id}</Text>
+        <Text style={[styles.scannedDeviceId, { color: theme.colors.textTertiary }]}>
+          {scannedDevice.device.id}
+        </Text>
       </View>
-      <Text style={styles.rssi}>{scannedDevice.rssi} dBm</Text>
+      <Text style={[styles.rssi, { color: theme.colors.textSecondary }]}>
+        {scannedDevice.rssi} dBm
+      </Text>
     </TouchableOpacity>
   );
 
   const renderScanModal = () => {
-    if (!showScanModal) return null;
-
     const deviceArray = Array.from(scannedDevices.values())
       .sort((a, b) => {
         // Prioritize Vertex devices
@@ -280,83 +324,107 @@ const DevicesScreen: React.FC = () => {
       });
 
     return (
-      <View style={styles.modal}>
-        <View style={styles.modalContent}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Scan for Devices</Text>
-            <TouchableOpacity onPress={() => {
-              stopScanning();
-              setShowScanModal(false);
-            }}>
-              <X size={24} color={theme.colors.textPrimary} />
-            </TouchableOpacity>
-          </View>
-
-          {isScanning && (
-            <View style={styles.scanningIndicator}>
-              <ActivityIndicator size="small" color={theme.colors.primary} />
-              <Text style={styles.scanningText}>Scanning for devices...</Text>
-            </View>
-          )}
-
-          <ScrollView style={styles.scannedDevicesList}>
-            {deviceArray.length === 0 && !isScanning && (
-              <Text style={styles.noDevicesText}>No devices found. Make sure your device is powered on.</Text>
-            )}
-            {deviceArray.map(scannedDevice => renderScannedDevice(scannedDevice))}
-          </ScrollView>
-
-          {isScanning ? (
-            <TouchableOpacity style={styles.modalButton} onPress={stopScanning}>
-              <Text style={styles.modalButtonText}>Stop Scanning</Text>
-            </TouchableOpacity>
+      <Modal
+        visible={showScanModal}
+        onClose={() => {
+          stopScanning();
+          setShowScanModal(false);
+        }}
+        title="Scan for Devices"
+        footer={
+          isScanning ? (
+            <Button variant="secondary" onPress={stopScanning}>
+              Stop Scanning
+            </Button>
           ) : (
-            <TouchableOpacity style={styles.modalButton} onPress={startScanning}>
-              <Text style={styles.modalButtonText}>Scan Again</Text>
-            </TouchableOpacity>
+            <Button variant="primary" onPress={startScanning}>
+              Scan Again
+            </Button>
+          )
+        }>
+        {isScanning && (
+          <View style={[styles.scanningIndicator, { backgroundColor: theme.colors.muted }]}>
+            <ActivityIndicator size="small" color={theme.colors.primary} />
+            <Text style={[styles.scanningText, { color: theme.colors.textSecondary }]}>
+              Scanning for devices...
+            </Text>
+          </View>
+        )}
+
+        <ScrollView style={styles.scannedDevicesList}>
+          {deviceArray.length === 0 && !isScanning && (
+            <Text style={[styles.noDevicesText, { color: theme.colors.textSecondary }]}>
+              No devices found. Make sure your device is powered on.
+            </Text>
           )}
-        </View>
-      </View>
+          {deviceArray.map(scannedDevice => renderScannedDevice(scannedDevice))}
+        </ScrollView>
+      </Modal>
     );
   };
 
-  const renderEmptyState = () => (
-    <View style={styles.emptyCard}>
-      <Bluetooth size={48} color={theme.colors.textTertiary} />
-      <Text style={styles.emptyTitle}>No Devices Yet</Text>
-      <Text style={styles.emptySubtitle}>
-        Scan for BLE devices like your Whoop or IMU logger. Make sure your device
-        is powered on and nearby.
-      </Text>
-      <TouchableOpacity style={styles.addButton} onPress={startScanning}>
-        <Text style={styles.addButtonText}>Scan for Devices</Text>
-      </TouchableOpacity>
-    </View>
-  );
-
   return (
-    <View style={[styles.container, { paddingTop: insets.top }]}>
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
-        <Text style={styles.title}>Devices</Text>
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      {/* Fixed Header */}
+      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: theme.colors.background, borderBottomColor: theme.colors.border }]}>
+        <Text style={[styles.headerTitle, { color: theme.colors.textPrimary }]}>
+          Devices
+        </Text>
+      </View>
 
+      {/* Scrollable Content */}
+      <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
         {savedDevices.length === 0 ? (
-          renderEmptyState()
+          <EmptyState
+            icon={<Bluetooth size={48} color={theme.colors.textTertiary} />}
+            title="No Devices Yet"
+            subtitle="Scan for BLE devices like your Whoop or IMU logger. Make sure your device is powered on and nearby."
+            action={{
+              label: 'Scan for Devices',
+              onPress: startScanning,
+            }}
+          />
         ) : (
-          <>
-            <FlatList
-              data={savedDevices}
-              renderItem={renderSavedDevice}
-              keyExtractor={(item) => item.id}
-              scrollEnabled={false}
-            />
-            <TouchableOpacity style={styles.fab} onPress={startScanning}>
-              <Plus size={24} color={theme.colors.primaryForeground} />
-            </TouchableOpacity>
-          </>
+          <FlatList
+            data={savedDevices}
+            renderItem={renderSavedDevice}
+            keyExtractor={(item) => item.id}
+            scrollEnabled={false}
+            contentContainerStyle={styles.deviceList}
+          />
         )}
       </ScrollView>
 
+      {/* FAB */}
+      {savedDevices.length > 0 && (
+        <TouchableOpacity
+          style={[styles.fab, { backgroundColor: theme.colors.primary }]}
+          onPress={startScanning}>
+          <Plus size={24} color={theme.colors.primaryForeground} />
+        </TouchableOpacity>
+      )}
+
       {renderScanModal()}
+
+      <ConfirmDialog
+        visible={deviceToDelete !== null}
+        onDismiss={() => setDeviceToDelete(null)}
+        title="Remove Device"
+        message={deviceToDelete ? `Remove "${deviceToDelete.name}" from saved devices?` : ''}
+        icon={<AlertCircle size={48} color={theme.colors.error} />}
+        actions={[
+          {
+            label: 'Cancel',
+            onPress: () => setDeviceToDelete(null),
+            variant: 'default',
+          },
+          {
+            label: 'Remove',
+            onPress: confirmDelete,
+            variant: 'danger',
+          },
+        ]}
+      />
     </View>
   );
 };
@@ -364,111 +432,65 @@ const DevicesScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
+  },
+  header: {
+    paddingHorizontal: 24,
+    paddingVertical: 16,
+    borderBottomWidth: 1,
+  },
+  headerTitle: {
+    fontSize: 32,
+    fontWeight: '300',
+    fontFamily: staticTheme.typography.serif,
   },
   scrollView: {
     flex: 1,
   },
   content: {
-    padding: theme.spacing.lg,
-    paddingBottom: theme.spacing.xxl * 2,
+    padding: 24,
+    paddingBottom: 96,
   },
-  title: {
-    fontSize: theme.typography.fontSize.xxxl,
-    fontWeight: theme.typography.fontWeight.light,
-    marginBottom: theme.spacing.lg,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
+  deviceList: {
+    gap: 16,
   },
   deviceCard: {
-    backgroundColor: theme.colors.muted,
-    borderRadius: theme.borderRadius.md,
-    marginBottom: theme.spacing.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-    overflow: 'hidden',
+    marginBottom: 0,
   },
-  deviceMain: {
+  deviceCardMain: {
     flex: 1,
-    padding: theme.spacing.lg,
   },
   deviceHeader: {
     flexDirection: 'row',
     alignItems: 'center',
+    padding: 24,
   },
   deviceInfo: {
-    marginLeft: theme.spacing.md,
+    marginLeft: 16,
     flex: 1,
   },
   deviceName: {
-    fontSize: theme.typography.fontSize.lg,
-    fontWeight: theme.typography.fontWeight.medium,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
+    fontSize: 18,
+    fontWeight: '500',
     marginBottom: 4,
   },
   deviceId: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.textTertiary,
-    fontFamily: theme.typography.mono,
+    fontSize: 12,
     marginBottom: 4,
+    fontFamily: staticTheme.typography.mono,
   },
   lastConnected: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
+    fontSize: 12,
+    fontFamily: staticTheme.typography.serif,
   },
   removeButton: {
-    padding: theme.spacing.lg,
+    padding: 12,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  emptyCard: {
-    backgroundColor: theme.colors.muted,
-    padding: theme.spacing.xxl,
-    borderRadius: theme.borderRadius.md,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    alignItems: 'center',
-    justifyContent: 'center',
-    minHeight: 300,
-  },
-  emptyTitle: {
-    fontSize: theme.typography.fontSize.xl,
-    fontWeight: theme.typography.fontWeight.medium,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
-    marginTop: theme.spacing.md,
-    marginBottom: theme.spacing.sm,
-  },
-  emptySubtitle: {
-    fontSize: theme.typography.fontSize.sm,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.serif,
-    textAlign: 'center',
-    marginBottom: theme.spacing.lg,
-    paddingHorizontal: theme.spacing.lg,
-    lineHeight: 20,
-  },
-  addButton: {
-    backgroundColor: theme.colors.primary,
-    paddingVertical: theme.spacing.md,
-    paddingHorizontal: theme.spacing.xl,
-    borderRadius: theme.borderRadius.md,
-  },
-  addButtonText: {
-    color: theme.colors.primaryForeground,
-    fontSize: theme.typography.fontSize.md,
-    fontWeight: theme.typography.fontWeight.medium,
-    fontFamily: theme.typography.serif,
   },
   fab: {
     position: 'absolute',
-    bottom: theme.spacing.xl,
-    right: theme.spacing.lg,
-    backgroundColor: theme.colors.primary,
+    bottom: 32,
+    right: 24,
     width: 56,
     height: 56,
     borderRadius: 28,
@@ -480,104 +502,47 @@ const styles = StyleSheet.create({
     shadowRadius: 3.84,
     elevation: 5,
   },
-  // Scan Modal Styles
-  modal: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: theme.spacing.lg,
-  },
-  modalContent: {
-    backgroundColor: theme.colors.background,
-    borderRadius: theme.borderRadius.lg,
-    padding: theme.spacing.lg,
-    width: '100%',
-    maxHeight: '80%',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: theme.spacing.lg,
-  },
-  modalTitle: {
-    fontSize: theme.typography.fontSize.xl,
-    fontWeight: theme.typography.fontWeight.medium,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
-  },
   scanningIndicator: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    padding: theme.spacing.md,
-    backgroundColor: theme.colors.muted,
-    borderRadius: theme.borderRadius.md,
-    marginBottom: theme.spacing.md,
+    padding: 16,
+    borderRadius: 8,
+    marginBottom: 16,
   },
   scanningText: {
-    marginLeft: theme.spacing.sm,
-    color: theme.colors.textSecondary,
-    fontSize: theme.typography.fontSize.sm,
-    fontFamily: theme.typography.serif,
+    marginLeft: 8,
+    fontSize: 14,
   },
   scannedDevicesList: {
     maxHeight: 400,
-    marginBottom: theme.spacing.md,
   },
   scannedDeviceCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: theme.spacing.md,
-    backgroundColor: theme.colors.muted,
-    borderRadius: theme.borderRadius.md,
-    marginBottom: theme.spacing.sm,
+    padding: 16,
+    borderRadius: 8,
+    marginBottom: 8,
     borderWidth: 1,
-    borderColor: theme.colors.border,
   },
   scannedDeviceInfo: {
     flex: 1,
-    marginLeft: theme.spacing.sm,
+    marginLeft: 8,
   },
   scannedDeviceName: {
-    fontSize: theme.typography.fontSize.md,
-    fontWeight: theme.typography.fontWeight.medium,
-    color: theme.colors.textPrimary,
-    fontFamily: theme.typography.serif,
+    fontSize: 16,
+    fontWeight: '500',
   },
   scannedDeviceId: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.textTertiary,
-    fontFamily: theme.typography.mono,
+    fontSize: 12,
   },
   rssi: {
-    fontSize: theme.typography.fontSize.xs,
-    color: theme.colors.textSecondary,
-    fontFamily: theme.typography.mono,
+    fontSize: 12,
   },
   noDevicesText: {
     textAlign: 'center',
-    color: theme.colors.textSecondary,
-    fontSize: theme.typography.fontSize.sm,
-    fontFamily: theme.typography.serif,
-    padding: theme.spacing.xl,
-  },
-  modalButton: {
-    backgroundColor: theme.colors.primary,
-    padding: theme.spacing.md,
-    borderRadius: theme.borderRadius.md,
-    alignItems: 'center',
-  },
-  modalButtonText: {
-    color: theme.colors.primaryForeground,
-    fontSize: theme.typography.fontSize.md,
-    fontWeight: theme.typography.fontWeight.medium,
-    fontFamily: theme.typography.serif,
+    fontSize: 14,
+    padding: 32,
   },
 });
 
