@@ -16,6 +16,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   Bluetooth,
   Battery,
@@ -25,6 +26,7 @@ import {
   RefreshCw,
   Heart,
   ArrowLeft,
+  Circle,
 } from 'lucide-react-native';
 import { theme } from '../styles/theme';
 import BleService from '../services/BleService';
@@ -36,9 +38,11 @@ type DeviceDetailRouteProp = RouteProp<RootStackParamList, 'DeviceDetail'>;
 
 const SAVED_DEVICES_KEY = '@vertex_saved_devices';
 
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
 const DeviceDetailScreenContent: React.FC = () => {
   const insets = useSafeAreaInsets();
-  const navigation = useNavigation();
+  const navigation = useNavigation<NavigationProp>();
   const route = useRoute<DeviceDetailRouteProp>();
   const { deviceId, deviceName } = route.params;
 
@@ -52,21 +56,39 @@ const DeviceDetailScreenContent: React.FC = () => {
   const [lastReadingTime, setLastReadingTime] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [streamingError, setStreamingError] = useState<string | null>(null);
+  const [sampleRate, setSampleRate] = useState<number | null>(null);
 
   // Track if component is mounted to prevent state updates after unmount
   const isMountedRef = useRef(true);
+  const lastUpdateTimeRef = useRef<number>(0);
+  const updateCountRef = useRef<number>(0);
+  const sampleRateHistoryRef = useRef<number[]>([]);
 
   // Detect if this is a Vertex IMU device
   const isVertexDevice = deviceName?.toLowerCase().includes('vertex');
 
   useEffect(() => {
     isMountedRef.current = true;
-    initializeDevice().catch((err) => {
-      console.error('Init error caught:', err);
-      if (isMountedRef.current) {
-        setError(err?.message || 'Failed to initialize');
+
+    // Initialize device with error boundary
+    const init = async () => {
+      try {
+        await initializeDevice();
+      } catch (err: any) {
+        console.error('Init error caught in useEffect:', err);
+        if (isMountedRef.current) {
+          try {
+            safeSetState(setError, err?.message || 'Failed to initialize');
+            safeSetState(setIsConnecting, false);
+          } catch (stateError) {
+            console.error('Failed to set error state:', stateError);
+          }
+        }
       }
-    });
+    };
+
+    init();
+
     return () => {
       isMountedRef.current = false;
       // Don't disconnect on unmount - user controls disconnect
@@ -110,32 +132,63 @@ const DeviceDetailScreenContent: React.FC = () => {
   const initializeDevice = async () => {
     if (!isMountedRef.current) return;
 
-    setIsConnecting(true);
-    setError(null);
-    setStreamingError(null);
-
     try {
+      safeSetState(setIsConnecting, true);
+      safeSetState(setError, null);
+      safeSetState(setStreamingError, null);
+
       // Check if already connected
       const connectedDevice = BleService.getConnectedDevice();
 
       if (connectedDevice?.id === deviceId) {
+        if (!isMountedRef.current) return;
         safeSetState(setIsConnected, true);
         safeSetState(setConnectionStatus, 'Connected');
         safeSetState(setError, null);
-        await discoverServices();
+
+        try {
+          await discoverServices();
+        } catch (err) {
+          console.warn('Service discovery failed:', err);
+        }
       } else {
-        // Connect to device
+        // Connect to device with timeout
+        if (!isMountedRef.current) return;
         safeSetState(setConnectionStatus, 'Connecting...');
-        await BleService.connectToDevice(deviceId);
-        safeSetState(setIsConnected, true);
-        safeSetState(setConnectionStatus, 'Connected');
-        safeSetState(setError, null);
-        await discoverServices();
+
+        try {
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Connection timeout after 15s')), 15000)
+          );
+
+          await Promise.race([
+            BleService.connectToDevice(deviceId),
+            timeoutPromise
+          ]);
+
+          if (!isMountedRef.current) return;
+          safeSetState(setIsConnected, true);
+          safeSetState(setConnectionStatus, 'Connected');
+          safeSetState(setError, null);
+
+          try {
+            await discoverServices();
+          } catch (err) {
+            console.warn('Service discovery failed:', err);
+          }
+        } catch (connectError: any) {
+          throw connectError;
+        }
       }
 
       // If this is a Vertex device, automatically start streaming
       if (isVertexDevice && isMountedRef.current) {
-        await startIMUStreaming();
+        try {
+          await startIMUStreaming();
+        } catch (streamError) {
+          console.warn('Failed to start streaming:', streamError);
+          // Don't fail the entire initialization if streaming fails
+        }
       }
     } catch (error: any) {
       console.error('Connection error:', error);
@@ -185,6 +238,29 @@ const DeviceDetailScreenContent: React.FC = () => {
           safeSetState(setSensorReading, data);
           safeSetState(setLastReadingTime, new Date());
           safeSetState(setStreamingError, null);
+
+          // Calculate sample rate with rolling average (updates every 10 samples)
+          const now = Date.now();
+          updateCountRef.current++;
+
+          if (updateCountRef.current >= 10) {
+            if (lastUpdateTimeRef.current > 0) {
+              const deltaMs = now - lastUpdateTimeRef.current;
+              const instantRate = (10 * 1000) / deltaMs; // 10 samples over deltaMs
+
+              // Add to rolling average (keep last 5 measurements = 50 samples)
+              sampleRateHistoryRef.current.push(instantRate);
+              if (sampleRateHistoryRef.current.length > 5) {
+                sampleRateHistoryRef.current.shift();
+              }
+
+              // Calculate average and round
+              const avgRate = sampleRateHistoryRef.current.reduce((a, b) => a + b, 0) / sampleRateHistoryRef.current.length;
+              safeSetState(setSampleRate, Math.round(avgRate));
+            }
+            lastUpdateTimeRef.current = now;
+            updateCountRef.current = 0;
+          }
         },
         (error) => {
           if (!isMountedRef.current) return;
@@ -277,15 +353,44 @@ const DeviceDetailScreenContent: React.FC = () => {
 
   const handleDisconnect = async () => {
     try {
+      console.log('[DeviceDetail] Disconnecting device:', deviceId);
+
+      // Stop any active streaming/polling first
+      if (isStreaming || isPolling) {
+        console.log('[DeviceDetail] Stopping active streams before disconnect');
+        safeSetState(setIsStreaming, false);
+        safeSetState(setIsPolling, false);
+      }
+
+      // Disconnect from BLE
       await BleService.disconnect();
-      setIsConnected(false);
-      setConnectionStatus('Disconnected');
+
+      // Clear all state
+      safeSetState(setIsConnected, false);
+      safeSetState(setConnectionStatus, 'Disconnected');
+      safeSetState(setSensorReading, null);
+      safeSetState(setBatteryLevel, null);
+      safeSetState(setSampleRate, null);
+      safeSetState(setError, null);
+      safeSetState(setStreamingError, null);
+
       Alert.alert('Disconnected', 'Device disconnected successfully', [
         { text: 'OK', onPress: () => navigation.goBack() }
       ]);
-    } catch (error) {
-      console.error('Disconnect error:', error);
-      Alert.alert('Error', 'Failed to disconnect properly');
+    } catch (error: any) {
+      console.error('[DeviceDetail] Disconnect error:', error);
+
+      // Even if disconnect fails, clear local state
+      safeSetState(setIsConnected, false);
+      safeSetState(setIsStreaming, false);
+      safeSetState(setIsPolling, false);
+      safeSetState(setConnectionStatus, 'Disconnected');
+
+      Alert.alert(
+        'Disconnect Issue',
+        'Device may already be disconnected or connection was lost.',
+        [{ text: 'OK', onPress: () => navigation.goBack() }]
+      );
     }
   };
 
@@ -300,9 +405,13 @@ const DeviceDetailScreenContent: React.FC = () => {
           style: 'destructive',
           onPress: async () => {
             try {
-              // Disconnect if connected
+              // Try to disconnect if connected, but continue even if it fails
               if (isConnected) {
-                await BleService.disconnect();
+                try {
+                  await BleService.disconnect();
+                } catch (disconnectError) {
+                  console.warn('Disconnect failed during forget, continuing...', disconnectError);
+                }
               }
 
               // Remove from saved devices
@@ -318,7 +427,7 @@ const DeviceDetailScreenContent: React.FC = () => {
               ]);
             } catch (error) {
               console.error('Forget error:', error);
-              Alert.alert('Error', 'Failed to remove device');
+              Alert.alert('Error', 'Failed to remove device from storage');
             }
           },
         },
@@ -341,6 +450,10 @@ const DeviceDetailScreenContent: React.FC = () => {
         },
       ]
     );
+  };
+
+  const handleStartRecording = () => {
+    navigation.navigate('Record', { deviceId, deviceName });
   };
 
   const renderStatusCard = () => (
@@ -368,16 +481,18 @@ const DeviceDetailScreenContent: React.FC = () => {
           <Battery
             size={20}
             color={
-              batteryLevel === null ? theme.colors.textTertiary :
-              batteryLevel > 20 ? theme.colors.success :
-              batteryLevel > 10 ? theme.colors.warning :
+              sensorReading?.batteryVoltage === undefined ? theme.colors.textTertiary :
+              sensorReading.batteryVoltage > 3.7 ? theme.colors.success :
+              sensorReading.batteryVoltage > 3.4 ? theme.colors.warning :
               theme.colors.error
             }
           />
           <View style={styles.statusInfo}>
             <Text style={styles.statusLabel}>Battery</Text>
             <Text style={styles.statusValue}>
-              {batteryLevel !== null ? `${batteryLevel}%` : 'N/A'}
+              {sensorReading?.batteryVoltage !== undefined
+                ? `${sensorReading.batteryVoltage.toFixed(2)}V`
+                : 'N/A'}
             </Text>
           </View>
         </View>
@@ -387,18 +502,38 @@ const DeviceDetailScreenContent: React.FC = () => {
 
       <View style={styles.statusRow}>
         <View style={styles.statusItem}>
-          <Activity size={20} color={theme.colors.textSecondary} />
+          <Activity
+            size={20}
+            color={
+              sensorReading?.calibration?.system === 3 ? theme.colors.success :
+              sensorReading?.calibration?.system >= 2 ? theme.colors.warning :
+              theme.colors.textSecondary
+            }
+          />
           <View style={styles.statusInfo}>
             <Text style={styles.statusLabel}>Calibration</Text>
-            <Text style={styles.statusValue}>Ready</Text>
+            <Text style={styles.statusValue}>
+              {sensorReading?.calibration?.system !== undefined
+                ? sensorReading.calibration.system
+                : 'N/A'}
+            </Text>
           </View>
         </View>
 
         <View style={styles.statusItem}>
-          <Zap size={20} color={theme.colors.textSecondary} />
+          <Zap
+            size={20}
+            color={
+              sampleRate && sampleRate >= 8 ? theme.colors.success :
+              sampleRate && sampleRate >= 5 ? theme.colors.warning :
+              theme.colors.textSecondary
+            }
+          />
           <View style={styles.statusInfo}>
             <Text style={styles.statusLabel}>Sample Rate</Text>
-            <Text style={styles.statusValue}>100 Hz</Text>
+            <Text style={styles.statusValue}>
+              {sampleRate ? `${sampleRate} Hz` : 'N/A'}
+            </Text>
           </View>
         </View>
       </View>
@@ -477,16 +612,78 @@ const DeviceDetailScreenContent: React.FC = () => {
               </View>
             </View>
 
-            {/* Show calibration status */}
+            {/* Accelerometer */}
+            {(sensorReading.accelX !== undefined || sensorReading.accelY !== undefined || sensorReading.accelZ !== undefined) && (
+              <>
+                <View style={styles.divider} />
+                <Text style={styles.sectionLabel}>Acceleration (m/s²)</Text>
+                <View style={styles.sensorGrid}>
+                  <View style={styles.sensorValue}>
+                    <Text style={styles.sensorLabel}>X</Text>
+                    <Text style={styles.sensorNumber}>{sensorReading.accelX?.toFixed(2) ?? '0.00'}</Text>
+                  </View>
+                  <View style={styles.sensorValue}>
+                    <Text style={styles.sensorLabel}>Y</Text>
+                    <Text style={styles.sensorNumber}>{sensorReading.accelY?.toFixed(2) ?? '0.00'}</Text>
+                  </View>
+                  <View style={styles.sensorValue}>
+                    <Text style={styles.sensorLabel}>Z</Text>
+                    <Text style={styles.sensorNumber}>{sensorReading.accelZ?.toFixed(2) ?? '0.00'}</Text>
+                  </View>
+                </View>
+              </>
+            )}
+
+            {/* Gyroscope */}
+            {(sensorReading.gyroX !== undefined || sensorReading.gyroY !== undefined || sensorReading.gyroZ !== undefined) && (
+              <>
+                <View style={styles.divider} />
+                <Text style={styles.sectionLabel}>Angular Velocity (rad/s)</Text>
+                <View style={styles.sensorGrid}>
+                  <View style={styles.sensorValue}>
+                    <Text style={styles.sensorLabel}>X</Text>
+                    <Text style={styles.sensorNumber}>{sensorReading.gyroX?.toFixed(2) ?? '0.00'}</Text>
+                  </View>
+                  <View style={styles.sensorValue}>
+                    <Text style={styles.sensorLabel}>Y</Text>
+                    <Text style={styles.sensorNumber}>{sensorReading.gyroY?.toFixed(2) ?? '0.00'}</Text>
+                  </View>
+                  <View style={styles.sensorValue}>
+                    <Text style={styles.sensorLabel}>Z</Text>
+                    <Text style={styles.sensorNumber}>{sensorReading.gyroZ?.toFixed(2) ?? '0.00'}</Text>
+                  </View>
+                </View>
+              </>
+            )}
+
+            {/* Magnetometer */}
+            {(sensorReading.magX !== undefined || sensorReading.magY !== undefined || sensorReading.magZ !== undefined) && (
+              <>
+                <View style={styles.divider} />
+                <Text style={styles.sectionLabel}>Magnetic Field (µT)</Text>
+                <View style={styles.sensorGrid}>
+                  <View style={styles.sensorValue}>
+                    <Text style={styles.sensorLabel}>X</Text>
+                    <Text style={styles.sensorNumber}>{sensorReading.magX?.toFixed(1) ?? '0.0'}</Text>
+                  </View>
+                  <View style={styles.sensorValue}>
+                    <Text style={styles.sensorLabel}>Y</Text>
+                    <Text style={styles.sensorNumber}>{sensorReading.magY?.toFixed(1) ?? '0.0'}</Text>
+                  </View>
+                  <View style={styles.sensorValue}>
+                    <Text style={styles.sensorLabel}>Z</Text>
+                    <Text style={styles.sensorNumber}>{sensorReading.magZ?.toFixed(1) ?? '0.0'}</Text>
+                  </View>
+                </View>
+              </>
+            )}
+
+            {/* Sensor Calibration Status */}
             {sensorReading.calibration && (
               <>
                 <View style={styles.divider} />
-                <Text style={styles.sectionLabel}>Calibration Status (0-3, higher is better)</Text>
+                <Text style={styles.sectionLabel}>Sensor Calibration (0-3)</Text>
                 <View style={styles.sensorGrid}>
-                  <View style={styles.sensorValue}>
-                    <Text style={styles.sensorLabel}>System</Text>
-                    <Text style={styles.sensorNumber}>{sensorReading.calibration.system}</Text>
-                  </View>
                   <View style={styles.sensorValue}>
                     <Text style={styles.sensorLabel}>Gyro</Text>
                     <Text style={styles.sensorNumber}>{sensorReading.calibration.gyro}</Text>
@@ -542,6 +739,34 @@ const DeviceDetailScreenContent: React.FC = () => {
         )}
 
         {renderStatusCard()}
+
+        {/* Record and Streaming status for Vertex devices */}
+        {isVertexDevice && (
+          <>
+            {/* Primary Record Button */}
+            <TouchableOpacity
+              style={[styles.recordButton, !isConnected && styles.buttonDisabled]}
+              onPress={handleStartRecording}
+              disabled={!isConnected}>
+              <Circle size={24} color={theme.colors.primaryForeground} fill={theme.colors.error} />
+              <Text style={styles.recordButtonText}>Start Recording</Text>
+            </TouchableOpacity>
+
+            {/* Streaming status */}
+            <View style={styles.streamingStatusCard}>
+              <Activity size={20} color={isStreaming ? theme.colors.success : theme.colors.textSecondary} />
+              <Text style={[
+                styles.streamingStatusText,
+                { color: isStreaming ? theme.colors.success : theme.colors.textSecondary }
+              ]}>
+                {isStreaming
+                  ? (sampleRate ? `Live streaming at ${sampleRate} Hz` : 'Live streaming...')
+                  : 'Stream inactive'}
+              </Text>
+            </View>
+          </>
+        )}
+
         {renderSensorData()}
 
         {/* Primary Action - Only show poll button for non-Vertex devices */}
@@ -559,19 +784,6 @@ const DeviceDetailScreenContent: React.FC = () => {
               </>
             )}
           </TouchableOpacity>
-        )}
-
-        {/* Streaming status for Vertex devices */}
-        {isVertexDevice && (
-          <View style={styles.streamingStatusCard}>
-            <Activity size={20} color={isStreaming ? theme.colors.success : theme.colors.textSecondary} />
-            <Text style={[
-              styles.streamingStatusText,
-              { color: isStreaming ? theme.colors.success : theme.colors.textSecondary }
-            ]}>
-              {isStreaming ? 'Live streaming at 1 Hz' : 'Stream inactive'}
-            </Text>
-          </View>
         )}
 
         {/* Secondary Actions */}
@@ -795,10 +1007,12 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   sensorNumber: {
-    fontSize: theme.typography.fontSize.xl,
+    fontSize: theme.typography.fontSize.md,
     fontWeight: theme.typography.fontWeight.semibold,
     color: theme.colors.textPrimary,
     fontFamily: theme.typography.mono,
+    minWidth: 60,
+    textAlign: 'center',
   },
   rawData: {
     marginTop: theme.spacing.md,
@@ -899,6 +1113,23 @@ const styles = StyleSheet.create({
   streamingErrorText: {
     fontSize: theme.typography.fontSize.xs,
     color: theme.colors.error,
+    fontFamily: theme.typography.serif,
+  },
+  recordButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: theme.spacing.lg,
+    backgroundColor: theme.colors.error,
+    borderRadius: theme.borderRadius.md,
+    marginBottom: theme.spacing.md,
+    gap: theme.spacing.sm,
+    minHeight: 60,
+  },
+  recordButtonText: {
+    color: theme.colors.primaryForeground,
+    fontSize: theme.typography.fontSize.lg,
+    fontWeight: theme.typography.fontWeight.semibold,
     fontFamily: theme.typography.serif,
   },
   streamingStatusCard: {

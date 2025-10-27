@@ -188,8 +188,21 @@ const DevicesScreen: React.FC = () => {
           text: 'Remove',
           style: 'destructive',
           onPress: async () => {
-            const updated = savedDevices.filter(d => d.id !== deviceId);
-            await saveDevices(updated);
+            try {
+              // Check if this device is currently connected
+              const connectedDevice = BleService.getConnectedDevice();
+              if (connectedDevice && connectedDevice.id === deviceId) {
+                console.log('[DevicesScreen] Disconnecting device before removal:', deviceId);
+                await BleService.disconnect();
+              }
+
+              // Remove from saved devices
+              const updated = savedDevices.filter(d => d.id !== deviceId);
+              await saveDevices(updated);
+            } catch (error) {
+              console.error('[DevicesScreen] Error removing device:', error);
+              Alert.alert('Error', 'Failed to remove device');
+            }
           },
         },
       ]

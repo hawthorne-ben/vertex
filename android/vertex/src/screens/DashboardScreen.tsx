@@ -1,16 +1,25 @@
 /**
  * Dashboard Screen
- * 
+ *
  * Shows stats overview and recent rides
  */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import { Circle, CheckCircle } from 'lucide-react-native';
 import { theme } from '../styles/theme';
+import BleService from '../services/BleService';
+import { RootStackParamList } from '../navigation/AppNavigator';
+
+type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 const DashboardScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
+  const navigation = useNavigation<NavigationProp>();
+  const [connectedDevice, setConnectedDevice] = useState<{ id: string; name: string } | null>(null);
 
   // Placeholder data
   const stats = {
@@ -21,10 +30,53 @@ const DashboardScreen: React.FC = () => {
     storageUnit: 'MB',
   };
 
+  // Check for connected Vertex device
+  useFocusEffect(
+    React.useCallback(() => {
+      checkConnection();
+    }, [])
+  );
+
+  const checkConnection = () => {
+    const device = BleService.getConnectedDevice();
+    if (device && device.name?.toLowerCase().includes('vertex')) {
+      setConnectedDevice({ id: device.id, name: device.name });
+    } else {
+      setConnectedDevice(null);
+    }
+  };
+
+  const handleStartRecording = () => {
+    if (connectedDevice) {
+      navigation.navigate('Record', {
+        deviceId: connectedDevice.id,
+        deviceName: connectedDevice.name,
+      });
+    }
+  };
+
+  const isVertexConnected = connectedDevice !== null;
+
   return (
     <ScrollView style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.content}>
         <Text style={styles.title}>Dashboard</Text>
+
+        {/* Record CTA - Show when Vertex device is connected */}
+        {isVertexConnected && (
+          <TouchableOpacity style={styles.recordCTA} onPress={handleStartRecording}>
+            <View style={styles.recordCTAContent}>
+              <Circle size={32} color={theme.colors.primaryForeground} fill={theme.colors.error} />
+              <View style={styles.recordCTAText}>
+                <Text style={styles.recordCTATitle}>Start Recording</Text>
+                <Text style={styles.recordCTASubtitle}>{connectedDevice.name} connected</Text>
+              </View>
+            </View>
+            <View style={styles.recordCTAIcon}>
+              <CheckCircle size={24} color={theme.colors.success} />
+            </View>
+          </TouchableOpacity>
+        )}
 
         {/* Stats Grid */}
         <View style={styles.statsGrid}>
@@ -103,6 +155,46 @@ const styles = StyleSheet.create({
     marginBottom: theme.spacing.lg,
     color: theme.colors.textPrimary,
     fontFamily: theme.typography.serif,
+  },
+  recordCTA: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: theme.colors.error,
+    borderRadius: theme.borderRadius.md,
+    padding: theme.spacing.lg,
+    marginBottom: theme.spacing.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.error,
+  },
+  recordCTAContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.spacing.md,
+    flex: 1,
+  },
+  recordCTAText: {
+    flex: 1,
+  },
+  recordCTATitle: {
+    fontSize: theme.typography.fontSize.lg,
+    fontWeight: theme.typography.fontWeight.semibold,
+    color: theme.colors.primaryForeground,
+    fontFamily: theme.typography.serif,
+    marginBottom: 2,
+  },
+  recordCTASubtitle: {
+    fontSize: theme.typography.fontSize.sm,
+    color: theme.colors.primaryForeground + 'CC',
+    fontFamily: theme.typography.serif,
+  },
+  recordCTAIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: theme.colors.primaryForeground,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   statsGrid: {
     flexDirection: 'row',

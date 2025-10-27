@@ -8,15 +8,19 @@ ESP32-based firmware for the BNO055 IMU sensor with multiple operating modes.
 
 **BLE-only streaming mode** for mobile app integration.
 
-- ✅ **BLE GATT Server** - Real-time notifications at 50Hz
+- ✅ **BLE GATT Server** - Real-time notifications at 10Hz (optimized for stability)
 - ✅ **No WiFi** - Battery efficient, BLE-only
 - ✅ **No NTP** - Phone provides timestamps
-- ✅ **Binary Protocol** - 73-byte efficient packets
-- ✅ **Extensive Logging** - Debug all operations via Serial
+- ✅ **Binary Protocol** - 56-byte efficient packets
+- ✅ **MTU Negotiation** - 185-byte MTU for reliable transmission
+- ✅ **Full Sensor Data** - Euler angles, accel, gyro, mag, calibration
+- ✅ **Serial Logging** - Debug all operations via Serial
 
 **Use Case**: Mobile app receives continuous IMU data stream
 
-**Battery Life**: ~15-24 hours (1200mAh battery)
+**Performance**: 10Hz stable (50-100Hz capable with further optimization)
+
+**Battery Life**: ~15-24 hours (1200mAh battery, estimated)
 
 **Documentation**: [sensor_notify/README.md](sensor_notify/README.md)
 
@@ -123,8 +127,8 @@ RAM usage:          41,892 bytes (12% of 320KB)
 
 **Sensor Data** (NOTIFY + READ):
 - UUID: `12345678-1234-5678-1234-56789abcdef1`
-- 73-byte binary packet @ 50Hz
-- Timestamp, quaternion, euler, accel, gyro, mag, calibration, temp
+- 56-byte binary packet @ 10Hz
+- Timestamp (4B), euler (12B), accel (12B), gyro (12B), mag (12B), calibration (4B)
 
 **Battery Level** (NOTIFY + READ):
 - UUID: `00002a19-0000-1000-8000-00805f9b34fb` (Standard)
