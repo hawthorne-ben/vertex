@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vertex Logo Preview</title>
+  <style>
+    body {
+      font-family: 'Georgia', serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 48px;
+      background: #fafafa;
+    }
+    h1 {
+      font-size: 24px;
+      margin-bottom: 48px;
+      font-weight: 400;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 32px;
+      margin-bottom: 48px;
+    }
+    .preview-card {
+      background: white;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 32px;
+      text-align: center;
+    }
+    .preview-card h2 {
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: #666;
+      margin-bottom: 24px;
+      font-weight: 400;
+    }
+    .icon-display {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 120px;
+    }
+    .dark {
+      background: #1a1a1a;
+    }
+    .size-16 { width: 16px; height: 16px; }
+    .size-32 { width: 32px; height: 32px; }
+    .size-64 { width: 64px; height: 64px; }
+    .size-128 { width: 128px; height: 128px; }
+    p {
+      margin-top: 16px;
+      font-size: 12px;
+      color: #999;
+    }
+    .wordmark {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      font-size: 36px;
+      font-weight: 600;
+      letter-spacing: 2px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Vertex Logo & Favicon Preview</h1>
+  
+  <div class="grid">
+    <div class="preview-card">
+      <h2>Favicon (16×16)</h2>
+      <div class="icon-display">
+        <img src="favicon.svg" alt="Vertex Icon" class="size-16">
+      </div>
+      <p>Browser tab size</p>
+    </div>
+    
+    <div class="preview-card">
+      <h2>Icon (32×32)</h2>
+      <div class="icon-display">
+        <img src="favicon.svg" alt="Vertex Icon" class="size-32">
+      </div>
+      <p>Small size</p>
+    </div>
+    
+    <div class="preview-card">
+      <h2>Icon (64×64)</h2>
+      <div class="icon-display">
+        <img src="favicon.svg" alt="Vertex Icon" class="size-64">
+      </div>
+      <p>Medium size</p>
+    </div>
+    
+    <div class="preview-card">
+      <h2>Icon (128×128)</h2>
+      <div class="icon-display">
+        <img src="favicon.svg" alt="Vertex Icon" class="size-128">
+      </div>
+      <p>Large size</p>
+    </div>
+    
+    <div class="preview-card dark">
+      <h2 style="color: #999;">Dark Background</h2>
+      <div class="icon-display">
+        <img src="vertex-icon.svg" alt="Vertex Icon" class="size-64" style="filter: invert(1);">
+      </div>
+      <p style="color: #666;">Inverted for dark mode</p>
+    </div>
+    
+    <div class="preview-card">
+      <h2>With Wordmark</h2>
+      <div class="icon-display wordmark">
+        <img src="vertex-icon.svg" alt="V" class="size-32">
+        <span>VERTEX</span>
+      </div>
+      <p>Combined logo concept</p>
+    </div>
+  </div>
+  
+  <div style="padding: 32px; background: white; border-radius: 8px; border: 1px solid #e0e0e0;">
+    <h2 style="font-size: 16px; margin-bottom: 16px;">Current Implementation</h2>
+    <ul style="line-height: 1.8; color: #666;">
+      <li>✅ SVG favicon created and configured</li>
+      <li>✅ Scales cleanly at all sizes</li>
+      <li>✅ Works in modern browsers</li>
+      <li>⏳ Generate .ico for legacy browsers</li>
+      <li>⏳ Create apple-touch-icon.png (180×180)</li>
+      <li>⏳ Refine in Figma for final design</li>
+    </ul>
+  </div>
+  
+  <div style="margin-top: 32px; padding: 32px; background: #f0f7ff; border-radius: 8px;">
+    <h2 style="font-size: 16px; margin-bottom: 16px;">Next Steps</h2>
+    <ol style="line-height: 1.8; color: #444;">
+      <li>Open <strong>Figma</strong> and create variations of the V shape</li>
+      <li>Experiment with <strong>typography</strong> for "VERTEX"</li>
+      <li>Choose a <strong>color palette</strong> (suggest monochrome)</li>
+      <li>Export final assets at all sizes</li>
+      <li>Use <a href="https://favicon.io/favicon-converter/" target="_blank">favicon.io</a> to generate .ico</li>
+      <li>Replace favicon files in /public/</li>
+    </ol>
+  </div>
+</body>
+</html>
+

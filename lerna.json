@@ -1,0 +1,34 @@
+{
+  "$schema": "node_modules/lerna/schemas/lerna-schema.json",
+  "version": "independent",
+  "packages": [
+    "packages/*",
+    "web",
+    "android"
+  ],
+  "command": {
+    "version": {
+      "allowBranch": "main",
+      "conventionalCommits": true,
+      "message": "chore(release): publish %s",
+      "ignoreChanges": [
+        "**/*.md",
+        "**/*.txt",
+        "**/test/**",
+        "**/tests/**"
+      ]
+    },
+    "publish": {
+      "registry": "https://registry.npmjs.org/",
+      "npmClient": "npm"
+    }
+  },
+  "ignoreChanges": [
+    "**/__tests__/**",
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "**/*.md"
+  ]
+}

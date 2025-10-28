@@ -4,7 +4,15 @@
  * Based on working bno055_dual_mode implementation
  * Boot + sensor init + basic BLE
  * Power Control: BOOT button (GPIO0) for on/off
+ *
+ * Firmware Version: 0.1.0
+ * VTX Format: v1.0
  */
+
+// Version information
+#define FIRMWARE_VERSION "0.1.0"
+#define VTX_FORMAT_MAJOR 1
+#define VTX_FORMAT_MINOR 0
 
 #include <Wire.h>
 #include <Adafruit_Sensor.h>

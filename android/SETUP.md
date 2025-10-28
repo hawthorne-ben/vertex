@@ -47,7 +47,7 @@ sdkmanager --version
 
 ## React Native Project Setup
 
-✅ **Already Completed:** The React Native project has been initialized in the `android/vertex/` directory.
+✅ **Already Completed:** The React Native project has been initialized in the `android/` directory.
 
 The following dependencies have been installed:
 - `react-native-ble-plx` - BLE communication
@@ -60,7 +60,7 @@ The following dependencies have been installed:
 ### 1. Navigate to Project Directory
 
 ```bash
-cd /Users/bhawthorne/dev/vertex/android/vertex
+cd /Users/bhawthorne/dev/vertex/android
 ```
 
 ### 2. Additional Dependencies (Optional)

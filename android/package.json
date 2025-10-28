@@ -1,6 +1,6 @@
 {
-  "name": "vertex",
-  "version": "0.0.1",
+  "name": "vertex-android",
+  "version": "0.1.0",
   "private": true,
   "scripts": {
     "android": "react-native run-android",
@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.2.0",
+    "@react-native/gradle-plugin": "^0.82.1",
     "@react-native/new-app-screen": "0.82.1",
     "@react-navigation/bottom-tabs": "^7.5.0",
     "@react-navigation/native": "^7.1.18",

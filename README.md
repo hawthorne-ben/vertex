@@ -1,11 +1,39 @@
 # Vertex
 **Your ride, unencrypted**
 
+![Version](https://img.shields.io/badge/version-0.1.0-blue?style=flat-square)
+![Status](https://img.shields.io/badge/status-alpha-orange?style=flat-square)
+
 ## Overview
 
-Vertex is a web-based platform for analyzing IMU (Inertial Measurement Unit) cycling data from custom hardware. It enables cyclists to gain detailed insights into their riding dynamics—cornering forces, braking behavior, road surface quality, and pedaling smoothness—by combining high-frequency IMU data with standard cycling computer FIT files.
+Vertex is a complete IMU cycling data platform consisting of:
+- **Custom firmware** for ESP32-based IMU sensors
+- **Android companion app** for real-time data recording via BLE
+- **Web platform** for analyzing and visualizing riding dynamics
+
+The system enables cyclists to gain detailed insights into their riding dynamics—cornering forces, braking behavior, road surface quality, and pedaling smoothness—by combining high-frequency IMU data with standard cycling computer FIT files.
 
 Vertex delivers sophisticated analytics typically found in professional racing telemetry systems with an accessible, modern interface.
+
+## Monorepo Structure
+
+This repository contains all Vertex components with independent versioning:
+
+```
+vertex/
+├── packages/              # Shared packages
+│   ├── vtx-format/       # VTX binary format specification (v0.1.0)
+│   └── vtx-constants/    # Shared format constants (v0.1.0)
+├── web/                  # Next.js web platform (v0.1.0)
+├── android/vertex/       # React Native Android app (v0.1.0)
+├── firmware/             # ESP32 IMU firmware (v0.1.0)
+├── docs/                 # Monorepo documentation
+├── scripts/              # Build and version scripts
+├── sql/                  # Database scripts
+└── [monorepo configs]    # lerna.json, package.json, .gitignore
+```
+
+See [docs/VERSION_COMPATIBILITY.md](./docs/VERSION_COMPATIBILITY.md) for version compatibility matrix.
 
 ## Core Capabilities
 
@@ -29,24 +57,60 @@ Vertex delivers sophisticated analytics typically found in professional racing t
 - Summary statistics across all rides
 - Export functionality for processed data and charts
 
-## Local Development
+## Quick Start
 
-### First Time Setup
+### Web Platform Development
+
 ```bash
+# Install dependencies (all packages)
 npm install
-```
 
-### Run Development Server
-```bash
+# Run web development server
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) to see the app.
+Open [http://localhost:3000](http://localhost:3000) to see the web app.
 
-### Build for Production
+### Android App Development
+
 ```bash
-npm run build
-npm start
+cd android/vertex
+npm install
+npm run android
+```
+
+See [android/README.md](./android/README.md) for detailed setup.
+
+### Firmware Development
+
+See [firmware/README_FIRMWARE.md](./firmware/README_FIRMWARE.md) for Arduino setup and flashing instructions.
+
+## Documentation
+
+- **[docs/VERSIONING_STRATEGY.md](./docs/VERSIONING_STRATEGY.md)** - Complete versioning guide
+- **[docs/VERSION_COMPATIBILITY.md](./docs/VERSION_COMPATIBILITY.md)** - Compatibility matrix
+- **[docs/IMPLEMENTATION_COMPLETE.md](./docs/IMPLEMENTATION_COMPLETE.md)** - Implementation summary
+- **[packages/vtx-format/](./packages/vtx-format/)** - VTX binary format specification
+- **[android/README.md](./android/README.md)** - Android app documentation
+- **[firmware/README_FIRMWARE.md](./firmware/README_FIRMWARE.md)** - Firmware documentation
+
+## Versioning
+
+This monorepo uses **independent versioning** with Lerna:
+- Each component versions independently (v0.1.0, v0.2.0, etc.)
+- Git tags are namespaced: `firmware/v0.1.0`, `android/v0.1.0`, `web/v0.1.0`
+- See [docs/VERSIONING_STRATEGY.md](./docs/VERSIONING_STRATEGY.md) for details
+
+### Version Components
+
+```bash
+# Version specific packages
+npm run version:vtx-format
+npm run version:android
+npm run version:web
+
+# Or use lerna directly
+npx lerna version
 ```
 
 ## Project Structure
