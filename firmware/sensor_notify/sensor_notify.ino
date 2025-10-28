@@ -335,8 +335,15 @@ void sendSensorData() {
 void updateSensorData() {
   unsigned long start = micros();
 
-  // Read all sensor data
-  imu::Vector<3> euler = bno.getVector(Adafruit_BNO055::VECTOR_EULER);
+  // Read quaternion data (reliable at all angles, avoids gimbal lock)
+  // BNO055 direct euler output is unreliable beyond 45° pitch/roll
+  imu::Quaternion quat = bno.getQuat();
+
+  // Convert quaternion to euler angles using library's toEuler() method
+  // This avoids the BNO055 firmware's gimbal lock issues at steep angles
+  imu::Vector<3> euler = quat.toEuler();
+
+  // Read other sensor data
   imu::Vector<3> accel = bno.getVector(Adafruit_BNO055::VECTOR_ACCELEROMETER);
   imu::Vector<3> gyro = bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
   imu::Vector<3> mag = bno.getVector(Adafruit_BNO055::VECTOR_MAGNETOMETER);
@@ -350,10 +357,12 @@ void updateSensorData() {
   // Update sensor data structure
   sensorData.timestamp = millis();
 
-  // Euler angles (degrees)
-  sensorData.roll = euler.x();
-  sensorData.pitch = euler.y();
-  sensorData.yaw = euler.z();
+  // Euler angles from quaternion (convert radians to degrees)
+  // toEuler() returns radians: x=heading/yaw, y=roll, z=pitch
+  // Convert to degrees for BLE transmission (Android app expects degrees)
+  sensorData.yaw = euler.x() * 180.0 / M_PI;    // Heading (0-360°)
+  sensorData.roll = euler.y() * 180.0 / M_PI;   // Roll (-180 to +180°)
+  sensorData.pitch = euler.z() * 180.0 / M_PI;  // Pitch (-90 to +90°)
 
   // Linear acceleration (m/s²)
   sensorData.accel_x = accel.x();
