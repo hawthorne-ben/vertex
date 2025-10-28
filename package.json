@@ -19,7 +19,9 @@
     "dev:web": "cd web && npm run dev",
     "dev:android": "cd android && npm run android",
     "build:web": "cd web && npm run build",
-    "build:android": "cd android && npm run android -- --variant=release"
+    "build:android:debug": "cd android && ./android/gradlew assembleDebug -p android",
+    "build:android:release": "cd android && ./android/gradlew assembleRelease -p android",
+    "build:android": "npm run build:android:debug"
   },
   "devDependencies": {
     "lerna": "^8.0.0"
