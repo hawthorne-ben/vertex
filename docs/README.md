@@ -124,6 +124,30 @@ This documentation is structured for efficient AI reference:
 3. Test local Jekyll build
 4. Commit and push changes
 
+## Contributing
+
+Contributions to Vertex documentation and codebase are welcome! Please review:
+
+- **[../CONTRIBUTING.md](../CONTRIBUTING.md)** - Contribution guidelines and development workflow
+- **[../CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md)** - Community standards and expectations
+- **[../SECURITY.md](../SECURITY.md)** - Security vulnerability reporting
+
+### Documentation Contributions
+
+When contributing to documentation:
+
+1. **Follow the structure** - Place new docs in the appropriate section
+2. **Include front matter** - Add title, description, and metadata
+3. **Update indexes** - Add links to section index.md files
+4. **Test locally** - Run Jekyll locally to verify formatting
+5. **Cross-reference** - Link to related documentation
+
+### Getting Help
+
+- Review existing documentation in this directory
+- Check [GitHub Issues](https://github.com/your-org/vertex/issues) for known problems
+- Reference the main [README.md](../README.md) for project overview
+
 ## Private Hosting
 
 This documentation is hosted privately on GitHub Pages:

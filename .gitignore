@@ -62,6 +62,9 @@ scripts/
 sql/
 docs/SAVE_STATE.md
 
+# Claude Code internal files and archives
+.claude/
+
 # Database credentials and connection scripts - NEVER COMMIT
 .db-credentials.local
 

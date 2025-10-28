@@ -1684,7 +1684,7 @@ void setup() {
   // ... sensor initialization ...
   
   // Create WiFi access point
-  WiFi.softAP("IMU_Logger", "password123");
+  WiFi.softAP("IMU_Logger", "your-password-here");
   
   // Setup web server routes
   server.on("/", handleRoot);           // File list page
