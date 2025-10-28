@@ -18,6 +18,7 @@ interface IMUVisualization3DProps {
   accelZ?: number;   // Acceleration Z (m/s²)
   width?: number;    // Canvas width
   height?: number;   // Canvas height
+  backgroundColor?: string; // Background color to match card
 }
 
 const IMUVisualization3D: React.FC<IMUVisualization3DProps> = ({
@@ -28,8 +29,42 @@ const IMUVisualization3D: React.FC<IMUVisualization3DProps> = ({
   accelY = 0,
   accelZ = 0,
   width = Dimensions.get('window').width - 32,
-  height = Dimensions.get('window').width - 32, // Square aspect ratio
+  height = (Dimensions.get('window').width - 32) * 0.8, // 20% shorter than width
+  backgroundColor = 'hsl(0, 0%, 100%)', // Default to white
 }) => {
+  // Convert HSL to RGB for better WebView compatibility
+  const hslToRgb = (hsl: string): string => {
+    const match = hsl.match(/hsl\((\d+),\s*(\d+)%,\s*(\d+)%\)/);
+    if (!match) return hsl; // Return as-is if not HSL format
+
+    const h = parseInt(match[1]) / 360;
+    const s = parseInt(match[2]) / 100;
+    const l = parseInt(match[3]) / 100;
+
+    let r, g, b;
+    if (s === 0) {
+      r = g = b = l; // Achromatic
+    } else {
+      const hue2rgb = (p: number, q: number, t: number) => {
+        if (t < 0) t += 1;
+        if (t > 1) t -= 1;
+        if (t < 1/6) return p + (q - p) * 6 * t;
+        if (t < 1/2) return q;
+        if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
+        return p;
+      };
+      const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+      const p = 2 * l - q;
+      r = hue2rgb(p, q, h + 1/3);
+      g = hue2rgb(p, q, h);
+      b = hue2rgb(p, q, h - 1/3);
+    }
+
+    return `rgb(${Math.round(r * 255)}, ${Math.round(g * 255)}, ${Math.round(b * 255)})`;
+  };
+
+  const rgbBackgroundColor = hslToRgb(backgroundColor);
+
   const webViewRef = useRef<WebView>(null);
 
   // Update orientation and acceleration
@@ -43,10 +78,11 @@ const IMUVisualization3D: React.FC<IMUVisualization3DProps> = ({
         accelX,
         accelY,
         accelZ,
+        backgroundColor: rgbBackgroundColor,
       });
       webViewRef.current.postMessage(message);
     }
-  }, [roll, pitch, yaw, accelX, accelY, accelZ]);
+  }, [roll, pitch, yaw, accelX, accelY, accelZ, rgbBackgroundColor]);
 
   const html = `
 <!DOCTYPE html>
@@ -63,12 +99,15 @@ const IMUVisualization3D: React.FC<IMUVisualization3DProps> = ({
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background: transparent;
+      background: ${rgbBackgroundColor};
+      margin: 0;
+      padding: 0;
     }
     canvas {
       display: block;
       width: 100%;
       height: 100%;
+      background: ${rgbBackgroundColor};
     }
   </style>
 </head>
@@ -82,6 +121,7 @@ const IMUVisualization3D: React.FC<IMUVisualization3DProps> = ({
 
     let currentRoll = 0, currentPitch = 0, currentYaw = 0;
     let currentAccelX = 0, currentAccelY = 0, currentAccelZ = 0;
+    let currentBackgroundColor = '${rgbBackgroundColor}';
 
     // 3D rotation matrices
     function rotateX(point, angle) {
@@ -159,78 +199,58 @@ const IMUVisualization3D: React.FC<IMUVisualization3DProps> = ({
     ];
 
     function draw() {
-      // Clear canvas with transparent background
-      ctx.clearRect(0, 0, w, h);
+      // Clear canvas with background color
+      ctx.fillStyle = currentBackgroundColor;
+      ctx.fillRect(0, 0, w, h);
 
       // Green cube color (matching success/status indicators)
       const cubeColor = 'hsl(142, 76%, 36%)';
 
-      // Default viewing angles - front face (positive X) faces viewer when zeroed
-      const viewPitch = -10;   // Slight tilt down for better perspective
-      const viewYaw = 120;     // Rotate to bring positive X face forward
-      const viewRoll = 0;
+      // Default viewing angles - 3/4 perspective view
+      // View from front-left, looking down at cube flat on surface
+      const viewPitch = 0;   // Looking down from above at 30°
+      const viewYaw = -20;     // Viewing from left side at 30°
+      const viewRoll = 60;
 
       // Combine device rotation with default view angles
-      const totalPitch = currentPitch + viewPitch;
+      // Negate pitch to fix Y-axis inversion
+      const totalPitch = -currentPitch + viewPitch;
       const totalYaw = currentYaw + viewYaw;
       const totalRoll = currentRoll + viewRoll;
 
-      // Calculate directional translation based on acceleration axes
+      // Calculate directional translation based on acceleration
       // Scale factor: 0.025 means 1 m/s² = 0.025 cube units of movement
       const scaleFactor = 0.025;
       const translateX = currentAccelX * scaleFactor;
-      const translateY = currentAccelZ * scaleFactor; // Z becomes Y in our coordinate system
-      const translateZ = currentAccelY * scaleFactor; // Y becomes Z in our coordinate system
+      const translateY = currentAccelY * scaleFactor;
+      const translateZ = currentAccelZ * scaleFactor;
 
       // Rotate and project cube vertices with combined angles
-      // Note: Y and Z are swapped in our coordinate system
-      // Vertices are [x, z, y] so rotations map differently:
-      // - Pitch (around Y, now at index 2) uses rotateZ
-      // - Yaw (around Z, now at index 1) uses rotateY
-      // - Roll (around X, still at index 0) uses rotateX
+      // Standard 3D rotations using Tait-Bryan angles (intrinsic rotations)
+      // BNO055 coordinate system:
+      // - Roll: rotation around X axis (side-to-side tilt)
+      // - Pitch: rotation around Y axis (nose up/down)
+      // - Yaw: rotation around Z axis (compass heading)
       const rotatedVertices = vertices.map(v => {
-        let p = rotateZ(v, totalPitch);  // Pitch around Y
-        p = rotateY(p, totalYaw);        // Yaw around Z
-        p = rotateX(p, totalRoll);       // Roll around X
-        // Apply directional translation based on acceleration
-        // Our coordinate system is [x, z, y] where z and y are swapped
+        let p = rotateZ(v, totalYaw);    // Yaw around Z axis (heading)
+        p = rotateY(p, totalPitch);      // Pitch around Y axis (nose up/down)
+        p = rotateX(p, totalRoll);       // Roll around X axis (side tilt)
+        // Apply directional translation based on acceleration [x, y, z]
         p = [p[0] + translateX, p[1] + translateY, p[2] + translateZ];
         return project(p);
       });
 
-      // Draw front face (positive X) with slight fill
-      // Front face vertices: 1, 2, 6, 5 (right face in original cube)
-      const frontFace = [1, 2, 6, 5];
+      // Draw front face with distinct color
+      // Bottom face vertices: 0, 1, 2, 3 (-Y face)
+      const frontFace = [0, 1, 2, 3];
       ctx.beginPath();
       ctx.moveTo(rotatedVertices[frontFace[0]][0], rotatedVertices[frontFace[0]][1]);
       for (let i = 1; i < frontFace.length; i++) {
         ctx.lineTo(rotatedVertices[frontFace[i]][0], rotatedVertices[frontFace[i]][1]);
       }
       ctx.closePath();
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.08)'; // Subtle white overlay
+      ctx.fillStyle = 'rgba(255, 165, 0, 0.4)'; // Orange front face
       ctx.fill();
-
-      // Draw "FRONT" label on the front face, rotated with the face
-      const frontCenter = [
-        (rotatedVertices[1][0] + rotatedVertices[2][0] + rotatedVertices[6][0] + rotatedVertices[5][0]) / 4,
-        (rotatedVertices[1][1] + rotatedVertices[2][1] + rotatedVertices[6][1] + rotatedVertices[5][1]) / 4
-      ];
-
-      // Calculate rotation angle from face orientation (using horizontal edge: vertex 1 to vertex 2)
-      const bottomLeft = rotatedVertices[1];
-      const bottomRight = rotatedVertices[2];
-      const angle = Math.atan2(bottomRight[1] - bottomLeft[1], bottomRight[0] - bottomLeft[0]);
-
-      // Save context, rotate, draw text, restore
-      ctx.save();
-      ctx.translate(frontCenter[0], frontCenter[1]);
-      ctx.rotate(angle);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-      ctx.font = 'bold 12px monospace';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('FRONT', 0, 0);
-      ctx.restore();
 
       // Draw cube edges
       edges.forEach(edge => {
@@ -251,6 +271,9 @@ const IMUVisualization3D: React.FC<IMUVisualization3DProps> = ({
           currentAccelX = data.accelX || 0;
           currentAccelY = data.accelY || 0;
           currentAccelZ = data.accelZ || 0;
+          if (data.backgroundColor) {
+            currentBackgroundColor = data.backgroundColor;
+          }
         }
       } catch (e) {
         console.error('Parse error:', e);
@@ -268,11 +291,16 @@ const IMUVisualization3D: React.FC<IMUVisualization3DProps> = ({
   `;
 
   return (
-    <View style={[styles.container, { width, height }]}>
+    <View style={[styles.container, { width, height, backgroundColor: rgbBackgroundColor }]}>
       <WebView
         ref={webViewRef}
         source={{ html }}
-        style={{ width, height, backgroundColor: 'transparent' }}
+        style={{ width, height, backgroundColor: rgbBackgroundColor }}
+        injectedJavaScript={`
+          document.body.style.backgroundColor = '${rgbBackgroundColor}';
+          document.documentElement.style.backgroundColor = '${rgbBackgroundColor}';
+          true;
+        `}
         scrollEnabled={false}
         bounces={false}
         scalesPageToFit={false}
@@ -296,4 +324,4 @@ const styles = StyleSheet.create({
   },
 });
 
-export default IMUVisualization3D;
+export default IMUVisualization3D

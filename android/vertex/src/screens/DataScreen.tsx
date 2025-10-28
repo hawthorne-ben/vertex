@@ -7,7 +7,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, ActivityIndicator, Alert } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { FileText, Trash2, RefreshCw, Clock, Database, Activity, AlertCircle } from 'lucide-react-native';
 import { theme as staticTheme } from '../styles/theme';
@@ -29,13 +29,7 @@ const DataScreen: React.FC = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [recordingToDelete, setRecordingToDelete] = useState<RecordingMetadata | null>(null);
 
-  // Reload recordings when screen comes into focus
-  useFocusEffect(
-    React.useCallback(() => {
-      loadRecordings();
-    }, [])
-  );
-
+  // Load recordings only on initial mount
   useEffect(() => {
     loadRecordings();
   }, []);
@@ -162,6 +156,22 @@ const DataScreen: React.FC = () => {
     return `${durationSecs}s`;
   };
 
+  const getDisplayName = (fileName: string): string => {
+    // Remove .csv extension
+    const nameWithoutExt = fileName.replace(/\.csv$/, '');
+
+    // Check if it's a default filename pattern: [device_]imu_YYYY-MM-DD_HH-MM-SS
+    const defaultPattern = /^(?:.+?_)?imu_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/;
+
+    // If it's a default filename, return empty string (we'll just show the date range)
+    // Otherwise, return the custom filename truncated to 10 characters
+    if (defaultPattern.test(nameWithoutExt)) {
+      return '';
+    }
+
+    return nameWithoutExt.length > 10 ? nameWithoutExt.substring(0, 10) + '…' : nameWithoutExt;
+  };
+
   if (isLoading) {
     return (
       <View style={[styles.container, styles.centerContent, { paddingTop: insets.top, backgroundColor: theme.colors.background }]}>
@@ -209,6 +219,8 @@ const DataScreen: React.FC = () => {
             {recordings.map((recording, index) => {
               const dateRange = formatDateRange(recording.startTime, recording.endTime);
               const duration = formatDuration(recording.startTime, recording.endTime);
+              const displayName = getDisplayName(recording.fileName);
+              const displayTitle = displayName ? `${displayName} - ${dateRange}` : dateRange;
 
               return (
                 <TouchableOpacity
@@ -227,7 +239,7 @@ const DataScreen: React.FC = () => {
                       <Activity size={20} color={theme.colors.primary} />
                       <View style={styles.fileRowInfo}>
                         <Text style={[styles.fileRowName, { color: theme.colors.textPrimary }]} numberOfLines={1}>
-                          {dateRange}
+                          {displayTitle}
                         </Text>
                         <View style={styles.fileRowMeta}>
                           <Text style={[styles.fileRowMetaText, { color: theme.colors.textSecondary }]}>

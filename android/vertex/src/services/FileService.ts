@@ -111,13 +111,15 @@ class FileService {
     try {
       const files = await RNFS.readDir(this.documentsPath);
       const csvFiles = files
-        .filter(file => file.name.endsWith('.csv') && file.name.includes('imu_'))
+        .filter(file => file.name.endsWith('.csv'))
         .sort((a, b) => b.mtime!.getTime() - a.mtime!.getTime()); // Newest first
 
       const recordings: RecordingMetadata[] = [];
 
       for (const file of csvFiles) {
-        // Parse filename to extract metadata
+        // Parse filename to extract metadata (works for both default and custom filenames)
+        // Default format: [deviceName_]imu_YYYY-MM-DD_HH-MM-SS.csv
+        // Custom format: any_custom_name.csv
         const nameMatch = file.name.match(/^(?:(.+?)_)?imu_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\.csv$/);
         const deviceName = nameMatch?.[1]?.replace(/_/g, ' ');
 

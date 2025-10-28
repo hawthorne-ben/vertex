@@ -13,6 +13,7 @@ import {
   ScrollView,
   Alert,
   ActivityIndicator,
+  TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -67,6 +68,8 @@ const RecordScreen: React.FC = () => {
   const [showConnectionLostDialog, setShowConnectionLostDialog] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
+  const [showFileNameDialog, setShowFileNameDialog] = useState(false);
+  const [fileName, setFileName] = useState('');
 
   const isMountedRef = useRef(true);
   const clockTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -238,18 +241,67 @@ const RecordScreen: React.FC = () => {
     }
   };
 
+  const handleShowStopDialog = () => {
+    // Generate default file name
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').split('.')[0];
+    const devicePrefix = deviceName ? `${deviceName.replace(/[^a-zA-Z0-9]/g, '_')}_` : '';
+    const defaultFileName = `${devicePrefix}imu_${timestamp}`;
+    setFileName(defaultFileName);
+    setShowFileNameDialog(true);
+  };
+
   const handleStopRecording = async () => {
     setIsStopping(true);
+    setShowFileNameDialog(false);
 
     // Stop any reconnection attempts
     stopReconnectionAttempts();
 
     try {
-      await RecordingService.stopRecording();
-      if (isMountedRef.current) {
+      const stoppedSession = await RecordingService.stopRecording();
+
+      if (stoppedSession && fileName && isMountedRef.current) {
+        // Rename the file if user changed the name
+        const FileService = (await import('../services/FileService')).default;
+        const RNFS = (await import('react-native-fs')).default;
+
+        const originalFileName = stoppedSession.fileName;
+        const newFileName = fileName.endsWith('.csv') ? fileName : `${fileName}.csv`;
+
+        if (originalFileName !== newFileName) {
+          const documentsPath = RNFS.DocumentDirectoryPath;
+          const oldPath = `${documentsPath}/${originalFileName}`;
+          const newPath = `${documentsPath}/${newFileName}`;
+
+          try {
+            await RNFS.moveFile(oldPath, newPath);
+            console.log(`[RecordScreen] Renamed file from ${originalFileName} to ${newFileName}`);
+
+            // Navigate to DataDetail with new file
+            navigation.replace('DataDetail', {
+              fileName: newFileName,
+              filePath: newPath,
+            });
+          } catch (renameErr) {
+            console.error('[RecordScreen] Error renaming file:', renameErr);
+            // Navigate with original filename if rename fails
+            navigation.replace('DataDetail', {
+              fileName: originalFileName,
+              filePath: stoppedSession.filePath,
+            });
+          }
+        } else {
+          // Navigate to DataDetail with original file
+          navigation.replace('DataDetail', {
+            fileName: originalFileName,
+            filePath: stoppedSession.filePath,
+          });
+        }
+      } else if (isMountedRef.current) {
         setSession(null);
         setError(null);
         hasShownConnectionLostDialogRef.current = false;
+        navigation.goBack();
       }
     } catch (err: any) {
       if (isMountedRef.current) {
@@ -706,24 +758,25 @@ const RecordScreen: React.FC = () => {
                 style={[
                   styles.halfWidthButton,
                   {
-                    backgroundColor: isConnected ? theme.colors.error : theme.colors.muted,
+                    backgroundColor: isConnected ? theme.colors.background : theme.colors.muted,
                     borderColor: isConnected ? theme.colors.error : theme.colors.border,
+                    borderWidth: 2,
                   },
                 ]}
                 onPress={handleStartRecording}
                 disabled={!isConnected || isStarting}>
                 {isStarting ? (
-                  <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
+                  <ActivityIndicator size="small" color={theme.colors.error} />
                 ) : (
                   <>
                     <Text style={[styles.halfWidthButtonText, {
-                      color: isConnected ? theme.colors.primaryForeground : theme.colors.textTertiary,
+                      color: isConnected ? theme.colors.error : theme.colors.textTertiary,
                     }]}>
                       Record
                     </Text>
                     <Circle
                       size={16}
-                      color={isConnected ? theme.colors.primaryForeground : theme.colors.textTertiary}
+                      color={isConnected ? theme.colors.error : theme.colors.textTertiary}
                       fill={isConnected ? theme.colors.error : 'transparent'}
                     />
                   </>
@@ -735,25 +788,26 @@ const RecordScreen: React.FC = () => {
                 style={[
                   styles.halfWidthButton,
                   {
-                    backgroundColor: zeroPoint ? theme.colors.primary : theme.colors.muted,
-                    borderColor: zeroPoint ? theme.colors.primary : theme.colors.border,
+                    backgroundColor: (isConnected && !isZeroing) ? theme.colors.background : theme.colors.muted,
+                    borderColor: (isConnected && !isZeroing) ? '#FFFFFF' : theme.colors.border,
+                    borderWidth: 2,
                   }
                 ]}
                 onPress={zeroPoint ? () => setShowClearZeroDialog(true) : handleZero}
                 disabled={!isConnected || isZeroing}>
                 {isZeroing ? (
-                  <ActivityIndicator size="small" color={theme.colors.textPrimary} />
+                  <ActivityIndicator size="small" color="#FFFFFF" />
                 ) : (
                   <>
                     <Text style={[
                       styles.halfWidthButtonText,
-                      { color: zeroPoint ? theme.colors.primaryForeground : theme.colors.textPrimary }
+                      { color: (isConnected && !isZeroing) ? '#FFFFFF' : theme.colors.textTertiary }
                     ]}>
                       {zeroPoint ? 'Clear Zero' : 'Zero'}
                     </Text>
                     <Activity
                       size={16}
-                      color={zeroPoint ? theme.colors.primaryForeground : theme.colors.textPrimary}
+                      color={(isConnected && !isZeroing) ? '#FFFFFF' : theme.colors.textTertiary}
                     />
                   </>
                 )}
@@ -765,23 +819,24 @@ const RecordScreen: React.FC = () => {
             style={[
               styles.recordButton,
               {
-                backgroundColor: theme.colors.error,
+                backgroundColor: theme.colors.background,
                 borderColor: theme.colors.error,
+                borderWidth: 2,
               },
             ]}
-            onPress={() => setShowStopConfirm(true)}
+            onPress={handleShowStopDialog}
             disabled={isStopping}>
             {isStopping ? (
-              <ActivityIndicator size="small" color={theme.colors.primaryForeground} />
+              <ActivityIndicator size="small" color={theme.colors.error} />
             ) : (
               <>
-                <Text style={[styles.recordButtonText, { color: theme.colors.primaryForeground }]}>
+                <Text style={[styles.recordButtonText, { color: theme.colors.error }]}>
                   Stop Recording
                 </Text>
                 <Square
                   size={16}
-                  color={theme.colors.primaryForeground}
-                  fill={theme.colors.primaryForeground}
+                  color={theme.colors.error}
+                  fill={theme.colors.error}
                 />
               </>
             )}
@@ -800,6 +855,52 @@ const RecordScreen: React.FC = () => {
           </Card>
         )}
       </ScrollView>
+
+      {/* File Name Dialog */}
+      {showFileNameDialog && (
+        <View style={styles.dialogOverlay}>
+          <View style={[styles.dialogContainer, { backgroundColor: theme.colors.card }]}>
+            <Text style={[styles.dialogTitle, { color: theme.colors.textPrimary }]}>
+              Save Recording
+            </Text>
+            <Text style={[styles.dialogMessage, { color: theme.colors.textSecondary }]}>
+              Enter a name for this recording:
+            </Text>
+            <TextInput
+              style={[styles.fileNameInput, {
+                backgroundColor: theme.colors.background,
+                borderColor: theme.colors.border,
+                color: theme.colors.textPrimary,
+              }]}
+              value={fileName}
+              onChangeText={setFileName}
+              placeholder="File name (without .csv)"
+              placeholderTextColor={theme.colors.textTertiary}
+              autoFocus
+              selectTextOnFocus
+            />
+            <View style={styles.dialogActions}>
+              <TouchableOpacity
+                style={[styles.dialogButton, { backgroundColor: theme.colors.muted }]}
+                onPress={() => setShowFileNameDialog(false)}
+              >
+                <Text style={[styles.dialogButtonText, { color: theme.colors.textPrimary }]}>
+                  Cancel
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.dialogButton, { backgroundColor: theme.colors.primary }]}
+                onPress={handleStopRecording}
+                disabled={!fileName.trim()}
+              >
+                <Text style={[styles.dialogButtonText, { color: theme.colors.primaryForeground }]}>
+                  Save
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      )}
 
       {/* Stop Recording Confirmation */}
       <ConfirmDialog
@@ -1038,6 +1139,57 @@ const styles = StyleSheet.create({
     borderWidth: 1,
   },
   halfWidthButtonText: {
+    fontSize: staticTheme.typography.fontSize.md,
+    fontWeight: staticTheme.typography.fontWeight.medium,
+    fontFamily: staticTheme.typography.serif,
+  },
+  dialogOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  dialogContainer: {
+    width: '80%',
+    maxWidth: 400,
+    borderRadius: staticTheme.borderRadius.lg,
+    padding: staticTheme.spacing.lg,
+    gap: staticTheme.spacing.md,
+  },
+  dialogTitle: {
+    fontSize: staticTheme.typography.fontSize.xl,
+    fontWeight: staticTheme.typography.fontWeight.semibold,
+    fontFamily: staticTheme.typography.serif,
+  },
+  dialogMessage: {
+    fontSize: staticTheme.typography.fontSize.md,
+    fontFamily: staticTheme.typography.serif,
+  },
+  fileNameInput: {
+    borderWidth: 1,
+    borderRadius: staticTheme.borderRadius.md,
+    padding: staticTheme.spacing.md,
+    fontSize: staticTheme.typography.fontSize.md,
+    fontFamily: staticTheme.typography.mono,
+  },
+  dialogActions: {
+    flexDirection: 'row',
+    gap: staticTheme.spacing.sm,
+    marginTop: staticTheme.spacing.sm,
+  },
+  dialogButton: {
+    flex: 1,
+    paddingVertical: staticTheme.spacing.md,
+    paddingHorizontal: staticTheme.spacing.lg,
+    borderRadius: staticTheme.borderRadius.md,
+    alignItems: 'center',
+  },
+  dialogButtonText: {
     fontSize: staticTheme.typography.fontSize.md,
     fontWeight: staticTheme.typography.fontWeight.medium,
     fontFamily: staticTheme.typography.serif,

@@ -190,14 +190,15 @@ const DashboardScreen: React.FC = () => {
           {isVertexConnected && (
             <TouchableOpacity
               style={[styles.recordButton, {
-                backgroundColor: theme.colors.error,
+                backgroundColor: theme.colors.card,
                 borderColor: theme.colors.error,
+                borderWidth: 2,
               }]}
               onPress={handleStartRecording}>
-              <Text style={[styles.recordButtonText, { color: theme.colors.primaryForeground }]}>
+              <Text style={[styles.recordButtonText, { color: theme.colors.error }]}>
                 Start Recording
               </Text>
-              <Circle size={16} color={theme.colors.primaryForeground} fill={theme.colors.error} />
+              <Circle size={16} color={theme.colors.error} fill={theme.colors.error} />
             </TouchableOpacity>
           )}
 

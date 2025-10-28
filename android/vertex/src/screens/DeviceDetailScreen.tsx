@@ -719,7 +719,7 @@ const DeviceDetailScreenContent: React.FC = () => {
     return (
       <View style={[styles.card, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}>
         <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>Orientation</Text>
-        <View style={[styles.visualizationContainer, { backgroundColor: theme.colors.card, borderColor: theme.colors.border }]}>
+        <View style={[styles.visualizationContainer, { backgroundColor: 'transparent', borderColor: 'transparent' }]}>
           <IMUVisualization3D
             roll={sensorReading.roll || 0}
             pitch={sensorReading.pitch || 0}
@@ -727,6 +727,7 @@ const DeviceDetailScreenContent: React.FC = () => {
             accelX={sensorReading.accelX || 0}
             accelY={sensorReading.accelY || 0}
             accelZ={sensorReading.accelZ || 0}
+            backgroundColor={theme.colors.card}
           />
         </View>
       </View>
@@ -938,8 +939,9 @@ const DeviceDetailScreenContent: React.FC = () => {
               style={[
                 styles.halfWidthButton,
                 {
-                  backgroundColor: isConnected ? theme.colors.error : theme.colors.muted,
+                  backgroundColor: isConnected ? theme.colors.background : theme.colors.muted,
                   borderColor: isConnected ? theme.colors.error : theme.colors.border,
+                  borderWidth: 2,
                 }
               ]}
               onPress={handleStartRecording}
@@ -947,7 +949,7 @@ const DeviceDetailScreenContent: React.FC = () => {
               <Text style={[
                 styles.halfWidthButtonText,
                 {
-                  color: isConnected ? theme.colors.primaryForeground : theme.colors.textTertiary,
+                  color: isConnected ? theme.colors.error : theme.colors.textTertiary,
                   fontFamily: staticTheme.typography.serif,
                 }
               ]}>
@@ -955,7 +957,7 @@ const DeviceDetailScreenContent: React.FC = () => {
               </Text>
               <Circle
                 size={16}
-                color={isConnected ? theme.colors.primaryForeground : theme.colors.textTertiary}
+                color={isConnected ? theme.colors.error : theme.colors.textTertiary}
                 fill={isConnected ? theme.colors.error : 'transparent'}
               />
             </TouchableOpacity>
@@ -964,25 +966,26 @@ const DeviceDetailScreenContent: React.FC = () => {
               style={[
                 styles.halfWidthButton,
                 {
-                  backgroundColor: zeroPoint ? theme.colors.primary : theme.colors.muted,
-                  borderColor: zeroPoint ? theme.colors.primary : theme.colors.border,
+                  backgroundColor: (isConnected && !isZeroing) ? theme.colors.background : theme.colors.muted,
+                  borderColor: (isConnected && !isZeroing) ? '#FFFFFF' : theme.colors.border,
+                  borderWidth: 2,
                 }
               ]}
               onPress={zeroPoint ? () => setShowClearZeroDialog(true) : handleZero}
               disabled={!isConnected || isZeroing}>
               {isZeroing ? (
-                <ActivityIndicator size="small" color={theme.colors.textPrimary} />
+                <ActivityIndicator size="small" color="#FFFFFF" />
               ) : (
                 <>
                   <Text style={[
                     styles.halfWidthButtonText,
-                    { color: zeroPoint ? theme.colors.primaryForeground : theme.colors.textPrimary }
+                    { color: (isConnected && !isZeroing) ? '#FFFFFF' : theme.colors.textTertiary }
                   ]}>
                     {zeroPoint ? 'Clear Zero' : 'Zero'}
                   </Text>
                   <Activity
                     size={16}
-                    color={zeroPoint ? theme.colors.primaryForeground : theme.colors.textPrimary}
+                    color={(isConnected && !isZeroing) ? '#FFFFFF' : theme.colors.textTertiary}
                   />
                 </>
               )}
@@ -1134,8 +1137,8 @@ const styles = StyleSheet.create({
   card: {
     backgroundColor: staticTheme.colors.muted,
     borderRadius: staticTheme.borderRadius.md,
-    padding: staticTheme.spacing.lg,
-    marginBottom: staticTheme.spacing.lg,
+    padding: staticTheme.spacing.md,
+    marginBottom: staticTheme.spacing.md,
     borderWidth: 1,
     borderColor: staticTheme.colors.border,
   },
@@ -1359,12 +1362,11 @@ const styles = StyleSheet.create({
     fontFamily: staticTheme.typography.serif,
   },
   visualizationContainer: {
-    backgroundColor: staticTheme.colors.card,
     borderRadius: staticTheme.borderRadius.md,
     borderWidth: 1,
     borderColor: staticTheme.colors.border,
-    padding: staticTheme.spacing.md,
-    marginBottom: staticTheme.spacing.lg,
+    padding: staticTheme.spacing.sm,
+    marginBottom: staticTheme.spacing.sm,
     alignItems: 'center',
     justifyContent: 'center',
     overflow: 'hidden',
