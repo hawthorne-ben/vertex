@@ -14,3 +14,6 @@ export { EmptyState } from './EmptyState';
 export { StatCard } from './StatCard';
 export { ErrorBanner } from './ErrorBanner';
 export { ConfirmDialog } from './ConfirmDialog';
+export { ErrorDialog } from './ErrorDialog';
+export { BottomSheet } from './BottomSheet';
+export type { BottomSheetOption } from './BottomSheet';

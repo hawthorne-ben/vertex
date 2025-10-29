@@ -12,18 +12,19 @@ import {
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
-  Alert,
   Dimensions,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { Activity } from 'lucide-react-native';
+import { Activity, FileText, Trash2 } from 'lucide-react-native';
 import { LineChart } from 'react-native-gifted-charts';
 import { theme as staticTheme } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
-import { BackButton } from '../components/ui';
+import { BackButton, ErrorDialog, ConfirmDialog } from '../components/ui';
 import FileService, { IMUSensorData, RecordingMetadata } from '../services/FileService';
+import VTXFileService from '../services/VTXFileService';
 import { RootStackParamList } from '../navigation/AppNavigator';
+import RNFS from 'react-native-fs';
 
 type DataDetailRouteProp = RouteProp<RootStackParamList, 'DataDetail'>;
 
@@ -56,6 +57,9 @@ const DataDetailScreen: React.FC = () => {
     gyroscope: { x: { min: 0, max: 0, mean: 0 }, y: { min: 0, max: 0, mean: 0 }, z: { min: 0, max: 0, mean: 0 } },
     magnetometer: { x: { min: 0, max: 0, mean: 0 }, y: { min: 0, max: 0, mean: 0 }, z: { min: 0, max: 0, mean: 0 } },
   });
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -64,12 +68,42 @@ const DataDetailScreen: React.FC = () => {
   const loadData = async () => {
     try {
       setIsLoading(true);
-      const recordingData = await FileService.readRecordingData(filePath);
+
+      // Check if it's a VTX file based on extension
+      const isVTX = filePath.endsWith('.vtx');
+      let recordingData: IMUSensorData[];
+
+      if (isVTX) {
+        // Read VTX file using VTXFileService
+        const vtxData = await VTXFileService.readVTXFile(filePath);
+
+        // Convert VTX records to IMUSensorData format
+        recordingData = vtxData.records.map(record => ({
+          timestamp: new Date(record.timestamp),
+          accel_x: record.accelX,
+          accel_y: record.accelY,
+          accel_z: record.accelZ,
+          gyro_x: record.gyroX,
+          gyro_y: record.gyroY,
+          gyro_z: record.gyroZ,
+          mag_x: record.magX,
+          mag_y: record.magY,
+          mag_z: record.magZ,
+          quat_w: record.quatW,
+          quat_x: record.quatX,
+          quat_y: record.quatY,
+          quat_z: record.quatZ,
+        }));
+      } else {
+        // Read CSV file
+        recordingData = await FileService.readRecordingData(filePath);
+      }
+
       setData(recordingData);
       calculateStatistics(recordingData);
     } catch (error) {
       console.error('[DataDetailScreen] Error loading data:', error);
-      Alert.alert('Error', 'Failed to load recording data');
+      setErrorMessage(error instanceof Error ? error.message : 'Failed to load recording data. The file may be corrupted or in an unsupported format.');
     } finally {
       setIsLoading(false);
     }
@@ -112,6 +146,23 @@ const DataDetailScreen: React.FC = () => {
       gyroscope: gyroStats,
       magnetometer: magStats,
     });
+  };
+
+  const handleDeleteFile = async () => {
+    setIsDeleting(true);
+    try {
+      await RNFS.unlink(filePath);
+      console.log(`[DataDetailScreen] Deleted file: ${fileName}`);
+      setShowDeleteDialog(false);
+      // Navigate back to the data list
+      navigation.goBack();
+    } catch (error) {
+      console.error('[DataDetailScreen] Error deleting file:', error);
+      setErrorMessage('Failed to delete file');
+      setShowDeleteDialog(false);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const getChartData = () => {
@@ -186,6 +237,13 @@ const DataDetailScreen: React.FC = () => {
       <View style={[styles.header, { paddingTop: insets.top, backgroundColor: theme.colors.background, borderBottomColor: theme.colors.border }]}>
         <BackButton onPress={() => navigation.goBack()} />
         <Text style={[styles.title, { color: theme.colors.textPrimary }]} numberOfLines={1}>Detail</Text>
+        <TouchableOpacity
+          style={styles.deleteButton}
+          onPress={() => setShowDeleteDialog(true)}
+          disabled={isDeleting}
+        >
+          <Trash2 size={20} color={theme.colors.error} />
+        </TouchableOpacity>
       </View>
 
       <ScrollView style={styles.scrollView}>
@@ -193,27 +251,71 @@ const DataDetailScreen: React.FC = () => {
 
         {/* File Info */}
         <View style={[styles.infoCard, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}>
-          <View style={styles.infoRow}>
-            <Activity size={20} color={theme.colors.primary} />
-            <View style={styles.infoText}>
-              <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>File</Text>
-              <Text style={[styles.infoValue, { color: theme.colors.textPrimary }]} numberOfLines={1}>{fileName}</Text>
-            </View>
-          </View>
-          {data.length > 0 && (
-            <>
-              <View style={styles.infoRow}>
-                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Duration</Text>
-                <Text style={[styles.infoValue, { color: theme.colors.textPrimary }]}>
-                  {formatDate(data[0].timestamp)} - {formatDate(data[data.length - 1].timestamp)}
+          <View style={styles.infoGrid}>
+            {/* Row 1: Icon + Filename (no extension) */}
+            <View style={styles.infoGridRow}>
+              <View style={styles.infoGridItem}>
+                {filePath.endsWith('.vtx') ? (
+                  <Activity size={18} color={theme.colors.primary} style={styles.infoIcon} />
+                ) : (
+                  <FileText size={18} color={theme.colors.textSecondary} style={styles.infoIcon} />
+                )}
+                <Text style={[styles.infoValue, { color: theme.colors.textPrimary }]} numberOfLines={1}>
+                  {fileName.replace(/\.(csv|vtx)$/, '')}
                 </Text>
               </View>
-              <View style={styles.infoRow}>
-                <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Samples</Text>
-                <Text style={[styles.infoValue, { color: theme.colors.textPrimary }]}>{data.length.toLocaleString()}</Text>
-              </View>
-            </>
-          )}
+            </View>
+
+            {data.length > 0 && (
+              <>
+                {/* Row 2: Duration + Sample Rate */}
+                <View style={styles.infoGridRow}>
+                  <View style={styles.infoGridItemVertical}>
+                    <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Duration</Text>
+                    <Text style={[styles.infoValue, { color: theme.colors.textPrimary }]}>
+                      {(() => {
+                        const start = data[0].timestamp;
+                        const end = data[data.length - 1].timestamp;
+                        const durationMs = end.getTime() - start.getTime();
+                        const durationSecs = Math.floor(durationMs / 1000);
+                        const minutes = Math.floor(durationSecs / 60);
+                        const seconds = durationSecs % 60;
+                        return `${minutes}m ${seconds}s`;
+                      })()}
+                    </Text>
+                  </View>
+                  <View style={styles.infoGridItemVertical}>
+                    <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Rate</Text>
+                    <Text style={[styles.infoValue, { color: theme.colors.textPrimary }]}>
+                      {(() => {
+                        const start = data[0].timestamp;
+                        const end = data[data.length - 1].timestamp;
+                        const durationSecs = (end.getTime() - start.getTime()) / 1000;
+                        const sampleRate = durationSecs > 0 ? Math.round(data.length / durationSecs) : 0;
+                        return `${sampleRate}Hz`;
+                      })()}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Row 3: Start + End time */}
+                <View style={styles.infoGridRow}>
+                  <View style={styles.infoGridItemVertical}>
+                    <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>Start</Text>
+                    <Text style={[styles.infoValue, { color: theme.colors.textPrimary }]}>
+                      {formatDate(data[0].timestamp)}
+                    </Text>
+                  </View>
+                  <View style={styles.infoGridItemVertical}>
+                    <Text style={[styles.infoLabel, { color: theme.colors.textSecondary }]}>End</Text>
+                    <Text style={[styles.infoValue, { color: theme.colors.textPrimary }]}>
+                      {formatDate(data[data.length - 1].timestamp)}
+                    </Text>
+                  </View>
+                </View>
+              </>
+            )}
+          </View>
         </View>
 
         {/* Data Type Selector */}
@@ -303,43 +405,54 @@ const DataDetailScreen: React.FC = () => {
 
           <View style={[styles.chartWrapper, { backgroundColor: theme.colors.card }]}>
             {chartData.xData.length > 0 ? (
-              <LineChart
-                data={chartData.xData}
-                data2={chartData.yData}
-                data3={chartData.zData}
-                height={250}
-                width={screenWidth - 80}
-                maxValue={Math.max(
+              (() => {
+                // Calculate min/max with padding to prevent cutoff
+                const dataMax = Math.max(
                   ...chartData.xData.map(d => d.value),
                   ...chartData.yData.map(d => d.value),
                   ...chartData.zData.map(d => d.value)
-                )}
-                minValue={Math.min(
+                );
+                const dataMin = Math.min(
                   ...chartData.xData.map(d => d.value),
                   ...chartData.yData.map(d => d.value),
                   ...chartData.zData.map(d => d.value)
-                )}
-                spacing={Math.max(1, (screenWidth - 100) / chartData.xData.length)}
-                thickness={2}
-                color1="#ef4444"
-                color2="#22c55e"
-                color3="#3b82f6"
-                hideDataPoints
-                hideRules
-                rulesColor={theme.colors.border}
-                yAxisColor={theme.colors.border}
-                xAxisColor={theme.colors.border}
-                yAxisTextStyle={{ color: theme.colors.textSecondary, fontSize: 10 }}
-                xAxisLabelTextStyle={{ color: theme.colors.textSecondary, fontSize: 10 }}
-                curved
-                animateOnDataChange={false}
-                areaChart={false}
-                yAxisThickness={1}
-                xAxisThickness={1}
-                initialSpacing={15}
-                endSpacing={15}
-                noOfSections={4}
-              />
+                );
+                const range = dataMax - dataMin;
+                const padding = range * 0.15; // 15% padding on each side
+
+                return (
+                  <LineChart
+                    data={chartData.xData}
+                    data2={chartData.yData}
+                    data3={chartData.zData}
+                    height={250}
+                    width={screenWidth - 80}
+                    maxValue={dataMax + padding}
+                    minValue={dataMin - padding}
+                    spacing={Math.max(1, (screenWidth - 100) / chartData.xData.length)}
+                    thickness={2}
+                    color1="#ef4444"
+                    color2="#22c55e"
+                    color3="#3b82f6"
+                    hideDataPoints
+                    hideRules
+                    rulesColor={theme.colors.border}
+                    yAxisColor={theme.colors.border}
+                    xAxisColor={theme.colors.border}
+                    yAxisTextStyle={{ color: theme.colors.textSecondary, fontSize: 10 }}
+                    xAxisLabelTextStyle={{ color: theme.colors.textSecondary, fontSize: 10 }}
+                    curved
+                    animateOnDataChange={false}
+                    areaChart={false}
+                    yAxisThickness={1}
+                    xAxisThickness={1}
+                    initialSpacing={15}
+                    endSpacing={15}
+                    noOfSections={4}
+                  />
+                );
+              })()
+
             ) : (
               <View style={styles.noDataContainer}>
                 <Text style={[styles.noDataText, { color: theme.colors.textSecondary }]}>No data available</Text>
@@ -349,6 +462,34 @@ const DataDetailScreen: React.FC = () => {
         </View>
       </View>
     </ScrollView>
+
+    <ErrorDialog
+      visible={errorMessage !== null}
+      onDismiss={() => setErrorMessage(null)}
+      title="Error"
+      message={errorMessage || ''}
+    />
+
+    {/* Delete Confirmation Dialog */}
+    <ConfirmDialog
+      visible={showDeleteDialog}
+      onDismiss={() => setShowDeleteDialog(false)}
+      title="Delete Recording"
+      message={`Are you sure you want to delete "${fileName.replace(/\.(csv|vtx)$/, '')}"? This action cannot be undone.`}
+      icon={<Trash2 size={48} color={theme.colors.error} />}
+      actions={[
+        {
+          label: 'Cancel',
+          onPress: () => setShowDeleteDialog(false),
+          variant: 'default',
+        },
+        {
+          label: 'Delete',
+          onPress: handleDeleteFile,
+          variant: 'danger',
+        },
+      ]}
+    />
     </View>
   );
 };
@@ -382,10 +523,15 @@ const styles = StyleSheet.create({
     padding: staticTheme.spacing.xs,
   },
   title: {
+    flex: 1,
     fontSize: staticTheme.typography.fontSize.xxl,
     fontWeight: staticTheme.typography.fontWeight.light,
     color: staticTheme.colors.textPrimary,
     fontFamily: staticTheme.typography.serif,
+  },
+  deleteButton: {
+    padding: staticTheme.spacing.sm,
+    marginLeft: staticTheme.spacing.md,
   },
   loadingText: {
     fontSize: staticTheme.typography.fontSize.md,
@@ -401,26 +547,37 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: staticTheme.colors.border,
   },
-  infoRow: {
+  infoGrid: {
+    gap: staticTheme.spacing.md,
+  },
+  infoGridRow: {
+    flexDirection: 'row',
+    gap: staticTheme.spacing.md,
+  },
+  infoGridItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: staticTheme.spacing.md,
-  },
-  infoText: {
-    marginLeft: staticTheme.spacing.md,
+    gap: staticTheme.spacing.xs,
     flex: 1,
+  },
+  infoGridItemVertical: {
+    flexDirection: 'column',
+    gap: 4,
+    flex: 1,
+  },
+  infoIcon: {
+    marginRight: staticTheme.spacing.xs,
   },
   infoLabel: {
     fontSize: staticTheme.typography.fontSize.xs,
     color: staticTheme.colors.textSecondary,
     fontFamily: staticTheme.typography.serif,
-    marginBottom: 2,
   },
   infoValue: {
     fontSize: staticTheme.typography.fontSize.sm,
     color: staticTheme.colors.textPrimary,
     fontFamily: staticTheme.typography.mono,
+    fontWeight: staticTheme.typography.fontWeight.medium,
   },
   selectorContainer: {
     flexDirection: 'row',

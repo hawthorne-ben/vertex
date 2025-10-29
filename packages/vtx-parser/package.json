@@ -1,0 +1,41 @@
+{
+  "name": "@vertex/vtx-parser",
+  "version": "0.1.0",
+  "description": "TypeScript encoder and decoder for VTX binary format",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "jest",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "vtx",
+    "vertex",
+    "imu",
+    "binary-format",
+    "parser",
+    "encoder",
+    "decoder"
+  ],
+  "author": "Vertex Team",
+  "license": "MIT",
+  "dependencies": {
+    "@vertex/vtx-constants": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.0.0"
+  },
+  "files": [
+    "dist/",
+    "src/",
+    "README.md",
+    "CHANGELOG.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-org/vertex.git",
+    "directory": "packages/vtx-parser"
+  }
+}

@@ -27,6 +27,7 @@ import {
   RefreshCw,
   Heart,
   Circle,
+  Settings,
 } from 'lucide-react-native';
 import { theme as staticTheme } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
@@ -37,6 +38,8 @@ import { RootStackParamList } from '../navigation/AppNavigator';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import ErrorBoundary from '../components/ErrorBoundary';
 import IMUVisualization3D from '../components/IMUVisualization3D';
+import { useDeviceStore } from '../stores/deviceStore';
+import DeviceStatusService from '../services/DeviceStatusService';
 
 type DeviceDetailRouteProp = RouteProp<RootStackParamList, 'DeviceDetail'>;
 
@@ -53,20 +56,29 @@ const DeviceDetailScreenContent: React.FC = () => {
   const route = useRoute<DeviceDetailRouteProp>();
   const { deviceId, deviceName } = route.params;
 
-  const [isConnected, setIsConnected] = useState(false);
-  const [isPolling, setIsPolling] = useState(false);
-  const [isConnecting, setIsConnecting] = useState(false);
+  // Use deviceStore for connection status and data
+  const {
+    isConnected,
+    isConnecting,
+    batteryLevel,
+    batteryVoltage,
+    latestReading,
+    sampleRate: storeSampleRate,
+    setConnectionStatus: setStoreConnectionStatus,
+    setLatestReading,
+    setSampleRate: setStoreSampleRate,
+    setBattery
+  } = useDeviceStore();
+
   const [isStreaming, setIsStreaming] = useState(false);
-  const [batteryLevel, setBatteryLevel] = useState<number | null>(null);
-  const [sensorReading, setSensorReading] = useState<any>(null);
-  const [connectionStatus, setConnectionStatus] = useState('Connecting...');
   const [lastReadingTime, setLastReadingTime] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [streamingError, setStreamingError] = useState<string | null>(null);
-  const [sampleRate, setSampleRate] = useState<number | null>(null);
   const [zeroPoint, setZeroPoint] = useState<any | null>(null);
   const [isZeroing, setIsZeroing] = useState(false);
   const [showClearZeroDialog, setShowClearZeroDialog] = useState(false);
+  const [showDisconnectDialog, setShowDisconnectDialog] = useState(false);
+  const [showForgetDialog, setShowForgetDialog] = useState(false);
 
   // Track if component is mounted to prevent state updates after unmount
   const isMountedRef = useRef(true);
@@ -85,22 +97,17 @@ const DeviceDetailScreenContent: React.FC = () => {
     // Load zero point from storage
     loadZeroPoint();
 
-    // Listen for connection state changes FIRST
+    // Listen for connection state changes
     const unsubscribe = BleService.addConnectionListener((device, isConn) => {
-      console.log('[DeviceDetailScreen] Connection state changed:', device?.id, isConn);
       if (!isMountedRef.current) return;
 
-      // Only update if this is our device
-      if (device?.id === deviceId || !isConn) {
-        safeSetState(setIsConnected, isConn);
-        safeSetState(setConnectionStatus, isConn ? 'Connected' : 'Disconnected');
-
+      // Only handle if this is our device
+      if (device?.id === deviceId) {
+        // DeviceStatusService already updates the store, we just handle UI state
         if (!isConn) {
-          // Device disconnected
           safeSetState(setIsStreaming, false);
           safeSetState(setError, 'Device disconnected');
         } else {
-          // Device connected, clear error
           safeSetState(setError, null);
         }
       }
@@ -112,13 +119,17 @@ const DeviceDetailScreenContent: React.FC = () => {
 
       const init = async () => {
         try {
+          // First connect/verify connection
           await initializeDevice();
+
+          // Then start monitoring (this will pick up the correct connection status)
+          DeviceStatusService.startMonitoring(deviceId, deviceName);
         } catch (err: any) {
           // Connection failure has UI feedback via error banner - no console logging needed
           if (isMountedRef.current) {
             try {
               safeSetState(setError, 'Connection failed');
-              safeSetState(setIsConnecting, false);
+              setStoreConnectionStatus(false, false); // Set isConnecting = false
             } catch (stateError) {
               console.error('Failed to set error state:', stateError);
             }
@@ -133,6 +144,10 @@ const DeviceDetailScreenContent: React.FC = () => {
       isMountedRef.current = false;
       clearTimeout(initTimer);
       unsubscribe();
+
+      // Stop device status monitoring
+      DeviceStatusService.stopMonitoring();
+
       // Don't disconnect on unmount - user controls disconnect
     };
   }, [deviceId]);
@@ -175,7 +190,6 @@ const DeviceDetailScreenContent: React.FC = () => {
     if (!isMountedRef.current) return;
 
     try {
-      safeSetState(setIsConnecting, true);
       safeSetState(setError, null);
       safeSetState(setStreamingError, null);
 
@@ -183,10 +197,9 @@ const DeviceDetailScreenContent: React.FC = () => {
       const connectedDevice = BleService.getConnectedDevice();
 
       if (connectedDevice?.id === deviceId) {
+        // Already connected - DeviceStatusService has already updated the store
         if (!isMountedRef.current) return;
-        safeSetState(setIsConnected, true);
-        safeSetState(setConnectionStatus, 'Connected');
-        safeSetState(setError, null);
+        console.log('[DeviceDetailScreen] Already connected, skipping reconnect');
 
         try {
           await discoverServices();
@@ -194,16 +207,15 @@ const DeviceDetailScreenContent: React.FC = () => {
           console.warn('Service discovery failed:', err);
         }
       } else {
-        // Connect to device (timeout handled by BleService)
+        // Not connected - need to connect
         if (!isMountedRef.current) return;
-        safeSetState(setConnectionStatus, 'Connecting...');
+        setStoreConnectionStatus(false, true); // Set isConnecting = true
 
         try {
           await BleService.connectToDevice(deviceId);
 
           if (!isMountedRef.current) return;
-          safeSetState(setIsConnected, true);
-          safeSetState(setConnectionStatus, 'Connected');
+          setStoreConnectionStatus(true, false); // Connected, not connecting
           safeSetState(setError, null);
 
           try {
@@ -229,13 +241,12 @@ const DeviceDetailScreenContent: React.FC = () => {
       // Connection failure has UI feedback via error banner - no console logging needed
       if (!isMountedRef.current) return;
 
-      safeSetState(setIsConnected, false);
-      safeSetState(setConnectionStatus, 'Failed');
+      setStoreConnectionStatus(false, false); // Not connected, not connecting
       // Show error banner with reconnect button, but no detailed error message
       safeSetState(setError, 'Connection failed');
     } finally {
       if (isMountedRef.current) {
-        safeSetState(setIsConnecting, false);
+        setStoreConnectionStatus(false, false); // Set isConnecting = false
       }
     }
   };
@@ -343,7 +354,8 @@ const DeviceDetailScreenContent: React.FC = () => {
       // Attempt to read battery level
       const battery = await BleService.readBatteryLevel();
       if (battery !== null && isMountedRef.current) {
-        safeSetState(setBatteryLevel, battery);
+        // Update store with battery level (percentage only, voltage not available from BLE)
+        setBattery(battery, null);
       }
     } catch (error) {
       console.log('Battery service not available');
@@ -391,9 +403,14 @@ const DeviceDetailScreenContent: React.FC = () => {
             };
           }
 
-          safeSetState(setSensorReading, displayData);
+          setLatestReading(displayData);
           safeSetState(setLastReadingTime, new Date());
           safeSetState(setStreamingError, null);
+
+          // Update battery voltage from sensor data
+          if (data.batteryVoltage !== undefined && data.batteryVoltage !== null) {
+            setBattery(null, data.batteryVoltage);
+          }
 
           // Calculate sample rate with rolling average (updates every 10 samples)
           const now = Date.now();
@@ -412,7 +429,7 @@ const DeviceDetailScreenContent: React.FC = () => {
 
               // Calculate average and round
               const avgRate = sampleRateHistoryRef.current.reduce((a, b) => a + b, 0) / sampleRateHistoryRef.current.length;
-              safeSetState(setSampleRate, Math.round(avgRate));
+              setStoreSampleRate(Math.round(avgRate));
             }
             lastUpdateTimeRef.current = now;
             updateCountRef.current = 0;
@@ -425,7 +442,7 @@ const DeviceDetailScreenContent: React.FC = () => {
           safeSetState(setStreamingError, error.message);
 
           if (error.message.toLowerCase().includes('disconnect')) {
-            safeSetState(setIsConnected, false);
+            setStoreConnectionStatus(false);
             safeSetState(setConnectionStatus, 'Disconnected');
             safeSetState(setIsStreaming, false);
           }
@@ -483,7 +500,7 @@ const DeviceDetailScreenContent: React.FC = () => {
         });
       } else if (isMountedRef.current) {
         // safeBleCall returned null, error already set
-        safeSetState(setIsConnected, false);
+        setStoreConnectionStatus(false);
         safeSetState(setConnectionStatus, 'Disconnected');
       }
     } catch (error: any) {
@@ -494,9 +511,9 @@ const DeviceDetailScreenContent: React.FC = () => {
 
       // Check if device disconnected
       if (errorMessage.includes('disconnected') || errorMessage.includes('connection') || errorMessage.includes('not connected')) {
-        safeSetState(setIsConnected, false);
         safeSetState(setConnectionStatus, 'Disconnected');
         safeSetState(setError, 'Device disconnected. Please reconnect.');
+        // DeviceStatusService will handle updating connection state
       } else {
         safeSetState(setError, errorMessage);
       }
@@ -507,7 +524,9 @@ const DeviceDetailScreenContent: React.FC = () => {
     }
   };
 
-  const handleDisconnect = async () => {
+  const confirmDisconnect = async () => {
+    setShowDisconnectDialog(false);
+
     try {
       console.log('[DeviceDetail] Disconnecting device:', deviceId);
 
@@ -521,8 +540,7 @@ const DeviceDetailScreenContent: React.FC = () => {
       // Disconnect from BLE
       await BleService.disconnect();
 
-      // Clear all state
-      safeSetState(setIsConnected, false);
+      // Clear local UI state (DeviceStatusService handles connection state)
       safeSetState(setConnectionStatus, 'Disconnected');
       safeSetState(setSensorReading, null);
       safeSetState(setBatteryLevel, null);
@@ -530,82 +548,51 @@ const DeviceDetailScreenContent: React.FC = () => {
       safeSetState(setError, null);
       safeSetState(setStreamingError, null);
 
-      Alert.alert('Disconnected', 'Device disconnected successfully', [
-        { text: 'OK', onPress: () => navigation.goBack() }
-      ]);
+      showToast({ message: 'Device disconnected successfully', variant: 'success' });
+      navigation.goBack();
     } catch (error: any) {
       console.error('[DeviceDetail] Disconnect error:', error);
 
-      // Even if disconnect fails, clear local state
-      safeSetState(setIsConnected, false);
+      // Even if disconnect fails, clear local UI state
       safeSetState(setIsStreaming, false);
       safeSetState(setIsPolling, false);
       safeSetState(setConnectionStatus, 'Disconnected');
 
-      Alert.alert(
-        'Disconnect Issue',
-        'Device may already be disconnected or connection was lost.',
-        [{ text: 'OK', onPress: () => navigation.goBack() }]
-      );
+      showToast({
+        message: 'Device may already be disconnected or connection was lost',
+        variant: 'warning'
+      });
+      navigation.goBack();
     }
   };
 
-  const handleForget = async () => {
-    Alert.alert(
-      'Forget Device',
-      `Remove ${deviceName} from saved devices?`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Forget',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              // Try to disconnect if connected, but continue even if it fails
-              if (isConnected) {
-                try {
-                  await BleService.disconnect();
-                } catch (disconnectError) {
-                  console.warn('Disconnect failed during forget, continuing...', disconnectError);
-                }
-              }
+  const confirmForget = async () => {
+    setShowForgetDialog(false);
 
-              // Remove from saved devices
-              const saved = await AsyncStorage.getItem(SAVED_DEVICES_KEY);
-              if (saved) {
-                const devices = JSON.parse(saved);
-                const updated = devices.filter((d: any) => d.id !== deviceId);
-                await AsyncStorage.setItem(SAVED_DEVICES_KEY, JSON.stringify(updated));
-              }
+    try {
+      // Try to disconnect if connected, but continue even if it fails
+      if (isConnected) {
+        try {
+          await BleService.disconnect();
+        } catch (disconnectError) {
+          console.warn('Disconnect failed during forget, continuing...', disconnectError);
+        }
+      }
 
-              Alert.alert('Device Forgotten', 'Device removed from saved devices', [
-                { text: 'OK', onPress: () => navigation.goBack() }
-              ]);
-            } catch (error) {
-              console.error('Forget error:', error);
-              Alert.alert('Error', 'Failed to remove device from storage');
-            }
-          },
-        },
-      ]
-    );
-  };
+      // Remove from saved devices
+      const saved = await AsyncStorage.getItem(SAVED_DEVICES_KEY);
+      if (saved) {
+        const devices = JSON.parse(saved);
+        const updated = devices.filter((d: any) => d.id !== deviceId);
+        await AsyncStorage.setItem(SAVED_DEVICES_KEY, JSON.stringify(updated));
+      }
 
-  const handleCalibrate = () => {
-    Alert.alert(
-      'Calibrate Sensor',
-      'Place device on a flat, level surface for 5 seconds to calibrate.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Start',
-          onPress: () => {
-            // TODO: Implement calibration command to IMU device
-            Alert.alert('Coming Soon', 'Calibration feature will be implemented for IMU devices');
-          },
-        },
-      ]
-    );
+      showToast({ message: 'Device removed from saved devices', variant: 'success' });
+      navigation.goBack();
+    } catch (error) {
+      console.error('Forget error:', error);
+      showToast({ message: 'Failed to remove device from storage', variant: 'error' });
+    }
   };
 
   const handleStartRecording = () => {
@@ -613,7 +600,9 @@ const DeviceDetailScreenContent: React.FC = () => {
   };
 
   const renderStatusCard = () => {
-    const batteryVoltage = sensorReading?.batteryVoltage;
+    const sensorReading = latestReading; // Use latestReading from store
+    const sampleRate = storeSampleRate; // Use storeSampleRate from store
+    const batteryVoltageSensor = sensorReading?.batteryVoltage;
     const batteryGood = batteryVoltage && batteryVoltage > 3.7;
     const BatteryIcon = batteryGood ? BatteryFull : Battery;
 
@@ -648,7 +637,7 @@ const DeviceDetailScreenContent: React.FC = () => {
               <BatteryIcon
                 size={18}
                 color={
-                  batteryVoltage === undefined ? theme.colors.textTertiary :
+                  batteryVoltage === null || batteryVoltage === undefined ? theme.colors.textTertiary :
                   batteryVoltage > 3.7 ? theme.colors.success :
                   batteryVoltage > 3.4 ? theme.colors.warning :
                   theme.colors.error
@@ -656,10 +645,10 @@ const DeviceDetailScreenContent: React.FC = () => {
                 style={styles.statusIcon}
               />
               <Text style={[styles.statusCompactValue, {
-                color: batteryVoltage === undefined ? theme.colors.textTertiary : theme.colors.textPrimary,
+                color: batteryVoltage === null || batteryVoltage === undefined ? theme.colors.textTertiary : theme.colors.textPrimary,
                 fontFamily: staticTheme.typography.mono,
               }]}>
-                {batteryVoltage !== undefined ? `${batteryVoltage.toFixed(2)}V` : 'Battery'}
+                {batteryVoltage !== null && batteryVoltage !== undefined ? `${batteryVoltage.toFixed(2)}V` : 'Battery'}
               </Text>
             </View>
           </View>
@@ -712,6 +701,7 @@ const DeviceDetailScreenContent: React.FC = () => {
   };
 
   const renderOrientationVisualization = () => {
+    const sensorReading = latestReading; // Use latestReading from store
     if (!sensorReading || (sensorReading.roll === undefined && sensorReading.pitch === undefined && sensorReading.yaw === undefined)) {
       return null;
     }
@@ -735,6 +725,7 @@ const DeviceDetailScreenContent: React.FC = () => {
   };
 
   const renderSensorData = () => {
+    const sensorReading = latestReading; // Use latestReading from store
     if (!sensorReading) {
       return (
         <View style={[styles.card, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}>
@@ -908,9 +899,18 @@ const DeviceDetailScreenContent: React.FC = () => {
           <Text style={[styles.title, { color: theme.colors.textPrimary }]}>{deviceName}</Text>
           <Text style={[styles.deviceId, { color: theme.colors.textTertiary }]}>{deviceId}</Text>
         </View>
+        <TouchableOpacity
+          onPress={() => navigation.navigate('DeviceSettings' as any)}
+          style={styles.settingsButton}
+        >
+          <Settings size={24} color={theme.colors.textPrimary} />
+        </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content}>
+      <ScrollView
+        style={styles.content}
+        contentContainerStyle={{ paddingBottom: insets.bottom + staticTheme.spacing.xxl }}
+      >
         {/* Error Banner */}
         {error && (
           <View style={[styles.errorBanner, { backgroundColor: theme.colors.errorBg, borderColor: theme.colors.errorBorder }]}>
@@ -1019,27 +1019,17 @@ const DeviceDetailScreenContent: React.FC = () => {
         <View style={styles.actionsGrid}>
           <TouchableOpacity
             style={[styles.secondaryButton, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}
-            onPress={handleCalibrate}
-            disabled={!isConnected}>
-            <Activity size={20} color={theme.colors.textPrimary} />
-            <Text style={[styles.secondaryButtonText, { color: theme.colors.textPrimary }]}>Calibrate</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.secondaryButton, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}
-            onPress={handleDisconnect}
+            onPress={() => setShowDisconnectDialog(true)}
             disabled={!isConnected}>
             <Bluetooth size={20} color={theme.colors.textPrimary} />
             <Text style={[styles.secondaryButtonText, { color: theme.colors.textPrimary }]}>Disconnect</Text>
           </TouchableOpacity>
-        </View>
 
-        {/* Danger Zone */}
-        <View style={[styles.dangerZone, { borderTopColor: theme.colors.border }]}>
-          <Text style={[styles.dangerTitle, { color: theme.colors.error }]}>Danger Zone</Text>
-          <TouchableOpacity style={[styles.dangerButton, { borderColor: theme.colors.error }]} onPress={handleForget}>
+          <TouchableOpacity
+            style={[styles.secondaryButton, { backgroundColor: theme.colors.errorBg, borderColor: theme.colors.error }]}
+            onPress={() => setShowForgetDialog(true)}>
             <Trash2 size={20} color={theme.colors.error} />
-            <Text style={[styles.dangerButtonText, { color: theme.colors.error }]}>Forget Device</Text>
+            <Text style={[styles.secondaryButtonText, { color: theme.colors.error }]}>Forget</Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -1060,6 +1050,46 @@ const DeviceDetailScreenContent: React.FC = () => {
             label: 'Clear',
             onPress: confirmClearZero,
             variant: 'primary',
+          },
+        ]}
+      />
+
+      <ConfirmDialog
+        visible={showDisconnectDialog}
+        onDismiss={() => setShowDisconnectDialog(false)}
+        title="Disconnect Device"
+        message={`Disconnect from ${deviceName}?`}
+        icon={<Bluetooth size={48} color={theme.colors.primary} />}
+        actions={[
+          {
+            label: 'Cancel',
+            onPress: () => setShowDisconnectDialog(false),
+            variant: 'default',
+          },
+          {
+            label: 'Disconnect',
+            onPress: confirmDisconnect,
+            variant: 'primary',
+          },
+        ]}
+      />
+
+      <ConfirmDialog
+        visible={showForgetDialog}
+        onDismiss={() => setShowForgetDialog(false)}
+        title="Forget Device"
+        message={`Remove ${deviceName} from saved devices? You'll need to pair again to reconnect.`}
+        icon={<Trash2 size={48} color={theme.colors.error} />}
+        actions={[
+          {
+            label: 'Cancel',
+            onPress: () => setShowForgetDialog(false),
+            variant: 'default',
+          },
+          {
+            label: 'Forget',
+            onPress: confirmForget,
+            variant: 'destructive',
           },
         ]}
       />
@@ -1085,6 +1115,10 @@ const styles = StyleSheet.create({
   },
   headerInfo: {
     flex: 1,
+  },
+  settingsButton: {
+    padding: staticTheme.spacing.sm,
+    marginLeft: staticTheme.spacing.md,
   },
   title: {
     fontSize: staticTheme.typography.fontSize.xl,

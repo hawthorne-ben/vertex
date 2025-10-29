@@ -14,6 +14,7 @@ import LoadingScreen from '../components/LoadingScreen';
 import DeviceDetailScreen from '../screens/DeviceDetailScreen';
 import RecordScreen from '../screens/RecordScreen';
 import DataDetailScreen from '../screens/DataDetailScreen';
+import DeviceSettingsScreen from '../screens/DeviceSettingsScreen';
 
 export type RootStackParamList = {
   Landing: undefined;
@@ -22,6 +23,7 @@ export type RootStackParamList = {
   DeviceDetail: { deviceId: string; deviceName: string };
   Record: { deviceId: string; deviceName: string };
   DataDetail: { fileName: string; filePath: string };
+  DeviceSettings: undefined;
 };
 
 const AuthStack = createNativeStackNavigator<RootStackParamList>();
@@ -44,6 +46,7 @@ const AppNavigator: React.FC = () => {
         <AppStack.Screen name="DeviceDetail" component={DeviceDetailScreen} />
         <AppStack.Screen name="Record" component={RecordScreen} />
         <AppStack.Screen name="DataDetail" component={DataDetailScreen} />
+        <AppStack.Screen name="DeviceSettings" component={DeviceSettingsScreen} />
       </AppStack.Navigator>
     );
   }

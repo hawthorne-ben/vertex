@@ -21,12 +21,40 @@
     "build:web": "cd web && npm run build",
     "build:android:debug": "cd android && ./android/gradlew assembleDebug -p android",
     "build:android:release": "cd android && ./android/gradlew assembleRelease -p android",
-    "build:android": "npm run build:android:debug"
+    "build:android": "npm run build:android:debug",
+    "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
+    "lint:fix": "eslint . --ext .js,.jsx,.ts,.tsx --fix",
+    "format": "prettier --write \"**/*.{js,jsx,ts,tsx,json,md}\"",
+    "format:check": "prettier --check \"**/*.{js,jsx,ts,tsx,json,md}\"",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "android/**/*.{js,jsx,ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "packages/**/*.{js,jsx,ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ]
   },
   "devDependencies": {
-    "lerna": "^8.0.0"
+    "@typescript-eslint/eslint-plugin": "^8.46.2",
+    "@typescript-eslint/parser": "^8.46.2",
+    "eslint": "^9.38.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-native": "^5.0.0",
+    "husky": "^9.1.7",
+    "lerna": "^8.0.0",
+    "lint-staged": "^16.2.6"
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "overrides": {
+    "react": "19.1.1",
+    "react-test-renderer": "19.1.1"
   }
 }

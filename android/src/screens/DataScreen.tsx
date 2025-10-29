@@ -5,7 +5,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -13,21 +13,37 @@ import { FileText, Trash2, RefreshCw, Clock, Database, Activity, AlertCircle } f
 import { theme as staticTheme } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
-import { ConfirmDialog } from '../components/ui';
+import { ConfirmDialog, ErrorDialog } from '../components/ui';
 import FileService, { RecordingMetadata } from '../services/FileService';
+import VTXFileService, { VTXRecordingMetadata } from '../services/VTXFileService';
 import { RootStackParamList } from '../navigation/AppNavigator';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
+// Unified recording type that supports both CSV and VTX
+interface UnifiedRecording {
+  fileName: string;
+  filePath: string;
+  startTime: Date;
+  endTime?: Date;
+  sampleCount: number;
+  fileSize: number;
+  deviceName?: string;
+  deviceId?: string;
+  format: 'csv' | 'vtx';
+  sampleRate?: number;
+}
 
 const DataScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
   const { showToast } = useToast();
   const navigation = useNavigation<NavigationProp>();
-  const [recordings, setRecordings] = useState<RecordingMetadata[]>([]);
+  const [recordings, setRecordings] = useState<UnifiedRecording[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [recordingToDelete, setRecordingToDelete] = useState<RecordingMetadata | null>(null);
+  const [recordingToDelete, setRecordingToDelete] = useState<UnifiedRecording | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Load recordings only on initial mount
   useEffect(() => {
@@ -36,11 +52,18 @@ const DataScreen: React.FC = () => {
 
   const loadRecordings = async () => {
     try {
-      const files = await FileService.getRecordings();
-      setRecordings(files);
+      // FileService.getRecordings() now returns both CSV and VTX files
+      const allFiles = await FileService.getRecordings();
+      const allRecordings: UnifiedRecording[] = allFiles.map(file => ({
+        ...file,
+        format: file.fileName.endsWith('.vtx') ? 'vtx' as const : 'csv' as const,
+      }));
+
+      // Already sorted by FileService (newest first)
+      setRecordings(allRecordings);
     } catch (error) {
       console.error('[DataScreen] Error loading recordings:', error);
-      Alert.alert('Error', 'Failed to load recordings');
+      setErrorMessage('Failed to load recordings. Please check your storage permissions and try again.');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
@@ -60,7 +83,13 @@ const DataScreen: React.FC = () => {
     if (!recordingToDelete) return;
 
     try {
-      await FileService.deleteRecording(recordingToDelete.fileName);
+      // Delete using the appropriate service based on format
+      if (recordingToDelete.format === 'vtx') {
+        await VTXFileService.deleteRecording(recordingToDelete.filePath);
+      } else {
+        await FileService.deleteRecording(recordingToDelete.fileName);
+      }
+
       setRecordingToDelete(null);
       loadRecordings();
 
@@ -157,8 +186,8 @@ const DataScreen: React.FC = () => {
   };
 
   const getDisplayName = (fileName: string): string => {
-    // Remove .csv extension
-    const nameWithoutExt = fileName.replace(/\.csv$/, '');
+    // Remove .csv or .vtx extension
+    const nameWithoutExt = fileName.replace(/\.(csv|vtx)$/, '');
 
     // Check if it's a default filename pattern: [device_]imu_YYYY-MM-DD_HH-MM-SS
     const defaultPattern = /^(?:.+?_)?imu_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/;
@@ -236,11 +265,17 @@ const DataScreen: React.FC = () => {
                   })}>
                   <View style={styles.fileRowContent}>
                     <View style={styles.fileRowLeft}>
-                      <Activity size={20} color={theme.colors.primary} />
+                      {recording.format === 'vtx' ? (
+                        <Activity size={20} color={theme.colors.primary} />
+                      ) : (
+                        <FileText size={20} color={theme.colors.textSecondary} />
+                      )}
                       <View style={styles.fileRowInfo}>
-                        <Text style={[styles.fileRowName, { color: theme.colors.textPrimary }]} numberOfLines={1}>
-                          {displayTitle}
-                        </Text>
+                        <View style={styles.fileRowTitle}>
+                          <Text style={[styles.fileRowName, { color: theme.colors.textPrimary }]} numberOfLines={1}>
+                            {displayTitle}
+                          </Text>
+                        </View>
                         <View style={styles.fileRowMeta}>
                           <Text style={[styles.fileRowMetaText, { color: theme.colors.textSecondary }]}>
                             {duration}
@@ -292,6 +327,13 @@ const DataScreen: React.FC = () => {
           variant: 'danger',
         },
       ]}
+    />
+
+    <ErrorDialog
+      visible={errorMessage !== null}
+      onDismiss={() => setErrorMessage(null)}
+      title="Error"
+      message={errorMessage || ''}
     />
     </View>
   );
@@ -389,6 +431,7 @@ const styles = StyleSheet.create({
     fontWeight: staticTheme.typography.fontWeight.medium,
     fontFamily: staticTheme.typography.serif,
     marginBottom: 4,
+    flexShrink: 1,
   },
   fileRowMeta: {
     flexDirection: 'row',
@@ -405,6 +448,12 @@ const styles = StyleSheet.create({
   fileRowDelete: {
     padding: staticTheme.spacing.xs,
     marginLeft: staticTheme.spacing.sm,
+  },
+  fileRowTitle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: staticTheme.spacing.xs,
+    marginBottom: 4,
   },
 });
 

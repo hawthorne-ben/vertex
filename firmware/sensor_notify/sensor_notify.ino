@@ -29,6 +29,15 @@
 // BLE UUIDs
 #define SERVICE_UUID        "12345678-1234-5678-1234-56789abcdef0"
 #define SENSOR_CHAR_UUID    "12345678-1234-5678-1234-56789abcdef1"
+#define CONFIG_CHAR_UUID    "12345678-1234-5678-1234-56789abcdef2"
+
+// Configuration commands
+#define CMD_SET_SAMPLE_RATE 0x01
+#define CMD_CALIBRATE       0x02
+#define CMD_POWER_MODE      0x03
+#define CMD_RESET           0x04
+#define CMD_LED_MODE        0x05
+#define CMD_QUERY_CONFIG    0xFF
 
 // Forward declarations
 void sendSensorData();
@@ -40,6 +49,7 @@ Adafruit_BNO055 bno = Adafruit_BNO055(55);
 BLEServer* pServer = nullptr;
 BLEService* pService = nullptr;
 BLECharacteristic* pCharacteristic = nullptr;
+BLECharacteristic* pConfigCharacteristic = nullptr;
 bool deviceConnected = false;
 unsigned long connectionTime = 0;
 const unsigned long CONNECTION_STABILIZE_MS = 1000; // Wait 1s after connection
@@ -67,9 +77,16 @@ struct SensorData {
 } sensorData;
 
 unsigned long lastSampleTime = 0;
-const unsigned long SAMPLE_INTERVAL_MS = 100;  // 10 Hz - optimized for stability
+unsigned long sampleIntervalMs = 100;  // 10 Hz default - configurable via BLE
 unsigned long lastBatteryReadTime = 0;
 const unsigned long BATTERY_READ_INTERVAL_MS = 1000;  // Read battery once per second
+
+// Device configuration (can be changed via BLE)
+struct DeviceConfig {
+  uint8_t powerMode;     // 0=low, 1=normal, 2=high performance
+  uint8_t ledMode;       // 0=off, 1=status, 2=always-on
+  bool autoCalibrate;    // Auto-calibration enabled
+} deviceConfig = {1, 1, false};  // Default: normal power, status LED, no auto-cal
 
 // Performance profiling
 struct PerformanceMetrics {
@@ -89,6 +106,9 @@ class MyServerCallbacks: public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) {
     deviceConnected = true;
     connectionTime = millis();
+    // Reset timing to ensure consistent sample rate on reconnection
+    lastSampleTime = millis();
+    lastBatteryReadTime = millis();
   }
 
   void onDisconnect(BLEServer* pServer) {
@@ -102,6 +122,119 @@ class MyServerCallbacks: public BLEServerCallbacks {
 class MyCharacteristicCallbacks: public BLECharacteristicCallbacks {
   void onRead(BLECharacteristic* pCharacteristic) {
     sendSensorData();
+  }
+};
+
+// BLE Config Characteristic Callbacks - handle configuration commands
+class MyConfigCallbacks: public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* pCharacteristic) {
+    String value = pCharacteristic->getValue();
+
+    if (value.length() < 1) {
+      Serial.println("[CONFIG] Empty command received");
+      return;
+    }
+
+    uint8_t cmd = (uint8_t)value[0];
+    Serial.printf("[CONFIG] Command received: 0x%02X\n", cmd);
+
+    switch(cmd) {
+      case CMD_SET_SAMPLE_RATE: {
+        if (value.length() >= 5) {
+          uint32_t intervalMs;
+          memcpy(&intervalMs, value.c_str() + 1, 4);
+
+          // Validate range: 20ms (50Hz) to 1000ms (1Hz)
+          if (intervalMs >= 20 && intervalMs <= 1000) {
+            sampleIntervalMs = intervalMs;
+            Serial.printf("[CONFIG] Sample rate set to %lu ms (%.1f Hz)\n",
+                          sampleIntervalMs, 1000.0 / sampleIntervalMs);
+          } else {
+            Serial.printf("[CONFIG] Invalid interval: %lu ms (must be 20-1000)\n", intervalMs);
+          }
+        }
+        break;
+      }
+
+      case CMD_CALIBRATE: {
+        Serial.println("[CONFIG] Manual calibration triggered");
+        // Force sensor re-read to update calibration status
+        uint8_t sys, gyro_cal, accel_cal, mag_cal;
+        bno.getCalibration(&sys, &gyro_cal, &accel_cal, &mag_cal);
+        Serial.printf("[CONFIG] Calibration status: SYS=%d GYRO=%d ACCEL=%d MAG=%d\n",
+                      sys, gyro_cal, accel_cal, mag_cal);
+        break;
+      }
+
+      case CMD_POWER_MODE: {
+        if (value.length() >= 2) {
+          uint8_t mode = value[1];
+          if (mode <= 2) {
+            deviceConfig.powerMode = mode;
+            const char* modeNames[] = {"LOW", "NORMAL", "HIGH"};
+            Serial.printf("[CONFIG] Power mode set to: %s\n", modeNames[mode]);
+
+            // Adjust I2C speed based on power mode
+            switch(mode) {
+              case 0: Wire.setClock(100000); break;  // 100kHz - low power
+              case 1: Wire.setClock(400000); break;  // 400kHz - normal
+              case 2: Wire.setClock(400000); break;  // 400kHz - high (same speed, different sampling)
+            }
+          }
+        }
+        break;
+      }
+
+      case CMD_RESET: {
+        Serial.println("[CONFIG] Soft reset triggered");
+        delay(100);
+        ESP.restart();
+        break;
+      }
+
+      case CMD_LED_MODE: {
+        if (value.length() >= 2) {
+          uint8_t mode = value[1];
+          if (mode <= 2) {
+            deviceConfig.ledMode = mode;
+            const char* modeNames[] = {"OFF", "STATUS", "ALWAYS-ON"};
+            Serial.printf("[CONFIG] LED mode set to: %s\n", modeNames[mode]);
+
+            if (mode == 0) {
+              digitalWrite(LED_PIN, LOW);  // Turn off immediately
+            } else if (mode == 2) {
+              digitalWrite(LED_PIN, HIGH);  // Turn on immediately
+            }
+          }
+        }
+        break;
+      }
+
+      case CMD_QUERY_CONFIG: {
+        Serial.println("[CONFIG] Configuration query:");
+        Serial.printf("  Sample Rate: %lu ms (%.1f Hz)\n",
+                      sampleIntervalMs, 1000.0 / sampleIntervalMs);
+        Serial.printf("  Power Mode: %d\n", deviceConfig.powerMode);
+        Serial.printf("  LED Mode: %d\n", deviceConfig.ledMode);
+        Serial.printf("  Firmware: %s\n", FIRMWARE_VERSION);
+        Serial.printf("  VTX Format: v%d.%d\n", VTX_FORMAT_MAJOR, VTX_FORMAT_MINOR);
+
+        // Send response back (optional - app can read if needed)
+        uint8_t response[16];
+        response[0] = CMD_QUERY_CONFIG;
+        memcpy(response + 1, &sampleIntervalMs, 4);
+        response[5] = deviceConfig.powerMode;
+        response[6] = deviceConfig.ledMode;
+        response[7] = deviceConfig.autoCalibrate;
+        pCharacteristic->setValue(response, 8);
+        pCharacteristic->notify();
+        break;
+      }
+
+      default:
+        Serial.printf("[CONFIG] Unknown command: 0x%02X\n", cmd);
+        break;
+    }
   }
 };
 
@@ -178,7 +311,7 @@ void setup() {
   pService = pServer->createService(SERVICE_UUID);
   Serial.println("[BLE] Service created");
 
-  // Create BLE Characteristic
+  // Create BLE Sensor Characteristic (read/notify)
   pCharacteristic = pService->createCharacteristic(
     SENSOR_CHAR_UUID,
     BLECharacteristic::PROPERTY_READ |
@@ -186,7 +319,15 @@ void setup() {
   );
   pCharacteristic->addDescriptor(new BLE2902());
   pCharacteristic->setCallbacks(new MyCharacteristicCallbacks());
-  Serial.println("[BLE] Characteristic created");
+  Serial.println("[BLE] Sensor characteristic created");
+
+  // Create BLE Config Characteristic (write)
+  pConfigCharacteristic = pService->createCharacteristic(
+    CONFIG_CHAR_UUID,
+    BLECharacteristic::PROPERTY_WRITE
+  );
+  pConfigCharacteristic->setCallbacks(new MyConfigCallbacks());
+  Serial.println("[BLE] Config characteristic created");
 
   // Start the service
   pService->start();
@@ -208,6 +349,11 @@ void setup() {
   Serial.println("\n========================================");
   Serial.println("Ready!");
   Serial.println("========================================\n");
+
+  // Reset timing variables to prevent carryover from previous sessions
+  lastSampleTime = millis();
+  lastBatteryReadTime = millis();
+  lastPerfReportTime = millis();
 
   digitalWrite(LED_PIN, LOW);
 }
@@ -236,26 +382,28 @@ void loop() {
     lastButtonCheck = now;
   }
 
-  // Update sensor data and send notifications every 1 second when connected
-  if (now - lastSampleTime >= SAMPLE_INTERVAL_MS) {
+  // Update sensor data and send notifications at configured rate when connected
+  if (now - lastSampleTime >= sampleIntervalMs) {
     updateSensorData();
+    lastSampleTime = now;
+    perfMetrics.sampleCount++;
 
     // Auto-send notification if connected (don't wait for read requests)
     if (deviceConnected && (now - connectionTime >= CONNECTION_STABILIZE_MS)) {
       sendSensorData();
     }
-
-    lastSampleTime = now;
-    perfMetrics.sampleCount++;
   }
 
-  // Blink LED - fast if connected, slow if disconnected
+  // Blink LED based on LED mode configuration
   static unsigned long lastBlink = 0;
-  int blinkInterval = deviceConnected ? 100 : 1000;
-  if (now - lastBlink > blinkInterval) {
-    digitalWrite(LED_PIN, !digitalRead(LED_PIN));
-    lastBlink = now;
+  if (deviceConfig.ledMode == 1) {  // Status mode
+    int blinkInterval = deviceConnected ? 100 : 1000;
+    if (now - lastBlink > blinkInterval) {
+      digitalWrite(LED_PIN, !digitalRead(LED_PIN));
+      lastBlink = now;
+    }
   }
+  // ledMode 0 (off) and 2 (always-on) are handled in the config callback
 
   // Track loop timing
   unsigned long loopEnd = micros();
@@ -407,10 +555,10 @@ void reportPerformance() {
   perfMetrics.cpuTemp = temperatureRead();
 
   float actualHz = (perfMetrics.sampleCount * 1000.0) / PERF_REPORT_INTERVAL_MS;
-  float cpuUsage = (perfMetrics.loopTime / (float)SAMPLE_INTERVAL_MS / 1000.0) * 100.0;
+  float cpuUsage = (perfMetrics.loopTime / (float)sampleIntervalMs / 1000.0) * 100.0;
 
   Serial.println("\n=== PERFORMANCE METRICS ===");
-  Serial.printf("Sample Rate: %.1f Hz (target: %.0f Hz)\n", actualHz, 1000.0 / SAMPLE_INTERVAL_MS);
+  Serial.printf("Sample Rate: %.1f Hz (target: %.0f Hz)\n", actualHz, 1000.0 / sampleIntervalMs);
   Serial.printf("Sensor I2C Read: %lu µs (%.1f ms)\n", perfMetrics.sensorReadTime, perfMetrics.sensorReadTime / 1000.0);
   Serial.printf("BLE Notify: %lu µs (%.1f ms)\n", perfMetrics.bleNotifyTime, perfMetrics.bleNotifyTime / 1000.0);
   Serial.printf("Loop Time: %lu µs (%.1f ms)\n", perfMetrics.loopTime, perfMetrics.loopTime / 1000.0);
@@ -422,7 +570,7 @@ void reportPerformance() {
   // Calculate overhead and available headroom
   unsigned long totalTime = perfMetrics.sensorReadTime + perfMetrics.bleNotifyTime;
   Serial.printf("Total Overhead: %lu µs (%.1f ms)\n", totalTime, totalTime / 1000.0);
-  Serial.printf("Available Time @10Hz: %.1f ms\n", (SAMPLE_INTERVAL_MS - (totalTime / 1000.0)));
+  Serial.printf("Available Time: %.1f ms\n", (sampleIntervalMs - (totalTime / 1000.0)));
   Serial.printf("Max Theoretical Hz: %.1f Hz (if zero overhead)\n", 1000000.0 / totalTime);
   Serial.println("==========================\n");
 

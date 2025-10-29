@@ -19,6 +19,15 @@ const BATTERY_LEVEL = '00002a19-0000-1000-8000-00805f9b34fb';
 // IMU Device UUIDs (matches firmware sensor_notify)
 const IMU_SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef0';
 const IMU_CHARACTERISTIC_UUID = '12345678-1234-5678-1234-56789abcdef1';
+const CONFIG_CHARACTERISTIC_UUID = '12345678-1234-5678-1234-56789abcdef2';
+
+// Configuration commands (matches firmware)
+const CMD_SET_SAMPLE_RATE = 0x01;
+const CMD_CALIBRATE = 0x02;
+const CMD_POWER_MODE = 0x03;
+const CMD_RESET = 0x04;
+const CMD_LED_MODE = 0x05;
+const CMD_QUERY_CONFIG = 0xFF;
 
 type ConnectionListener = (device: Device | null, isConnected: boolean) => void;
 
@@ -924,6 +933,147 @@ class BleService {
    */
   getConnectedDevice(): Device | null {
     return this.connectedDevice;
+  }
+
+  /**
+   * Set device sample rate
+   * @param hz Desired frequency in Hz (1-50Hz)
+   */
+  async setSampleRate(hz: number): Promise<void> {
+    if (!this.connectedDevice) {
+      throw new Error('No device connected');
+    }
+
+    // Validate range
+    if (hz < 1 || hz > 50) {
+      throw new Error('Sample rate must be between 1-50 Hz');
+    }
+
+    const intervalMs = Math.round(1000 / hz);
+    console.log(`[CONFIG] Setting sample rate to ${hz} Hz (${intervalMs} ms)`);
+
+    // Build command: [CMD_SET_SAMPLE_RATE, intervalMs (4 bytes, little-endian)]
+    const command = new Uint8Array(5);
+    command[0] = CMD_SET_SAMPLE_RATE;
+    const view = new DataView(command.buffer);
+    view.setUint32(1, intervalMs, true); // little-endian
+
+    await this.writeConfigCommand(command);
+  }
+
+  /**
+   * Trigger device calibration
+   */
+  async triggerCalibration(): Promise<void> {
+    if (!this.connectedDevice) {
+      throw new Error('No device connected');
+    }
+
+    console.log('[CONFIG] Triggering calibration');
+    const command = new Uint8Array([CMD_CALIBRATE]);
+    await this.writeConfigCommand(command);
+  }
+
+  /**
+   * Set device power mode
+   * @param mode 0=low, 1=normal, 2=high performance
+   */
+  async setPowerMode(mode: number): Promise<void> {
+    if (!this.connectedDevice) {
+      throw new Error('No device connected');
+    }
+
+    if (mode < 0 || mode > 2) {
+      throw new Error('Power mode must be 0 (low), 1 (normal), or 2 (high)');
+    }
+
+    const modeNames = ['LOW', 'NORMAL', 'HIGH'];
+    console.log(`[CONFIG] Setting power mode to ${modeNames[mode]}`);
+
+    const command = new Uint8Array([CMD_POWER_MODE, mode]);
+    await this.writeConfigCommand(command);
+  }
+
+  /**
+   * Reset the device (soft reset)
+   */
+  async resetDevice(): Promise<void> {
+    if (!this.connectedDevice) {
+      throw new Error('No device connected');
+    }
+
+    console.log('[CONFIG] Resetting device');
+    const command = new Uint8Array([CMD_RESET]);
+    await this.writeConfigCommand(command);
+
+    // Device will disconnect after reset
+    this.connectedDevice = null;
+    this.notifyConnectionListeners(null, false);
+  }
+
+  /**
+   * Set LED mode
+   * @param mode 0=off, 1=status, 2=always-on
+   */
+  async setLEDMode(mode: number): Promise<void> {
+    if (!this.connectedDevice) {
+      throw new Error('No device connected');
+    }
+
+    if (mode < 0 || mode > 2) {
+      throw new Error('LED mode must be 0 (off), 1 (status), or 2 (always-on)');
+    }
+
+    const modeNames = ['OFF', 'STATUS', 'ALWAYS-ON'];
+    console.log(`[CONFIG] Setting LED mode to ${modeNames[mode]}`);
+
+    const command = new Uint8Array([CMD_LED_MODE, mode]);
+    await this.writeConfigCommand(command);
+  }
+
+  /**
+   * Query device configuration
+   * Returns current device settings
+   */
+  async queryConfiguration(): Promise<any> {
+    if (!this.connectedDevice) {
+      throw new Error('No device connected');
+    }
+
+    console.log('[CONFIG] Querying device configuration');
+    const command = new Uint8Array([CMD_QUERY_CONFIG]);
+    await this.writeConfigCommand(command);
+
+    // The device will send a notification response
+    // For now, we'll just trigger the command
+    // A complete implementation would subscribe to notifications first
+    return { status: 'Query sent - check device logs for response' };
+  }
+
+  /**
+   * Write a configuration command to the device
+   * @param command Uint8Array containing command bytes
+   */
+  private async writeConfigCommand(command: Uint8Array): Promise<void> {
+    if (!this.connectedDevice) {
+      throw new Error('No device connected');
+    }
+
+    try {
+      // Convert Uint8Array to base64 for BLE library
+      const base64Value = btoa(String.fromCharCode(...command));
+
+      await this.connectedDevice.writeCharacteristicWithResponseForService(
+        IMU_SERVICE_UUID,
+        CONFIG_CHARACTERISTIC_UUID,
+        base64Value
+      );
+
+      console.log(`[CONFIG] Command written successfully (${command.length} bytes)`);
+    } catch (error: any) {
+      console.error('[CONFIG] Write error:', error?.message);
+      throw new Error(`Failed to write config command: ${error?.message || 'Unknown error'}`);
+    }
   }
 
   /**

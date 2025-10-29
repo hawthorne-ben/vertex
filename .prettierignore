@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+build/
+dist/
+.expo/
+android/android/build/
+android/android/app/build/
+
+# OS files
+.DS_Store
+*.log
+
+# Config
+*.config.js
+metro.config.js
+babel.config.js
+
+# Generated
+coverage/
+*.min.js

@@ -8,6 +8,7 @@
  */
 
 import RNFS from 'react-native-fs';
+import VTXFileService from './VTXFileService';
 
 export interface IMUSensorData {
   timestamp: Date;
@@ -43,6 +44,29 @@ class FileService {
   constructor() {
     this.documentsPath = RNFS.DocumentDirectoryPath;
     console.log('[FileService] Documents path:', this.documentsPath);
+  }
+
+  /**
+   * Read file with UTF-8 fallback for corrupted files
+   * @param filePath Path to file
+   * @returns File content as string
+   */
+  private async readFileWithFallback(filePath: string): Promise<string> {
+    try {
+      // Try UTF-8 first (standard encoding)
+      return await RNFS.readFile(filePath, 'utf8');
+    } catch (error) {
+      console.warn('[FileService] UTF-8 read failed, trying ASCII fallback:', error);
+      try {
+        // Fallback to ASCII which is more lenient
+        const content = await RNFS.readFile(filePath, 'ascii');
+        // Sanitize by removing non-printable characters except newline, carriage return, and tab
+        return content.replace(/[^\x20-\x7E\n\r\t]/g, '');
+      } catch (fallbackError) {
+        console.error('[FileService] ASCII fallback also failed:', fallbackError);
+        throw new Error('Invalid UTF-8 detected');
+      }
+    }
   }
 
   /**
@@ -110,45 +134,61 @@ class FileService {
   async getRecordings(): Promise<RecordingMetadata[]> {
     try {
       const files = await RNFS.readDir(this.documentsPath);
-      const csvFiles = files
-        .filter(file => file.name.endsWith('.csv'))
+      const recordingFiles = files
+        .filter(file => file.name.endsWith('.csv') || file.name.endsWith('.vtx'))
         .sort((a, b) => b.mtime!.getTime() - a.mtime!.getTime()); // Newest first
 
       const recordings: RecordingMetadata[] = [];
 
-      for (const file of csvFiles) {
-        // Parse filename to extract metadata (works for both default and custom filenames)
-        // Default format: [deviceName_]imu_YYYY-MM-DD_HH-MM-SS.csv
-        // Custom format: any_custom_name.csv
-        const nameMatch = file.name.match(/^(?:(.+?)_)?imu_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\.csv$/);
-        const deviceName = nameMatch?.[1]?.replace(/_/g, ' ');
+      for (const file of recordingFiles) {
+        const isVTX = file.name.endsWith('.vtx');
 
-        // Read file to get sample count and timestamps
+        // Parse filename to extract device name
+        // Format: [deviceName_]imu_YYYY-MM-DD_HH-MM-SS.(csv|vtx)
+        const nameMatch = file.name.match(/^(?:(.+?)_)?imu_(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})\.(csv|vtx)$/);
+        let deviceName = nameMatch?.[1]?.replace(/_/g, ' ');
+
         let sampleCount = 0;
         let startTime: Date | undefined;
         let endTime: Date | undefined;
 
         try {
-          const content = await RNFS.readFile(file.path, 'utf8');
-          const lines = content.split('\n').filter(line => line.trim());
-          sampleCount = Math.max(0, lines.length - 1); // Subtract header
+          if (isVTX) {
+            // Read VTX file header for metadata
+            const vtxData = await VTXFileService.readVTXFile(file.path);
+            sampleCount = vtxData.records.length;
 
-          // Extract first and last timestamps from CSV data
-          if (lines.length > 1) {
-            // First data line (skip header)
-            const firstDataLine = lines[1]?.split(',');
-            if (firstDataLine && firstDataLine[0]) {
-              startTime = new Date(parseInt(firstDataLine[0]));
+            // Get timestamps from header
+            startTime = new Date(Number(vtxData.header.startTimestamp));
+            endTime = new Date(Number(vtxData.header.endTimestamp));
+
+            // Get device name from metadata if not in filename
+            if (!deviceName && vtxData.metadata?.device?.name) {
+              deviceName = vtxData.metadata.device.name;
             }
+          } else {
+            // Read CSV file
+            const content = await this.readFileWithFallback(file.path);
+            const lines = content.split('\n').filter(line => line.trim());
+            sampleCount = Math.max(0, lines.length - 1); // Subtract header
 
-            // Last data line
-            const lastDataLine = lines[lines.length - 1]?.split(',');
-            if (lastDataLine && lastDataLine[0]) {
-              endTime = new Date(parseInt(lastDataLine[0]));
+            // Extract first and last timestamps from CSV data
+            if (lines.length > 1) {
+              // First data line (skip header)
+              const firstDataLine = lines[1]?.split(',');
+              if (firstDataLine && firstDataLine[0]) {
+                startTime = new Date(parseInt(firstDataLine[0]));
+              }
+
+              // Last data line
+              const lastDataLine = lines[lines.length - 1]?.split(',');
+              if (lastDataLine && lastDataLine[0]) {
+                endTime = new Date(parseInt(lastDataLine[0]));
+              }
             }
           }
         } catch (err) {
-          console.warn(`[FileService] Could not read file for metadata: ${file.name}`);
+          console.warn(`[FileService] Could not read file for metadata: ${file.name}`, err);
         }
 
         recordings.push({
@@ -190,7 +230,7 @@ class FileService {
   } | null> {
     try {
       const stat = await RNFS.stat(filePath);
-      const content = await RNFS.readFile(filePath, 'utf8');
+      const content = await this.readFileWithFallback(filePath);
       const lines = content.split('\n').filter(line => line.trim());
 
       // Extract first and last timestamps
@@ -264,7 +304,7 @@ class FileService {
    */
   async readRecordingData(filePath: string): Promise<IMUSensorData[]> {
     try {
-      const content = await RNFS.readFile(filePath, 'utf8');
+      const content = await this.readFileWithFallback(filePath);
       const lines = content.split('\n').filter(line => line.trim());
 
       // Skip header (first line)

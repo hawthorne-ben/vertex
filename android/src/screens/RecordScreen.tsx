@@ -4,14 +4,13 @@
  * Manages IMU data recording sessions with bike and position selection
  */
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   TouchableOpacity,
   ScrollView,
-  Alert,
   ActivityIndicator,
   TextInput,
 } from 'react-native';
@@ -22,27 +21,37 @@ import {
   Circle,
   Square,
   Clock,
-  Database,
   AlertCircle,
   CheckCircle,
   Bluetooth,
   Activity,
   WifiOff,
   ChevronDown,
+  Settings,
+  HardDrive,
+  Battery,
 } from 'lucide-react-native';
 import { theme as staticTheme } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
-import { BackButton, Card, ConfirmDialog } from '../components/ui';
+import { BackButton, Card, ConfirmDialog, ErrorDialog, BottomSheet } from '../components/ui';
+import type { BottomSheetOption } from '../components/ui';
 import { useToast } from '../contexts/ToastContext';
-import RecordingService, { RecordingSession } from '../services/RecordingService';
+import RecordingService, { RecordingSession, RecordingFormat } from '../services/RecordingService';
 import BleService from '../services/BleService';
+import RNFS from 'react-native-fs';
 import { RootStackParamList } from '../navigation/AppNavigator';
+import { useDeviceStore } from '../stores/deviceStore';
+import { useRecordingStore } from '../stores/recordingStore';
+import { useAppStore } from '../stores/appStore';
+import DeviceStatusService from '../services/DeviceStatusService';
 
 type RecordRouteProp = RouteProp<RootStackParamList, 'Record'>;
 
 const BIKES = ['Bike 1', 'Bike 2', 'Bike 3'];
 const POSITIONS = ['Body', 'Seatpost'];
 const ZERO_POINT_KEY = '@vertex_zero_point_';
+
+type BottomSheetType = 'format' | null;
 
 const RecordScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
@@ -52,43 +61,86 @@ const RecordScreen: React.FC = () => {
   const route = useRoute<RecordRouteProp>();
   const { deviceId, deviceName } = route.params;
 
-  const [session, setSession] = useState<RecordingSession | null>(null);
-  const [isStarting, setIsStarting] = useState(false);
-  const [isStopping, setIsStopping] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isConnected, setIsConnected] = useState(true);
+  // Zustand stores
+  const { isConnected, batteryLevel, batteryVoltage } = useDeviceStore();
+  const {
+    session,
+    stats,
+    isStarting,
+    isStopping,
+    error,
+    zeroPoint,
+    isZeroing,
+    setSession,
+    updateStats,
+    setIsStarting,
+    setIsStopping,
+    setError,
+    setZeroPoint,
+    setIsZeroing,
+  } = useRecordingStore();
+  const {
+    selectedBike,
+    selectedPosition,
+    recordingFormat,
+    setSelectedBike,
+    setSelectedPosition,
+    setRecordingFormat,
+  } = useAppStore();
+
+  // Local UI state (dialogs, etc)
   const [currentTime, setCurrentTime] = useState(new Date());
-  const [selectedBike, setSelectedBike] = useState(BIKES[0]);
-  const [selectedPosition, setSelectedPosition] = useState(POSITIONS[0]);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
-  const [zeroPoint, setZeroPoint] = useState<any | null>(null);
-  const [isZeroing, setIsZeroing] = useState(false);
   const [showClearZeroDialog, setShowClearZeroDialog] = useState(false);
-  const [sensorReading, setSensorReading] = useState<any | null>(null);
-  const [showConnectionLostDialog, setShowConnectionLostDialog] = useState(false);
   const [isResuming, setIsResuming] = useState(false);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [showFileNameDialog, setShowFileNameDialog] = useState(false);
   const [fileName, setFileName] = useState('');
+  const [errorDialogMessage, setErrorDialogMessage] = useState<string | null>(null);
+  const [showBackDialog, setShowBackDialog] = useState(false);
+  const [stoppedSession, setStoppedSession] = useState<RecordingSession | null>(null);
+  const [activeSheet, setActiveSheet] = useState<BottomSheetType>(null);
+  const [hasShownConnectionLostToast, setHasShownConnectionLostToast] = useState(false);
 
   const isMountedRef = useRef(true);
   const clockTimerRef = useRef<NodeJS.Timeout | null>(null);
   const readingBufferRef = useRef<any[]>([]);
   const zeroPointRef = useRef<any | null>(null);
   const streamSubscriptionRef = useRef<any>(null);
-  const hasShownConnectionLostDialogRef = useRef(false);
   const reconnectIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptsRef = useRef(0);
+  const lastStreamErrorRef = useRef<number>(0);
+
+  // Format selector options
+  const formatOptions: BottomSheetOption[] = useMemo(() => [
+    { label: 'VTX (Binary)', value: 'vtx', description: '60-70% smaller file size' },
+    { label: 'CSV (Text)', value: 'csv', description: 'Compatible with spreadsheets' },
+  ], []);
+
+  // Update file size estimate based on session data
+  useEffect(() => {
+    if (session && session.isRecording && !session.isPaused) {
+      const bytesPerSample = session.format === 'vtx' ? 60 : 200; // VTX is ~60 bytes, CSV is ~200 bytes
+      const estimatedSize = session.sampleCount * bytesPerSample;
+      updateStats({ fileSize: estimatedSize, sampleCount: session.sampleCount });
+    }
+  }, [session?.sampleCount, session?.isRecording, session?.isPaused, updateStats]);
 
   useEffect(() => {
     isMountedRef.current = true;
-    checkConnection();
+
+    // Start device status monitoring
+    DeviceStatusService.startMonitoring(deviceId, deviceName);
+
     loadZeroPoint();
 
-    // Check for existing session
+    // Check for existing active session (only if recording or paused)
     const existingSession = RecordingService.getCurrentSession();
-    if (existingSession && existingSession.deviceId === deviceId) {
+    if (existingSession && existingSession.deviceId === deviceId && existingSession.isRecording) {
       setSession(existingSession);
+    } else {
+      // Clear any old session data
+      setSession(null);
     }
 
     // Start IMU streaming for zero point buffer (separate from recording)
@@ -106,9 +158,8 @@ const RecordScreen: React.FC = () => {
       console.log('[RecordScreen] Connection state changed:', device?.id, isConn);
       if (!isMountedRef.current) return;
 
-      // Update connection status
+      // Connection status is now handled by DeviceStatusService
       const connected = isConn && device?.id === deviceId;
-      setIsConnected(connected);
 
       const currentSession = RecordingService.getCurrentSession();
 
@@ -137,10 +188,15 @@ const RecordScreen: React.FC = () => {
           }
         }, 100);
 
-        // Show dialog to user (only once per disconnection)
-        if (!hasShownConnectionLostDialogRef.current) {
-          hasShownConnectionLostDialogRef.current = true;
-          setShowConnectionLostDialog(true);
+        // Show toast notification (only once per disconnection)
+        if (!hasShownConnectionLostToast) {
+          setHasShownConnectionLostToast(true);
+          showToast({
+            message: 'Connection lost - recording paused. Reconnecting...',
+            variant: 'error',
+            duration: 5000,
+            hasTabBar: false,
+          });
         }
 
         // Start automatic reconnection attempts
@@ -151,7 +207,10 @@ const RecordScreen: React.FC = () => {
       if (connected && currentSession?.isPaused) {
         console.log('[RecordScreen] Device reconnected, attempting to resume recording');
         console.log('[RecordScreen] Current session state:', currentSession);
-        hasShownConnectionLostDialogRef.current = false; // Reset for next disconnection
+
+        // Reset toast flag for next disconnection
+        setHasShownConnectionLostToast(false);
+
         stopReconnectionAttempts(); // Stop reconnection attempts since we're now connected
 
         // Update local session state immediately
@@ -170,6 +229,10 @@ const RecordScreen: React.FC = () => {
 
     return () => {
       isMountedRef.current = false;
+
+      // Stop device status monitoring
+      DeviceStatusService.stopMonitoring();
+
       unsubscribe();
       if (clockTimerRef.current) {
         clearInterval(clockTimerRef.current);
@@ -187,21 +250,25 @@ const RecordScreen: React.FC = () => {
     };
   }, [deviceId]);
 
-  const checkConnection = () => {
-    const connectedDevice = BleService.getConnectedDevice();
-    setIsConnected(connectedDevice?.id === deviceId);
-  };
-
   const getElapsedTime = (): number => {
     if (!session?.startTime) return 0;
-    const now = new Date();
-    const elapsed = Math.floor((now.getTime() - session.startTime.getTime()) / 1000);
+    // Use endTime if recording stopped, otherwise use current time
+    const endTime = session.endTime || new Date();
+    const elapsed = Math.floor((endTime.getTime() - session.startTime.getTime()) / 1000);
     return elapsed;
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`;
   };
 
   const handleStartRecording = async () => {
     if (!isConnected) {
-      Alert.alert('Not Connected', 'Please connect to the device before recording');
+      setErrorDialogMessage('Please connect to the device before recording');
       return;
     }
 
@@ -215,7 +282,6 @@ const RecordScreen: React.FC = () => {
         (updatedSession) => {
           if (isMountedRef.current) {
             setSession(updatedSession);
-            checkConnection();
           }
         },
         (recordingError) => {
@@ -223,7 +289,9 @@ const RecordScreen: React.FC = () => {
             setError(recordingError.message);
           }
         },
-        zeroPointRef.current // Pass current zero point to recording service
+        zeroPointRef.current, // Pass current zero point to recording service
+        recordingFormat, // Recording format (csv or vtx)
+        10 // Sample rate in Hz (must match firmware broadcast rate)
       );
 
       if (isMountedRef.current) {
@@ -232,7 +300,7 @@ const RecordScreen: React.FC = () => {
     } catch (err: any) {
       if (isMountedRef.current) {
         setError(err.message || 'Failed to start recording');
-        Alert.alert('Error', err.message || 'Failed to start recording');
+        setErrorDialogMessage(err.message || 'Failed to start recording');
       }
     } finally {
       if (isMountedRef.current) {
@@ -241,32 +309,97 @@ const RecordScreen: React.FC = () => {
     }
   };
 
-  const handleShowStopDialog = () => {
-    // Generate default file name
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').split('.')[0];
-    const devicePrefix = deviceName ? `${deviceName.replace(/[^a-zA-Z0-9]/g, '_')}_` : '';
-    const defaultFileName = `${devicePrefix}imu_${timestamp}`;
-    setFileName(defaultFileName);
-    setShowFileNameDialog(true);
-  };
-
-  const handleStopRecording = async () => {
-    setIsStopping(true);
-    setShowFileNameDialog(false);
-
+  const handleShowStopDialog = async () => {
     // Stop any reconnection attempts
     stopReconnectionAttempts();
 
-    try {
-      const stoppedSession = await RecordingService.stopRecording();
+    setIsStopping(true);
 
+    try {
+      // Stop recording FIRST, before showing the dialog
+      const session = await RecordingService.stopRecording();
+
+      if (session && isMountedRef.current) {
+        // Store the stopped session for later use
+        setStoppedSession(session);
+
+        // Update the session state so the timer freezes
+        setSession(session);
+
+        // Generate default file name
+        const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').split('.')[0];
+        const devicePrefix = deviceName ? `${deviceName.replace(/[^a-zA-Z0-9]/g, '_')}_` : '';
+        const defaultFileName = `${devicePrefix}imu_${timestamp}`;
+        setFileName(defaultFileName);
+
+        // Now show the dialog (recording is already stopped)
+        setShowFileNameDialog(true);
+      }
+    } catch (err: any) {
+      if (isMountedRef.current) {
+        setErrorDialogMessage(err.message || 'Failed to stop recording');
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsStopping(false);
+      }
+    }
+  };
+
+  const handleDeleteRecording = async () => {
+    setShowFileNameDialog(false);
+    setIsStopping(true);
+
+    try {
+      if (stoppedSession) {
+        // Delete the recorded file
+        const documentsPath = RNFS.DocumentDirectoryPath;
+        const filePath = `${documentsPath}/${stoppedSession.fileName}`;
+
+        console.log(`[RecordScreen] Deleting recording: ${filePath}`);
+        await RNFS.unlink(filePath);
+
+        showToast({
+          message: 'Recording deleted',
+          variant: 'success',
+          duration: 2000,
+          hasTabBar: false,
+        });
+      }
+
+      // Clear session and go back
+      if (isMountedRef.current) {
+        setSession(null);
+        setError(null);
+        setStoppedSession(null);
+        navigation.goBack();
+      }
+    } catch (err: any) {
+      console.error('[RecordScreen] Error deleting recording:', err);
+      if (isMountedRef.current) {
+        setErrorDialogMessage(err.message || 'Failed to delete recording');
+      }
+    } finally {
+      if (isMountedRef.current) {
+        setIsStopping(false);
+      }
+    }
+  };
+
+  const handleStopRecording = async () => {
+    // Recording was already stopped in handleShowStopDialog
+    // This function now just handles file renaming and navigation
+    setIsStopping(true);
+    setShowFileNameDialog(false);
+
+    try {
       if (stoppedSession && fileName && isMountedRef.current) {
         // Rename the file if user changed the name
-        const FileService = (await import('../services/FileService')).default;
-        const RNFS = (await import('react-native-fs')).default;
-
         const originalFileName = stoppedSession.fileName;
-        const newFileName = fileName.endsWith('.csv') ? fileName : `${fileName}.csv`;
+        // Use the correct extension based on recording format
+        const extension = recordingFormat === 'vtx' ? '.vtx' : '.csv';
+        const hasExtension = fileName.endsWith('.csv') || fileName.endsWith('.vtx');
+        const newFileName = hasExtension ? fileName : `${fileName}${extension}`;
 
         if (originalFileName !== newFileName) {
           const documentsPath = RNFS.DocumentDirectoryPath;
@@ -300,16 +433,16 @@ const RecordScreen: React.FC = () => {
       } else if (isMountedRef.current) {
         setSession(null);
         setError(null);
-        hasShownConnectionLostDialogRef.current = false;
         navigation.goBack();
       }
     } catch (err: any) {
       if (isMountedRef.current) {
-        Alert.alert('Error', err.message || 'Failed to stop recording');
+        setErrorDialogMessage(err.message || 'Failed to save recording');
       }
     } finally {
       if (isMountedRef.current) {
         setIsStopping(false);
+        setStoppedSession(null); // Clear the stopped session
       }
     }
   };
@@ -349,20 +482,6 @@ const RecordScreen: React.FC = () => {
     }
   };
 
-  const handleKeepWaitingForConnection = () => {
-    setShowConnectionLostDialog(false);
-    // Keep recording paused, waiting for reconnection
-    // Reconnection attempts are already running, so just dismiss the dialog
-    console.log('[RecordScreen] User chose to keep waiting for connection');
-  };
-
-  const handleStopDueToDisconnection = async () => {
-    setShowConnectionLostDialog(false);
-    hasShownConnectionLostDialogRef.current = false;
-    stopReconnectionAttempts();
-    await handleStopRecording();
-  };
-
   const startReconnectionAttempts = () => {
     // Clear any existing interval
     if (reconnectIntervalRef.current) {
@@ -373,7 +492,7 @@ const RecordScreen: React.FC = () => {
     setIsReconnecting(true);
     reconnectAttemptsRef.current = 0;
 
-    // Attempt reconnection every 3 seconds
+    // Attempt reconnection every 5 seconds (increased from 3 to reduce log spam)
     reconnectIntervalRef.current = setInterval(async () => {
       if (!isMountedRef.current) {
         stopReconnectionAttempts();
@@ -391,10 +510,13 @@ const RecordScreen: React.FC = () => {
         // Stop further attempts
         stopReconnectionAttempts();
       } catch (error) {
-        console.log(`[RecordScreen] Reconnection attempt ${reconnectAttemptsRef.current} failed:`, error);
+        // Only log error on first attempt and every 3rd attempt after that
+        if (reconnectAttemptsRef.current === 1 || reconnectAttemptsRef.current % 3 === 0) {
+          console.log(`[RecordScreen] Reconnection attempt ${reconnectAttemptsRef.current} failed`);
+        }
         // Continue trying (interval will call this function again)
       }
-    }, 3000);
+    }, 5000);
   };
 
   const stopReconnectionAttempts = () => {
@@ -453,6 +575,11 @@ const RecordScreen: React.FC = () => {
         (data) => {
           if (!isMountedRef.current) return;
 
+          // Update battery voltage from IMU stream data
+          if (data.batteryVoltage !== undefined) {
+            useDeviceStore.getState().setBattery(null, data.batteryVoltage);
+          }
+
           // Add to reading buffer (keep last 10 readings)
           readingBufferRef.current.push(data);
           if (readingBufferRef.current.length > 10) {
@@ -480,10 +607,15 @@ const RecordScreen: React.FC = () => {
             };
           }
 
-          setSensorReading(displayData);
+          // Sensor reading is now in deviceStore.latestReading via DeviceStatusService
         },
         (error) => {
-          console.error('[RecordScreen] IMU stream error:', error);
+          // Only log once per 5 seconds to prevent spam
+          const now = Date.now();
+          if (now - lastStreamErrorRef.current > 5000) {
+            console.error('[RecordScreen] IMU stream error:', error);
+            lastStreamErrorRef.current = now;
+          }
           // Clear subscription ref on error
           streamSubscriptionRef.current = null;
         }
@@ -570,26 +702,17 @@ const RecordScreen: React.FC = () => {
 
   const handleBackPress = () => {
     if (isRecording) {
-      Alert.alert(
-        'Recording in Progress',
-        'Stop recording before going back?',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Stop & Go Back',
-            style: 'destructive',
-            onPress: async () => {
-              try {
-                await RecordingService.stopRecording();
-                navigation.goBack();
-              } catch (err) {
-                navigation.goBack();
-              }
-            },
-          },
-        ]
-      );
+      setShowBackDialog(true);
     } else {
+      navigation.goBack();
+    }
+  };
+
+  const handleStopAndGoBack = async () => {
+    try {
+      await RecordingService.stopRecording();
+      navigation.goBack();
+    } catch (err) {
       navigation.goBack();
     }
   };
@@ -599,13 +722,6 @@ const RecordScreen: React.FC = () => {
     const mins = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
     return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const formatFileSize = (samples: number): string => {
-    const bytes = samples * 90;
-    if (bytes < 1024) return `${bytes} B`;
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   };
 
   const isRecording = session?.isRecording && !session?.isPaused;
@@ -622,132 +738,113 @@ const RecordScreen: React.FC = () => {
             {currentTime.toLocaleTimeString()}
           </Text>
         </View>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            onPress={() => setActiveSheet('format')}
+            style={styles.formatButton}
+            disabled={isRecording}
+          >
+            <Activity size={20} color={isRecording ? theme.colors.textTertiary : theme.colors.primary} />
+            <ChevronDown size={16} color={isRecording ? theme.colors.textTertiary : theme.colors.textSecondary} />
+          </TouchableOpacity>
+          <TouchableOpacity
+            onPress={() => (navigation as any).navigate('DeviceSettings')}
+            style={styles.settingsButton}
+          >
+            <Settings size={24} color={theme.colors.textPrimary} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView style={styles.content}>
-        {/* Connection Lost Warning - takes priority over error banner */}
-        {connectionLost && (
-          <View style={[styles.warningBanner, { backgroundColor: theme.colors.warning + '15', borderColor: theme.colors.warning + '40' }]}>
-            <WifiOff size={20} color={theme.colors.warning} />
-            <View style={styles.warningContent}>
-              <Text style={[styles.warningTitle, { color: theme.colors.warning }]}>Connection Lost</Text>
-              <Text style={[styles.warningText, { color: theme.colors.warning }]}>
-                {isReconnecting
-                  ? 'Recording paused. Attempting to reconnect...'
-                  : 'Recording paused. Waiting for device to reconnect...'}
-              </Text>
-              {(isResuming || isReconnecting) && (
-                <ActivityIndicator size="small" color={theme.colors.warning} style={{ marginTop: 8 }} />
-              )}
-            </View>
-          </View>
-        )}
-
-        {/* Error Banner - only show if not in connection lost state */}
-        {error && !connectionLost && (
-          <View style={[styles.errorBanner, { backgroundColor: theme.colors.error + '15', borderColor: theme.colors.error + '40' }]}>
-            <AlertCircle size={20} color={theme.colors.error} />
-            <Text style={[styles.errorText, { color: theme.colors.error }]}>{error}</Text>
-          </View>
-        )}
-
-        {/* Device Status - Compact */}
+        {/* Device Status - Combined */}
         <View style={[styles.card, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}>
-          <View style={styles.statusGrid}>
-            <View style={styles.statusGridRow}>
-              {/* Connection Status */}
-              <View style={styles.statusCompactItem}>
-                <Bluetooth
-                  size={18}
-                  color={isConnected ? theme.colors.success : theme.colors.error}
-                  style={styles.statusIcon}
-                />
-                <Text style={[styles.statusCompactValue, {
-                  color: isConnected ? theme.colors.success : theme.colors.error,
-                  fontFamily: staticTheme.typography.mono,
-                }]}>
-                  {isConnected ? 'Connected' : 'Disconnected'}
-                </Text>
+          {session && session.isRecording ? (
+            // Recording view - show all 4 stats
+            <View style={styles.statusGrid}>
+              <View style={styles.statusGridRow}>
+                <View style={styles.statusCompactItem}>
+                  <Bluetooth
+                    size={18}
+                    color={isConnected ? theme.colors.success : theme.colors.error}
+                    style={styles.statusIcon}
+                  />
+                  <Text style={[styles.statusCompactValue, {
+                    color: isConnected ? theme.colors.success : theme.colors.error,
+                  }]}>
+                    {isConnected ? 'Connected' : 'Disconnected'}
+                  </Text>
+                </View>
+                <View style={styles.statusCompactItem}>
+                  <Clock size={18} color={theme.colors.primary} style={styles.statusIcon} />
+                  <Text style={[styles.statusCompactValue, { color: theme.colors.textPrimary }]}>
+                    {formatTime(getElapsedTime())}
+                  </Text>
+                </View>
               </View>
-
-              {/* Recording Status */}
-              <View style={styles.statusCompactItem}>
-                <Activity
-                  size={18}
-                  color={isRecording ? theme.colors.success : theme.colors.textTertiary}
-                  style={styles.statusIcon}
-                />
-                <Text style={[styles.statusCompactValue, {
-                  color: isRecording ? theme.colors.success : theme.colors.textTertiary,
-                  fontFamily: staticTheme.typography.mono,
-                }]}>
-                  {isRecording ? 'Recording' : 'Idle'}
-                </Text>
+              <View style={styles.statusGridRow}>
+                <View style={styles.statusCompactItem}>
+                  <Battery
+                    size={18}
+                    color={batteryVoltage && batteryVoltage > 3.3 ? theme.colors.success : theme.colors.warning}
+                    style={styles.statusIcon}
+                  />
+                  <Text style={[styles.statusCompactValue, { color: theme.colors.textPrimary }]}>
+                    {batteryVoltage !== null ? `${batteryVoltage.toFixed(2)}V` : '--'}
+                  </Text>
+                </View>
+                <View style={styles.statusCompactItem}>
+                  <HardDrive size={18} color={theme.colors.primary} style={styles.statusIcon} />
+                  <Text style={[styles.statusCompactValue, { color: theme.colors.textPrimary }]}>
+                    {formatFileSize(stats.fileSize)}
+                  </Text>
+                </View>
               </View>
             </View>
-          </View>
+          ) : (
+            // Idle view - show connection, recording status, and battery
+            <View style={styles.statusGrid}>
+              <View style={styles.statusGridRow}>
+                <View style={styles.statusCompactItem}>
+                  <Bluetooth
+                    size={18}
+                    color={isConnected ? theme.colors.success : theme.colors.error}
+                    style={styles.statusIcon}
+                  />
+                  <Text style={[styles.statusCompactValue, {
+                    color: isConnected ? theme.colors.success : theme.colors.error,
+                  }]}>
+                    {isConnected ? 'Connected' : 'Disconnected'}
+                  </Text>
+                </View>
+                <View style={styles.statusCompactItem}>
+                  <Activity
+                    size={18}
+                    color={isRecording ? theme.colors.success : theme.colors.textTertiary}
+                    style={styles.statusIcon}
+                  />
+                  <Text style={[styles.statusCompactValue, {
+                    color: isRecording ? theme.colors.success : theme.colors.textTertiary,
+                  }]}>
+                    {isRecording ? 'Recording' : 'Idle'}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.statusGridRow}>
+                <View style={styles.statusCompactItem}>
+                  <Battery
+                    size={18}
+                    color={batteryVoltage && batteryVoltage > 3.3 ? theme.colors.success : theme.colors.warning}
+                    style={styles.statusIcon}
+                  />
+                  <Text style={[styles.statusCompactValue, { color: theme.colors.textPrimary }]}>
+                    {batteryVoltage !== null ? `${batteryVoltage.toFixed(2)}V` : '--'}
+                  </Text>
+                </View>
+              </View>
+            </View>
+          )}
         </View>
-
-        {/* Bike & Position Selectors */}
-        {!isRecording && (
-          <>
-            <Card style={styles.cardSpacing}>
-              <Text style={[styles.selectorLabel, { color: theme.colors.textSecondary }]}>Bike</Text>
-              <TouchableOpacity
-                style={[styles.selector, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}
-                onPress={() => {
-                  Alert.alert(
-                    'Select Bike',
-                    '',
-                    BIKES.map(bike => ({
-                      text: bike,
-                      onPress: () => setSelectedBike(bike),
-                    }))
-                  );
-                }}>
-                <Text style={[styles.selectorText, { color: theme.colors.textPrimary }]}>{selectedBike}</Text>
-                <ChevronDown size={20} color={theme.colors.textTertiary} />
-              </TouchableOpacity>
-            </Card>
-
-            <Card style={styles.cardSpacing}>
-              <Text style={[styles.selectorLabel, { color: theme.colors.textSecondary }]}>Position</Text>
-              <TouchableOpacity
-                style={[styles.selector, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}
-                onPress={() => {
-                  Alert.alert(
-                    'Select Position',
-                    '',
-                    POSITIONS.map(position => ({
-                      text: position,
-                      onPress: () => setSelectedPosition(position),
-                    }))
-                  );
-                }}>
-                <Text style={[styles.selectorText, { color: theme.colors.textPrimary }]}>{selectedPosition}</Text>
-                <ChevronDown size={20} color={theme.colors.textTertiary} />
-              </TouchableOpacity>
-            </Card>
-          </>
-        )}
-
-        {/* Recording Stats */}
-        {session && (
-          <Card style={styles.cardSpacing}>
-            <View style={styles.statsRow}>
-              <View style={styles.statItem}>
-                <Clock size={24} color={theme.colors.primary} />
-                <Text style={[styles.statValue, { color: theme.colors.textPrimary }]}>{formatTime(getElapsedTime())}</Text>
-                <Text style={[styles.statLabel, { color: theme.colors.textSecondary }]}>Duration</Text>
-              </View>
-              <View style={styles.statItem}>
-                <Database size={24} color={theme.colors.primary} />
-                <Text style={[styles.statValue, { color: theme.colors.textPrimary }]}>{session.sampleCount.toLocaleString()}</Text>
-                <Text style={[styles.statLabel, { color: theme.colors.textSecondary }]}>Samples</Text>
-              </View>
-            </View>
-          </Card>
-        )}
 
         {/* Record/Stop Button and Zero Button */}
         {!session || !session.isRecording ? (
@@ -788,26 +885,26 @@ const RecordScreen: React.FC = () => {
                 style={[
                   styles.halfWidthButton,
                   {
-                    backgroundColor: (isConnected && !isZeroing) ? theme.colors.background : theme.colors.muted,
-                    borderColor: (isConnected && !isZeroing) ? '#FFFFFF' : theme.colors.border,
+                    backgroundColor: (isConnected && !isZeroing) ? theme.colors.card : theme.colors.muted,
+                    borderColor: (isConnected && !isZeroing) ? theme.colors.border : theme.colors.border,
                     borderWidth: 2,
                   }
                 ]}
                 onPress={zeroPoint ? () => setShowClearZeroDialog(true) : handleZero}
                 disabled={!isConnected || isZeroing}>
                 {isZeroing ? (
-                  <ActivityIndicator size="small" color="#FFFFFF" />
+                  <ActivityIndicator size="small" color={theme.colors.textSecondary} />
                 ) : (
                   <>
                     <Text style={[
                       styles.halfWidthButtonText,
-                      { color: (isConnected && !isZeroing) ? '#FFFFFF' : theme.colors.textTertiary }
+                      { color: (isConnected && !isZeroing) ? theme.colors.textPrimary : theme.colors.textTertiary }
                     ]}>
                       {zeroPoint ? 'Clear Zero' : 'Zero'}
                     </Text>
                     <Activity
                       size={16}
-                      color={(isConnected && !isZeroing) ? '#FFFFFF' : theme.colors.textTertiary}
+                      color={(isConnected && !isZeroing) ? theme.colors.textPrimary : theme.colors.textTertiary}
                     />
                   </>
                 )}
@@ -881,11 +978,11 @@ const RecordScreen: React.FC = () => {
             />
             <View style={styles.dialogActions}>
               <TouchableOpacity
-                style={[styles.dialogButton, { backgroundColor: theme.colors.muted }]}
-                onPress={() => setShowFileNameDialog(false)}
+                style={[styles.dialogButton, { backgroundColor: theme.colors.error }]}
+                onPress={handleDeleteRecording}
               >
-                <Text style={[styles.dialogButtonText, { color: theme.colors.textPrimary }]}>
-                  Cancel
+                <Text style={[styles.dialogButtonText, { color: '#FFFFFF' }]}>
+                  Delete
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
@@ -944,25 +1041,49 @@ const RecordScreen: React.FC = () => {
         ]}
       />
 
-      {/* Connection Lost During Recording */}
+      {/* Back While Recording Confirmation */}
       <ConfirmDialog
-        visible={showConnectionLostDialog}
-        onDismiss={handleKeepWaitingForConnection}
-        title="Connection Lost"
-        message="The device disconnected during recording. Would you like to keep recording paused and wait for the device to reconnect, or stop the recording now?"
-        icon={<WifiOff size={48} color={theme.colors.warning} />}
+        visible={showBackDialog}
+        onDismiss={() => setShowBackDialog(false)}
+        title="Recording in Progress"
+        message="Stop recording before going back?"
+        icon={<AlertCircle size={48} color={theme.colors.warning} />}
         actions={[
           {
-            label: 'Stop Recording',
-            onPress: handleStopDueToDisconnection,
-            variant: 'danger',
+            label: 'Cancel',
+            onPress: () => setShowBackDialog(false),
+            variant: 'default',
           },
           {
-            label: 'Keep Waiting',
-            onPress: handleKeepWaitingForConnection,
-            variant: 'primary',
+            label: 'Stop & Go Back',
+            onPress: () => {
+              setShowBackDialog(false);
+              handleStopAndGoBack();
+            },
+            variant: 'danger',
           },
         ]}
+      />
+
+      {/* Error Dialog */}
+      <ErrorDialog
+        visible={errorDialogMessage !== null}
+        onDismiss={() => setErrorDialogMessage(null)}
+        title="Error"
+        message={errorDialogMessage || ''}
+      />
+
+      {/* Bottom Sheets */}
+      <BottomSheet
+        visible={activeSheet === 'format'}
+        onClose={() => setActiveSheet(null)}
+        title="Select Format"
+        options={formatOptions}
+        selectedValue={recordingFormat}
+        onSelect={(value) => {
+          setRecordingFormat(value as RecordingFormat);
+          setActiveSheet(null);
+        }}
       />
     </View>
   );
@@ -983,6 +1104,20 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: staticTheme.spacing.md,
   },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: staticTheme.spacing.xs,
+  },
+  formatButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: staticTheme.spacing.sm,
+    gap: 4,
+  },
+  settingsButton: {
+    padding: staticTheme.spacing.sm,
+  },
   title: {
     fontSize: staticTheme.typography.fontSize.xl,
     fontWeight: staticTheme.typography.fontWeight.semibold,
@@ -997,28 +1132,15 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: staticTheme.spacing.lg,
   },
-  errorBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderRadius: staticTheme.borderRadius.md,
-    borderWidth: 1,
-    padding: staticTheme.spacing.md,
-    marginBottom: staticTheme.spacing.lg,
-    gap: staticTheme.spacing.sm,
-  },
-  errorText: {
-    flex: 1,
-    fontSize: staticTheme.typography.fontSize.sm,
-    fontFamily: staticTheme.typography.serif,
-  },
   warningBanner: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     borderRadius: staticTheme.borderRadius.md,
     borderWidth: 1,
     padding: staticTheme.spacing.md,
     marginBottom: staticTheme.spacing.lg,
     gap: staticTheme.spacing.sm,
+    minHeight: 80,
   },
   warningContent: {
     flex: 1,
@@ -1062,6 +1184,7 @@ const styles = StyleSheet.create({
   statusCompactValue: {
     fontSize: staticTheme.typography.fontSize.sm,
     fontWeight: staticTheme.typography.fontWeight.medium,
+    fontFamily: staticTheme.typography.mono,
   },
   selectorLabel: {
     fontSize: staticTheme.typography.fontSize.sm,
@@ -1080,18 +1203,34 @@ const styles = StyleSheet.create({
     fontSize: staticTheme.typography.fontSize.md,
     fontFamily: staticTheme.typography.serif,
   },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  statsGridCompact: {
+    gap: staticTheme.spacing.md,
+  },
   statsRow: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
+    justifyContent: 'space-between',
   },
   statItem: {
     alignItems: 'center',
     gap: staticTheme.spacing.xs,
+    width: '48%',
+    marginBottom: staticTheme.spacing.md,
+  },
+  statItemCompact: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: staticTheme.spacing.xs,
+    flex: 1,
   },
   statValue: {
-    fontSize: staticTheme.typography.fontSize.xxl,
+    fontSize: staticTheme.typography.fontSize.lg,
     fontWeight: staticTheme.typography.fontWeight.semibold,
-    fontFamily: staticTheme.typography.mono,
+    fontFamily: staticTheme.typography.mono, // Monospace for all stat values
   },
   statLabel: {
     fontSize: staticTheme.typography.fontSize.xs,
