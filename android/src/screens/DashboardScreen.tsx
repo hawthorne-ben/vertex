@@ -13,122 +13,44 @@ import { Circle, Bluetooth } from 'lucide-react-native';
 import { useTheme } from '../contexts/ThemeContext';
 import { theme as staticTheme } from '../styles/theme';
 import { Card } from '../components/ui';
-import BleService from '../services/BleService';
-import FileService, { RecordingMetadata } from '../services/FileService';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { RootStackNavigationProp } from '../types/navigation.types';
-
-const SAVED_DEVICES_KEY = '@vertex_saved_devices';
-
-interface SavedDevice {
-  id: string;
-  name: string;
-  savedAt: string;
-}
+import { useDeviceStore } from '../stores/deviceStore';
+import { useDataStore } from '../stores/dataStore';
 
 const DashboardScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
   const navigation = useNavigation<RootStackNavigationProp<'Tabs'>>();
-  const [connectedDevice, setConnectedDevice] = useState<{ id: string; name: string } | null>(null);
-  const [savedDevices, setSavedDevices] = useState<SavedDevice[]>([]);
-  const [recordings, setRecordings] = useState<RecordingMetadata[]>([]);
-  const [stats, setStats] = useState({
-    totalRecordings: 0,
-    totalHours: 0,
-    storageUsed: 0,
-  });
+
+  // Use deviceStore for connection and saved devices
+  const {
+    deviceId,
+    deviceName,
+    isConnected,
+    savedDevices,
+    loadSavedDevices,
+  } = useDeviceStore();
+
+  // Use dataStore for recordings and stats
+  const {
+    recordings,
+    stats,
+    loadRecordings,
+  } = useDataStore();
 
   // Load data when screen comes into focus
   useFocusEffect(
     React.useCallback(() => {
-      checkConnection();
       loadSavedDevices();
       loadRecordings();
     }, [])
   );
 
-  // Listen for connection state changes
-  React.useEffect(() => {
-    const unsubscribe = BleService.addConnectionListener((device, isConnected) => {
-      console.log('[DashboardScreen] Connection state changed:', device?.name, isConnected);
-      if (isConnected && device && device.name?.toLowerCase().includes('vertex')) {
-        setConnectedDevice({ id: device.id, name: device.name });
-      } else {
-        setConnectedDevice(null);
-      }
-    });
-
-    return () => {
-      unsubscribe();
-    };
-  }, []);
-
-  const checkConnection = () => {
-    const device = BleService.getConnectedDevice();
-    if (device && device.name?.toLowerCase().includes('vertex')) {
-      setConnectedDevice({ id: device.id, name: device.name });
-    } else {
-      setConnectedDevice(null);
-    }
-  };
-
-  const loadSavedDevices = async () => {
-    try {
-      const saved = await AsyncStorage.getItem(SAVED_DEVICES_KEY);
-      if (saved) {
-        const devices: SavedDevice[] = JSON.parse(saved);
-        // Filter for Vertex devices only
-        const vertexDevices = devices.filter(d => d.name?.toLowerCase().includes('vertex'));
-        setSavedDevices(vertexDevices);
-      }
-    } catch (error) {
-      console.error('[Dashboard] Error loading saved devices:', error);
-    }
-  };
-
-  const loadRecordings = async () => {
-    try {
-      const allRecordings = await FileService.getRecordings();
-      setRecordings(allRecordings);
-
-      // Calculate stats
-      const totalRecordings = allRecordings.length;
-      let totalDurationSec = 0;
-      let totalBytes = 0;
-
-      for (const rec of allRecordings) {
-        totalBytes += rec.fileSize;
-        if (rec.startTime && rec.endTime) {
-          const durationMs = rec.endTime.getTime() - rec.startTime.getTime();
-          const durationSec = durationMs / 1000;
-          console.log(`[Dashboard] Recording ${rec.fileName}: ${durationSec}s (${rec.startTime.toISOString()} -> ${rec.endTime.toISOString()})`);
-          totalDurationSec += durationSec;
-        } else {
-          console.log(`[Dashboard] Recording ${rec.fileName}: missing time data (start: ${rec.startTime}, end: ${rec.endTime})`);
-        }
-      }
-
-      const totalHours = totalDurationSec / 3600;
-      const storageUsedMB = totalBytes / (1024 * 1024);
-
-      console.log(`[Dashboard] Total stats - recordings: ${totalRecordings}, duration: ${totalDurationSec}s (${totalHours}h), storage: ${storageUsedMB}MB`);
-
-      setStats({
-        totalRecordings,
-        totalHours: totalHours, // Don't round yet, formatting function will handle it
-        storageUsed: parseFloat(storageUsedMB.toFixed(1)),
-      });
-    } catch (error) {
-      console.error('[Dashboard] Error loading recordings:', error);
-    }
-  };
-
   const handleStartRecording = () => {
-    if (connectedDevice) {
+    if (deviceId && deviceName) {
       navigation.navigate('Record', {
-        deviceId: connectedDevice.id,
-        deviceName: connectedDevice.name,
+        deviceId,
+        deviceName,
       });
     }
   };
@@ -169,7 +91,7 @@ const DashboardScreen: React.FC = () => {
     return startStr === endStr ? startStr : `${startStr} - ${endStr}`;
   };
 
-  const isVertexConnected = connectedDevice !== null;
+  const isVertexConnected = isConnected && deviceId !== null;
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
@@ -214,7 +136,7 @@ const DashboardScreen: React.FC = () => {
                 </Text>
               ) : (
                 savedDevices.map((device, idx) => {
-                  const isConnected = connectedDevice?.id === device.id;
+                  const deviceConnected = isConnected && deviceId === device.id;
                   return (
                     <TouchableOpacity
                       key={device.id}
@@ -234,17 +156,17 @@ const DashboardScreen: React.FC = () => {
                       </View>
                       <View style={[
                         styles.connectionBadge,
-                        { backgroundColor: isConnected ? theme.colors.successBg : theme.colors.muted }
+                        { backgroundColor: deviceConnected ? theme.colors.successBg : theme.colors.muted }
                       ]}>
                         <Bluetooth
                           size={14}
-                          color={isConnected ? theme.colors.success : theme.colors.textTertiary}
+                          color={deviceConnected ? theme.colors.success : theme.colors.textTertiary}
                         />
                         <Text style={[
                           styles.connectionBadgeText,
-                          { color: isConnected ? theme.colors.success : theme.colors.textTertiary }
+                          { color: deviceConnected ? theme.colors.success : theme.colors.textTertiary }
                         ]}>
-                          {isConnected ? 'Connected' : 'Saved'}
+                          {deviceConnected ? 'Connected' : 'Saved'}
                         </Text>
                       </View>
                     </TouchableOpacity>

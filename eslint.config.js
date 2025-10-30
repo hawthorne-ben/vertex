@@ -66,6 +66,8 @@ module.exports = [
       ...prettierConfig.rules,
 
       // TypeScript
+      // Disable base no-unused-vars in favor of @typescript-eslint version
+      'no-unused-vars': 'off',
       '@typescript-eslint/no-unused-vars': [
         'error',
         {
@@ -91,7 +93,11 @@ module.exports = [
       'react-native/no-color-literals': 'off',
 
       // General
-      'no-console': ['warn', { allow: ['warn', 'error'] }],
+      // Allow console.log in development, warn only in production builds
+      // (console.log will be stripped by Babel in production anyway)
+      'no-console': process.env.NODE_ENV === 'production' 
+        ? ['warn', { allow: ['warn', 'error'] }]
+        : 'off',
       'prefer-const': 'error',
       'no-var': 'error',
       'no-undef': 'off', // TypeScript handles this

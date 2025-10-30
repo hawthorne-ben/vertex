@@ -114,6 +114,11 @@ class MyServerCallbacks: public BLEServerCallbacks {
   void onDisconnect(BLEServer* pServer) {
     deviceConnected = false;
     connectionTime = 0;
+
+    // Reset sample interval to default on disconnect
+    // This ensures every new connection starts with a clean, predictable state
+    sampleIntervalMs = 100;  // Reset to 10 Hz default
+
     BLEDevice::startAdvertising();
   }
 };

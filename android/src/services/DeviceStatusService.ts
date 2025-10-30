@@ -6,12 +6,13 @@
  */
 
 import BleService from './BleService';
-import { useDeviceStore, SensorReading } from '../stores/deviceStore';
+import { useDeviceStore } from '../stores/deviceStore';
 
 class DeviceStatusService {
   private pollingInterval: NodeJS.Timeout | null = null;
   private batteryPollingInterval: NodeJS.Timeout | null = null;
   private streamSubscription: any = null;
+  private connectionListener: (() => void) | null = null;
   private isPolling = false;
 
   /**
@@ -40,7 +41,26 @@ class DeviceStatusService {
       this.queryDeviceConfig();
     }
 
-    // Monitor connection status
+    // Listen for immediate connection changes (in addition to polling)
+    this.connectionListener = BleService.addConnectionListener((device, isConn) => {
+      const monitoredDeviceId = useDeviceStore.getState().deviceId;
+      console.log('[DeviceStatusService] Connection listener fired - device:', device?.id, 'isConn:', isConn, 'monitoredDeviceId:', monitoredDeviceId);
+
+      if (device?.id === monitoredDeviceId || (!device && !isConn)) {
+        // Update store immediately on connection/disconnection
+        console.log('[DeviceStatusService] Updating store - isConnected:', isConn);
+        useDeviceStore.getState().setConnectionStatus(isConn);
+
+        // Clear device info on disconnect
+        if (!isConn) {
+          useDeviceStore.getState().setDevice(null, null);
+        }
+      } else {
+        console.log('[DeviceStatusService] Ignoring connection event - device mismatch');
+      }
+    });
+
+    // Monitor connection status (fallback polling for reliability)
     this.startConnectionPolling();
 
     // Monitor battery status
@@ -70,6 +90,11 @@ class DeviceStatusService {
     if (this.streamSubscription) {
       this.streamSubscription.remove();
       this.streamSubscription = null;
+    }
+
+    if (this.connectionListener) {
+      this.connectionListener();
+      this.connectionListener = null;
     }
   }
 

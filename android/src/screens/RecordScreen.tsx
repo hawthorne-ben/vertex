@@ -38,6 +38,7 @@ import type { BottomSheetOption } from '../components/ui';
 import { useToast } from '../contexts/ToastContext';
 import RecordingService, { RecordingSession, RecordingFormat } from '../services/RecordingService';
 import BleService from '../services/BleService';
+import NotificationService from '../services/NotificationService';
 import RNFS from 'react-native-fs';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { useDeviceStore } from '../stores/deviceStore';
@@ -61,8 +62,11 @@ const RecordScreen: React.FC = () => {
   const route = useRoute<RecordRouteProp>();
   const { deviceId, deviceName } = route.params;
 
-  // Zustand stores
-  const { isConnected, batteryLevel, batteryVoltage } = useDeviceStore();
+  // Zustand stores (battery only, connection is local to this screen)
+  const { batteryLevel, batteryVoltage } = useDeviceStore();
+
+  // Local connection state for THIS device
+  const [isConnected, setIsConnected] = useState(false);
   const {
     session,
     stats,
@@ -104,12 +108,10 @@ const RecordScreen: React.FC = () => {
 
   const isMountedRef = useRef(true);
   const clockTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const readingBufferRef = useRef<any[]>([]);
   const zeroPointRef = useRef<any | null>(null);
-  const streamSubscriptionRef = useRef<any>(null);
   const reconnectIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttemptsRef = useRef(0);
-  const lastStreamErrorRef = useRef<number>(0);
+  const hasShownDisconnectNotificationRef = useRef(false);
 
   // Format selector options
   const formatOptions: BottomSheetOption[] = useMemo(() => [
@@ -126,13 +128,49 @@ const RecordScreen: React.FC = () => {
     }
   }, [session?.sampleCount, session?.isRecording, session?.isPaused, updateStats]);
 
+  // Update persistent notification when recording state changes
+  useEffect(() => {
+    if (session && session.isRecording) {
+      // Recording is active - show/update persistent notification
+      const elapsed = getElapsedTime();
+      const hours = Math.floor(elapsed / 3600);
+      const minutes = Math.floor((elapsed % 3600) / 60);
+      const seconds = elapsed % 60;
+      const timeStr = hours > 0
+        ? `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`
+        : `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+
+      NotificationService.updateRecordingNotification(
+        isConnected,
+        deviceName,
+        timeStr,
+        session.sampleCount,
+        deviceId
+      );
+    } else {
+      // Recording stopped - hide persistent notification
+      NotificationService.hideRecordingNotification();
+    }
+  }, [session?.isRecording, session?.sampleCount, isConnected, deviceName, currentTime]);
+
   useEffect(() => {
     isMountedRef.current = true;
+
+    // Initialize notification service and request permissions
+    NotificationService.requestPermissions().then(granted => {
+      if (granted) {
+        NotificationService.initialize();
+      }
+    });
 
     // Start device status monitoring
     DeviceStatusService.startMonitoring(deviceId, deviceName);
 
     loadZeroPoint();
+
+    // Set initial connection state
+    const connectedDevice = BleService.getConnectedDevice();
+    setIsConnected(connectedDevice?.id === deviceId);
 
     // Check for existing active session (only if recording or paused)
     const existingSession = RecordingService.getCurrentSession();
@@ -143,9 +181,6 @@ const RecordScreen: React.FC = () => {
       setSession(null);
     }
 
-    // Start IMU streaming for zero point buffer (separate from recording)
-    startIMUStreamForZero();
-
     // Start clock timer
     clockTimerRef.current = setInterval(() => {
       if (isMountedRef.current) {
@@ -155,34 +190,30 @@ const RecordScreen: React.FC = () => {
 
     // Listen for connection state changes
     const unsubscribe = BleService.addConnectionListener((device, isConn) => {
-      console.log('[RecordScreen] Connection state changed:', device?.id, isConn);
       if (!isMountedRef.current) return;
 
-      // Connection status is now handled by DeviceStatusService
-      const connected = isConn && device?.id === deviceId;
+      // Handle connection for this specific device OR any disconnection
+      let connected: boolean;
+      if (device?.id === deviceId) {
+        connected = isConn;
+        setIsConnected(connected);
+      } else if (!device && !isConn) {
+        // General disconnection
+        connected = false;
+        setIsConnected(false);
+      } else {
+        // Connection event for a different device - ignore
+        return;
+      }
 
       const currentSession = RecordingService.getCurrentSession();
 
       // Handle disconnection during recording
       if (!connected && currentSession?.isRecording) {
-        console.log('[RecordScreen] Device disconnected during recording');
-        console.log('[RecordScreen] Current session before disconnect:', currentSession);
-
-        // Clean up IMU stream subscription on disconnection
-        if (streamSubscriptionRef.current) {
-          try {
-            streamSubscriptionRef.current.remove();
-            streamSubscriptionRef.current = null;
-          } catch (err) {
-            console.warn('[RecordScreen] Error removing stream on disconnect:', err);
-          }
-        }
-
         // Update local session state (RecordingService should have paused it)
         // Wait a moment for RecordingService to process the disconnection
         setTimeout(() => {
           const updatedSession = RecordingService.getCurrentSession();
-          console.log('[RecordScreen] Session after disconnect:', updatedSession);
           if (updatedSession && isMountedRef.current) {
             setSession(updatedSession);
           }
@@ -199,31 +230,32 @@ const RecordScreen: React.FC = () => {
           });
         }
 
+        // Show push notification for connection lost (only once per disconnection)
+        if (!hasShownDisconnectNotificationRef.current) {
+          hasShownDisconnectNotificationRef.current = true;
+          NotificationService.showConnectionLostNotification(deviceName);
+        }
+
         // Start automatic reconnection attempts
         startReconnectionAttempts();
       }
 
       // Handle reconnection during paused recording
       if (connected && currentSession?.isPaused) {
-        console.log('[RecordScreen] Device reconnected, attempting to resume recording');
-        console.log('[RecordScreen] Current session state:', currentSession);
-
-        // Reset toast flag for next disconnection
+        // Reset flags for next disconnection
         setHasShownConnectionLostToast(false);
+        hasShownDisconnectNotificationRef.current = false;
 
         stopReconnectionAttempts(); // Stop reconnection attempts since we're now connected
 
         // Update local session state immediately
         setSession(currentSession);
 
+        // Show push notification for connection restored
+        NotificationService.showConnectionRestoredNotification(deviceName);
+
         // Attempt to resume recording
         handleResumeRecording();
-      }
-
-      // Restart IMU stream for zero point buffer if reconnected
-      if (connected && !streamSubscriptionRef.current) {
-        console.log('[RecordScreen] Reconnected, restarting IMU stream');
-        startIMUStreamForZero();
       }
     });
 
@@ -236,13 +268,6 @@ const RecordScreen: React.FC = () => {
       unsubscribe();
       if (clockTimerRef.current) {
         clearInterval(clockTimerRef.current);
-      }
-      if (streamSubscriptionRef.current) {
-        try {
-          streamSubscriptionRef.current.remove();
-        } catch (err) {
-          console.warn('[RecordScreen] Error removing stream subscription:', err);
-        }
       }
       if (reconnectIntervalRef.current) {
         clearInterval(reconnectIntervalRef.current);
@@ -356,7 +381,6 @@ const RecordScreen: React.FC = () => {
         const documentsPath = RNFS.DocumentDirectoryPath;
         const filePath = `${documentsPath}/${stoppedSession.fileName}`;
 
-        console.log(`[RecordScreen] Deleting recording: ${filePath}`);
         await RNFS.unlink(filePath);
 
         showToast({
@@ -408,7 +432,6 @@ const RecordScreen: React.FC = () => {
 
           try {
             await RNFS.moveFile(oldPath, newPath);
-            console.log(`[RecordScreen] Renamed file from ${originalFileName} to ${newFileName}`);
 
             // Navigate to DataDetail with new file
             navigation.replace('DataDetail', {
@@ -455,7 +478,6 @@ const RecordScreen: React.FC = () => {
 
     try {
       await RecordingService.resumeRecording();
-      console.log('[RecordScreen] Recording resumed successfully');
 
       // Update session state
       const updatedSession = RecordingService.getCurrentSession();
@@ -488,7 +510,6 @@ const RecordScreen: React.FC = () => {
       clearInterval(reconnectIntervalRef.current);
     }
 
-    console.log('[RecordScreen] Starting automatic reconnection attempts');
     setIsReconnecting(true);
     reconnectAttemptsRef.current = 0;
 
@@ -500,20 +521,14 @@ const RecordScreen: React.FC = () => {
       }
 
       reconnectAttemptsRef.current++;
-      console.log(`[RecordScreen] Reconnection attempt ${reconnectAttemptsRef.current}`);
 
       try {
         // Try to reconnect to the device
         await BleService.connectToDevice(deviceId);
-        console.log('[RecordScreen] Reconnection successful');
 
         // Stop further attempts
         stopReconnectionAttempts();
       } catch (error) {
-        // Only log error on first attempt and every 3rd attempt after that
-        if (reconnectAttemptsRef.current === 1 || reconnectAttemptsRef.current % 3 === 0) {
-          console.log(`[RecordScreen] Reconnection attempt ${reconnectAttemptsRef.current} failed`);
-        }
         // Continue trying (interval will call this function again)
       }
     }, 5000);
@@ -521,7 +536,6 @@ const RecordScreen: React.FC = () => {
 
   const stopReconnectionAttempts = () => {
     if (reconnectIntervalRef.current) {
-      console.log('[RecordScreen] Stopping reconnection attempts');
       clearInterval(reconnectIntervalRef.current);
       reconnectIntervalRef.current = null;
     }
@@ -537,8 +551,7 @@ const RecordScreen: React.FC = () => {
         const parsed = JSON.parse(stored);
         setZeroPoint(parsed);
         zeroPointRef.current = parsed;
-        console.log('[RecordScreen] Loaded zero point for device:', deviceId);
-      }
+        }
     } catch (error) {
       console.error('[RecordScreen] Error loading zero point:', error);
     }
@@ -549,90 +562,19 @@ const RecordScreen: React.FC = () => {
       await AsyncStorage.setItem(ZERO_POINT_KEY + deviceId, JSON.stringify(point));
       setZeroPoint(point);
       zeroPointRef.current = point;
-      console.log('[RecordScreen] Saved zero point for device:', deviceId);
     } catch (error) {
       console.error('[RecordScreen] Error saving zero point:', error);
       throw error;
     }
   };
 
-  const startIMUStreamForZero = async () => {
-    if (!isConnected) return;
-
-    // Clean up existing subscription first
-    if (streamSubscriptionRef.current) {
-      try {
-        streamSubscriptionRef.current.remove();
-        streamSubscriptionRef.current = null;
-      } catch (err) {
-        console.warn('[RecordScreen] Error removing old stream subscription:', err);
-      }
-    }
-
-    try {
-      console.log('[RecordScreen] Starting IMU stream for zero point buffer');
-      streamSubscriptionRef.current = await BleService.subscribeToIMUStream(
-        (data) => {
-          if (!isMountedRef.current) return;
-
-          // Update battery voltage from IMU stream data
-          if (data.batteryVoltage !== undefined) {
-            useDeviceStore.getState().setBattery(null, data.batteryVoltage);
-          }
-
-          // Add to reading buffer (keep last 10 readings)
-          readingBufferRef.current.push(data);
-          if (readingBufferRef.current.length > 10) {
-            readingBufferRef.current.shift();
-          }
-
-          // Update sensor reading display (apply zero offset for display)
-          let displayData = data;
-          const currentZeroPoint = zeroPointRef.current;
-          if (currentZeroPoint) {
-            displayData = {
-              ...data,
-              roll: (data.roll || 0) - (currentZeroPoint.roll || 0),
-              pitch: (data.pitch || 0) - (currentZeroPoint.pitch || 0),
-              yaw: (data.yaw || 0) - (currentZeroPoint.yaw || 0),
-              accelX: (data.accelX || 0) - (currentZeroPoint.accelX || 0),
-              accelY: (data.accelY || 0) - (currentZeroPoint.accelY || 0),
-              accelZ: (data.accelZ || 0) - (currentZeroPoint.accelZ || 0),
-              gyroX: (data.gyroX || 0) - (currentZeroPoint.gyroX || 0),
-              gyroY: (data.gyroY || 0) - (currentZeroPoint.gyroY || 0),
-              gyroZ: (data.gyroZ || 0) - (currentZeroPoint.gyroZ || 0),
-              magX: (data.magX || 0) - (currentZeroPoint.magX || 0),
-              magY: (data.magY || 0) - (currentZeroPoint.magY || 0),
-              magZ: (data.magZ || 0) - (currentZeroPoint.magZ || 0),
-            };
-          }
-
-          // Sensor reading is now in deviceStore.latestReading via DeviceStatusService
-        },
-        (error) => {
-          // Only log once per 5 seconds to prevent spam
-          const now = Date.now();
-          if (now - lastStreamErrorRef.current > 5000) {
-            console.error('[RecordScreen] IMU stream error:', error);
-            lastStreamErrorRef.current = now;
-          }
-          // Clear subscription ref on error
-          streamSubscriptionRef.current = null;
-        }
-      );
-    } catch (error) {
-      console.error('[RecordScreen] Failed to start IMU stream:', error);
-      streamSubscriptionRef.current = null;
-    }
-  };
-
   const handleZero = async () => {
-    if (readingBufferRef.current.length < 5) {
+    if (!isConnected) {
       showToast({
-        message: `Need at least 5 readings. Currently have ${readingBufferRef.current.length}. Please wait...`,
-        variant: 'warning',
+        message: 'Device not connected',
+        variant: 'error',
         duration: 3000,
-        hasTabBar: false, // Record screen has no bottom tabs
+        hasTabBar: false,
       });
       return;
     }
@@ -640,7 +582,44 @@ const RecordScreen: React.FC = () => {
     setIsZeroing(true);
 
     try {
-      const last5 = readingBufferRef.current.slice(-5);
+      // Collect 5 samples on-demand for zero point averaging
+      const samples: any[] = [];
+      let subscription: any = null;
+
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          if (subscription) {
+            subscription.remove();
+          }
+          reject(new Error('Timeout collecting samples'));
+        }, 3000); // 3 second timeout
+
+        BleService.subscribeToIMUStream(
+          (data) => {
+            samples.push(data);
+
+            if (samples.length >= 5) {
+              clearTimeout(timeout);
+              if (subscription) {
+                subscription.remove();
+              }
+              resolve();
+            }
+          },
+          (error) => {
+            clearTimeout(timeout);
+            if (subscription) {
+              subscription.remove();
+            }
+            reject(error);
+          }
+        ).then(sub => {
+          subscription = sub;
+        }).catch(reject);
+      });
+
+      // Average the collected samples
+      const last5 = samples.slice(0, 5);
 
       const avgReading = {
         roll: last5.reduce((sum, r) => sum + (r.roll || 0), 0) / 5,

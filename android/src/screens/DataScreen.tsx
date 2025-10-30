@@ -14,65 +14,40 @@ import { theme as staticTheme } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
 import { ConfirmDialog, ErrorDialog } from '../components/ui';
-import FileService, { RecordingMetadata } from '../services/FileService';
-import VTXFileService, { VTXRecordingMetadata } from '../services/VTXFileService';
+import { RecordingMetadata } from '../services/FileService';
+import { useDataStore } from '../stores/dataStore';
 import { RootStackParamList } from '../navigation/AppNavigator';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
-
-// Unified recording type that supports both CSV and VTX
-interface UnifiedRecording {
-  fileName: string;
-  filePath: string;
-  startTime: Date;
-  endTime?: Date;
-  sampleCount: number;
-  fileSize: number;
-  deviceName?: string;
-  deviceId?: string;
-  format: 'csv' | 'vtx';
-  sampleRate?: number;
-}
 
 const DataScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
   const { showToast } = useToast();
   const navigation = useNavigation<NavigationProp>();
-  const [recordings, setRecordings] = useState<UnifiedRecording[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+
+  // Use dataStore for recordings
+  const {
+    recordings,
+    isLoading,
+    error,
+    loadRecordings,
+    deleteRecording,
+    clearError,
+  } = useDataStore();
+
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [recordingToDelete, setRecordingToDelete] = useState<UnifiedRecording | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [recordingToDelete, setRecordingToDelete] = useState<RecordingMetadata | null>(null);
 
   // Load recordings only on initial mount
   useEffect(() => {
     loadRecordings();
   }, []);
 
-  const loadRecordings = async () => {
-    try {
-      // FileService.getRecordings() now returns both CSV and VTX files
-      const allFiles = await FileService.getRecordings();
-      const allRecordings: UnifiedRecording[] = allFiles.map(file => ({
-        ...file,
-        format: file.fileName.endsWith('.vtx') ? 'vtx' as const : 'csv' as const,
-      }));
-
-      // Already sorted by FileService (newest first)
-      setRecordings(allRecordings);
-    } catch (error) {
-      console.error('[DataScreen] Error loading recordings:', error);
-      setErrorMessage('Failed to load recordings. Please check your storage permissions and try again.');
-    } finally {
-      setIsLoading(false);
-      setIsRefreshing(false);
-    }
-  };
-
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
     setIsRefreshing(true);
-    loadRecordings();
+    await loadRecordings();
+    setIsRefreshing(false);
   };
 
   const handleDeleteRecording = (recording: RecordingMetadata) => {
@@ -83,15 +58,10 @@ const DataScreen: React.FC = () => {
     if (!recordingToDelete) return;
 
     try {
-      // Delete using the appropriate service based on format
-      if (recordingToDelete.format === 'vtx') {
-        await VTXFileService.deleteRecording(recordingToDelete.filePath);
-      } else {
-        await FileService.deleteRecording(recordingToDelete.fileName);
-      }
+      // Delete using dataStore (handles both CSV and VTX)
+      await deleteRecording(recordingToDelete.fileName);
 
       setRecordingToDelete(null);
-      loadRecordings();
 
       // Show success toast
       showToast({
@@ -265,7 +235,7 @@ const DataScreen: React.FC = () => {
                   })}>
                   <View style={styles.fileRowContent}>
                     <View style={styles.fileRowLeft}>
-                      {recording.format === 'vtx' ? (
+                      {recording.fileName.endsWith('.vtx') ? (
                         <Activity size={20} color={theme.colors.primary} />
                       ) : (
                         <FileText size={20} color={theme.colors.textSecondary} />
@@ -330,10 +300,10 @@ const DataScreen: React.FC = () => {
     />
 
     <ErrorDialog
-      visible={errorMessage !== null}
-      onDismiss={() => setErrorMessage(null)}
+      visible={error !== null}
+      onDismiss={clearError}
       title="Error"
-      message={errorMessage || ''}
+      message={error || ''}
     />
     </View>
   );

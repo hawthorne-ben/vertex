@@ -13,6 +13,7 @@ import FileService, { IMUSensorData } from './FileService';
 import VTXFileService from './VTXFileService';
 import BleService from './BleService';
 import { IMURecord, VTXMetadata } from '@vertex/vtx-parser';
+import { useDeviceStore } from '../stores/deviceStore';
 
 export type RecordingFormat = 'csv' | 'vtx';
 
@@ -57,6 +58,24 @@ class RecordingService {
   private readonly BUFFER_SIZE = 50; // Write every 50 samples
   private readonly BUFFER_FLUSH_INTERVAL = 2000; // Flush every 2 seconds minimum
   private readonly DEFAULT_SAMPLE_RATE = 100; // Default sample rate in Hz
+
+  /**
+   * Initialize service on app start - clears any stale session state
+   */
+  initialize(): void {
+    console.log('[RecordingService] Initializing - clearing any stale session state');
+    this.currentSession = null;
+    this.subscription = null;
+    this.writeBuffer = [];
+    this.allRecords = [];
+    this.isWriting = false;
+    this.statusCallback = null;
+    this.errorCallback = null;
+    if (this.writeInterval) {
+      clearInterval(this.writeInterval);
+      this.writeInterval = null;
+    }
+  }
 
   /**
    * Start a new recording session
@@ -368,6 +387,11 @@ class RecordingService {
     }
 
     try {
+      // Update battery voltage in device store
+      if (data.batteryVoltage !== undefined) {
+        useDeviceStore.getState().setBattery(null, data.batteryVoltage);
+      }
+
       // Apply zero point offset if set
       let processedData = data;
       if (this.zeroPoint) {

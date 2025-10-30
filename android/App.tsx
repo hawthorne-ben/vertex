@@ -8,13 +8,15 @@
 import React, { useEffect } from 'react';
 import { StatusBar, useColorScheme } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { NavigationContainer } from '@react-navigation/native';
+import { NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthProvider } from './src/contexts/AuthContext';
 import { ThemeProvider } from './src/contexts/ThemeContext';
 import { ToastProvider } from './src/contexts/ToastContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import BleService from './src/services/BleService';
+import RecordingService from './src/services/RecordingService';
+import notifee, { EventType } from '@notifee/react-native';
 
 // Global error handlers to prevent crashes
 const setupGlobalErrorHandlers = () => {
@@ -98,10 +100,53 @@ const autoConnectToDevice = async () => {
 
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
+  const navigationRef = React.useRef<NavigationContainerRef<any>>(null);
 
   useEffect(() => {
     setupGlobalErrorHandlers();
+
+    // Clear any stale recording state from app crash/restart
+    RecordingService.initialize();
+
     autoConnectToDevice();
+
+    // Handle notification press events
+    const unsubscribe = notifee.onForegroundEvent(({ type, detail }) => {
+      if (type === EventType.PRESS && detail.notification?.data) {
+        const { screen, deviceId, deviceName } = detail.notification.data;
+
+        if (screen === 'Record' && navigationRef.current) {
+          // Navigate to RecordScreen with device info
+          navigationRef.current.navigate('Record', {
+            deviceId: deviceId as string,
+            deviceName: deviceName as string,
+          });
+        }
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // Handle notification press when app is in background/quit
+  useEffect(() => {
+    notifee.getInitialNotification().then((initialNotification) => {
+      if (initialNotification?.notification?.data) {
+        const { screen, deviceId, deviceName } = initialNotification.notification.data;
+
+        if (screen === 'Record' && navigationRef.current) {
+          // Small delay to ensure navigation is ready
+          setTimeout(() => {
+            navigationRef.current?.navigate('Record', {
+              deviceId: deviceId as string,
+              deviceName: deviceName as string,
+            });
+          }, 500);
+        }
+      }
+    });
   }, []);
 
   return (
@@ -109,7 +154,7 @@ function App() {
       <ThemeProvider>
         <ToastProvider>
           <AuthProvider>
-            <NavigationContainer key="main-nav">
+            <NavigationContainer ref={navigationRef} key="main-nav">
               <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
               <AppNavigator />
             </NavigationContainer>

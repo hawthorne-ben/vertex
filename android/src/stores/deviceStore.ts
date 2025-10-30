@@ -5,6 +5,9 @@
  */
 
 import { create } from 'zustand';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const SAVED_DEVICES_KEY = '@vertex_saved_devices';
 
 export interface SensorReading {
   timestamp: number;
@@ -27,6 +30,12 @@ export interface DeviceConfig {
   powerMode: number; // 0=Low Power, 1=Normal, 2=High Performance
 }
 
+export interface SavedDevice {
+  id: string;
+  name: string;
+  lastConnected?: string;
+}
+
 export interface DeviceState {
   // Connection
   deviceId: string | null;
@@ -47,14 +56,21 @@ export interface DeviceState {
   // Device config
   deviceConfig: DeviceConfig | null;
 
+  // Saved devices
+  savedDevices: SavedDevice[];
+
   // Actions
-  setDevice: (deviceId: string, deviceName: string) => void;
+  setDevice: (deviceId: string | null, deviceName: string | null) => void;
   setConnectionStatus: (isConnected: boolean, isConnecting?: boolean) => void;
   setConnectionError: (error: string | null) => void;
   setBattery: (level: number | null, voltage: number | null, isCharging?: boolean | null) => void;
   setLatestReading: (reading: SensorReading) => void;
   setSampleRate: (rate: number) => void;
   setDeviceConfig: (config: DeviceConfig) => void;
+  loadSavedDevices: () => Promise<void>;
+  addSavedDevice: (device: SavedDevice) => Promise<void>;
+  removeSavedDevice: (deviceId: string) => Promise<void>;
+  updateDeviceLastConnected: (deviceId: string) => Promise<void>;
   reset: () => void;
 }
 
@@ -70,9 +86,10 @@ const initialState = {
   latestReading: null,
   sampleRate: null,
   deviceConfig: null,
+  savedDevices: [],
 };
 
-export const useDeviceStore = create<DeviceState>((set) => ({
+export const useDeviceStore = create<DeviceState>((set, get) => ({
   ...initialState,
 
   setDevice: (deviceId, deviceName) =>
@@ -95,6 +112,66 @@ export const useDeviceStore = create<DeviceState>((set) => ({
 
   setDeviceConfig: (config) =>
     set({ deviceConfig: config }),
+
+  loadSavedDevices: async () => {
+    try {
+      const saved = await AsyncStorage.getItem(SAVED_DEVICES_KEY);
+      if (saved) {
+        const devices = JSON.parse(saved);
+        set({ savedDevices: devices });
+      }
+    } catch (error) {
+      console.error('[deviceStore] Error loading saved devices:', error);
+    }
+  },
+
+  addSavedDevice: async (device) => {
+    try {
+      const currentDevices = get().savedDevices;
+      // Check if device already exists
+      const exists = currentDevices.some(d => d.id === device.id);
+      if (exists) {
+        console.log('[deviceStore] Device already saved:', device.id);
+        return;
+      }
+
+      const updatedDevices = [...currentDevices, device];
+      await AsyncStorage.setItem(SAVED_DEVICES_KEY, JSON.stringify(updatedDevices));
+      set({ savedDevices: updatedDevices });
+      console.log('[deviceStore] Device saved:', device.name);
+    } catch (error) {
+      console.error('[deviceStore] Error saving device:', error);
+      throw error;
+    }
+  },
+
+  removeSavedDevice: async (deviceId) => {
+    try {
+      const currentDevices = get().savedDevices;
+      const updatedDevices = currentDevices.filter(d => d.id !== deviceId);
+      await AsyncStorage.setItem(SAVED_DEVICES_KEY, JSON.stringify(updatedDevices));
+      set({ savedDevices: updatedDevices });
+      console.log('[deviceStore] Device removed:', deviceId);
+    } catch (error) {
+      console.error('[deviceStore] Error removing device:', error);
+      throw error;
+    }
+  },
+
+  updateDeviceLastConnected: async (deviceId) => {
+    try {
+      const currentDevices = get().savedDevices;
+      const updatedDevices = currentDevices.map(d =>
+        d.id === deviceId
+          ? { ...d, lastConnected: new Date().toISOString() }
+          : d
+      );
+      await AsyncStorage.setItem(SAVED_DEVICES_KEY, JSON.stringify(updatedDevices));
+      set({ savedDevices: updatedDevices });
+    } catch (error) {
+      console.error('[deviceStore] Error updating last connected:', error);
+    }
+  },
 
   reset: () =>
     set(initialState),

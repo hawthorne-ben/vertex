@@ -292,11 +292,12 @@ class BleService {
    * Subscribes to the IMU characteristic and receives automatic 1Hz updates
    * @param onDataReceived Callback when IMU data is received (parsed IMU data)
    * @param onError Optional callback for errors
+   * @returns Subscription object with remove() method
    */
   async subscribeToIMUStream(
     onDataReceived: (data: any) => void,
     onError?: (error: Error) => void
-  ): Promise<void> {
+  ): Promise<any> {
     if (!this.connectedDevice) {
       throw new Error('No device connected');
     }
@@ -324,7 +325,19 @@ class BleService {
             // Wrap entire callback in try-catch to prevent native crashes
             try {
               if (error) {
-                console.error('[BLE] Stream error:', error.message || 'Unknown BLE error');
+                const errorMsg = error.message || 'Unknown BLE error';
+
+                // Filter out expected cancellation errors (normal cleanup)
+                const isCancellation =
+                  errorMsg.includes('cancelled') ||
+                  errorMsg.includes('Cancelled') ||
+                  errorMsg.includes('canceled') ||
+                  errorMsg.includes('Canceled');
+
+                // Only log unexpected errors
+                if (!isCancellation) {
+                  console.error('[BLE] Stream error:', errorMsg);
+                }
 
                 // Clean up subscription on error
                 if (subscription) {
@@ -339,8 +352,9 @@ class BleService {
                   }
                 }
 
-                if (onError) {
-                  onError(new Error(`Stream error: ${error.message || 'Connection lost'}`));
+                // Only notify caller of unexpected errors (not cancellations)
+                if (onError && !isCancellation) {
+                  onError(new Error(`Stream error: ${errorMsg}`));
                 }
                 return;
               }
@@ -373,6 +387,9 @@ class BleService {
 
         if (subscription) {
           this.activeSubscriptions.push(subscription);
+          return subscription; // Return the subscription object
+        } else {
+          throw new Error('Failed to create subscription');
         }
       } catch (monitorError: any) {
         // If monitorCharacteristicForService itself throws, handle it

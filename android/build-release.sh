@@ -20,6 +20,10 @@ fi
 echo "📝 Using production environment variables..."
 cp .env.production .env
 
+# Set production environment for Babel (strips console.log)
+export NODE_ENV=production
+export BABEL_ENV=production
+
 # Clean previous builds
 echo "🧹 Cleaning previous builds..."
 cd android
@@ -27,6 +31,7 @@ cd android
 
 # Build release APK
 echo "🔨 Building release APK..."
+echo "   (console.log statements will be stripped from production build)"
 ./gradlew assembleRelease
 
 # Check if build was successful

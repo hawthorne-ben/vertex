@@ -39,6 +39,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import ErrorBoundary from '../components/ErrorBoundary';
 import IMUVisualization3D from '../components/IMUVisualization3D';
 import { useDeviceStore } from '../stores/deviceStore';
+import { useRecordingStore } from '../stores/recordingStore';
 import DeviceStatusService from '../services/DeviceStatusService';
 
 type DeviceDetailRouteProp = RouteProp<RootStackParamList, 'DeviceDetail'>;
@@ -56,26 +57,25 @@ const DeviceDetailScreenContent: React.FC = () => {
   const route = useRoute<DeviceDetailRouteProp>();
   const { deviceId, deviceName } = route.params;
 
-  // Use deviceStore for connection status and data
+  // Use LOCAL state for this device's sensor data - NO global store pollution
+  const [isConnected, setIsConnected] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [batteryVoltage, setBatteryVoltage] = useState<number | null>(null);
+  const [latestReading, setLatestReading] = useState<any | null>(null);
+  const [sampleRate, setSampleRate] = useState<number | null>(null);
+
+  // Use recordingStore for zero point calibration
   const {
-    isConnected,
-    isConnecting,
-    batteryLevel,
-    batteryVoltage,
-    latestReading,
-    sampleRate: storeSampleRate,
-    setConnectionStatus: setStoreConnectionStatus,
-    setLatestReading,
-    setSampleRate: setStoreSampleRate,
-    setBattery
-  } = useDeviceStore();
+    zeroPoint,
+    isZeroing,
+    setZeroPoint,
+    setIsZeroing
+  } = useRecordingStore();
 
   const [isStreaming, setIsStreaming] = useState(false);
   const [lastReadingTime, setLastReadingTime] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [streamingError, setStreamingError] = useState<string | null>(null);
-  const [zeroPoint, setZeroPoint] = useState<any | null>(null);
-  const [isZeroing, setIsZeroing] = useState(false);
   const [showClearZeroDialog, setShowClearZeroDialog] = useState(false);
   const [showDisconnectDialog, setShowDisconnectDialog] = useState(false);
   const [showForgetDialog, setShowForgetDialog] = useState(false);
@@ -86,7 +86,7 @@ const DeviceDetailScreenContent: React.FC = () => {
   const updateCountRef = useRef<number>(0);
   const sampleRateHistoryRef = useRef<number[]>([]);
   const readingBufferRef = useRef<any[]>([]);
-  const zeroPointRef = useRef<any | null>(null);
+  const streamSubscriptionRef = useRef<any>(null);
 
   // Detect if this is a Vertex IMU device
   const isVertexDevice = deviceName?.toLowerCase().includes('vertex');
@@ -101,12 +101,27 @@ const DeviceDetailScreenContent: React.FC = () => {
     const unsubscribe = BleService.addConnectionListener((device, isConn) => {
       if (!isMountedRef.current) return;
 
-      // Only handle if this is our device
-      if (device?.id === deviceId) {
-        // DeviceStatusService already updates the store, we just handle UI state
+      // Handle connection for this specific device OR any disconnection
+      if (device?.id === deviceId || (!device && !isConn)) {
+        safeSetState(setIsConnected, isConn);
+
         if (!isConn) {
+          // Device disconnected - clear ALL data
           safeSetState(setIsStreaming, false);
           safeSetState(setError, 'Device disconnected');
+          safeSetState(setIsConnecting, false);
+
+          // Clear sensor data
+          safeSetState(setLatestReading, null);
+          safeSetState(setSampleRate, null);
+          safeSetState(setBatteryVoltage, null);
+
+          // Clear local state
+          safeSetState(setLastReadingTime, null);
+          sampleRateHistoryRef.current = [];
+          readingBufferRef.current = [];
+          updateCountRef.current = 0;
+          lastUpdateTimeRef.current = 0;
         } else {
           safeSetState(setError, null);
         }
@@ -118,21 +133,16 @@ const DeviceDetailScreenContent: React.FC = () => {
       if (!isMountedRef.current) return;
 
       const init = async () => {
+        safeSetState(setIsConnecting, true);
         try {
-          // First connect/verify connection
+          // Connect/verify connection
           await initializeDevice();
-
-          // Then start monitoring (this will pick up the correct connection status)
-          DeviceStatusService.startMonitoring(deviceId, deviceName);
+          safeSetState(setIsConnecting, false);
         } catch (err: any) {
-          // Connection failure has UI feedback via error banner - no console logging needed
+          // Connection failure has UI feedback via error banner
           if (isMountedRef.current) {
-            try {
-              safeSetState(setError, 'Connection failed');
-              setStoreConnectionStatus(false, false); // Set isConnecting = false
-            } catch (stateError) {
-              console.error('Failed to set error state:', stateError);
-            }
+            safeSetState(setError, 'Connection failed');
+            safeSetState(setIsConnecting, false);
           }
         }
       };
@@ -145,8 +155,15 @@ const DeviceDetailScreenContent: React.FC = () => {
       clearTimeout(initTimer);
       unsubscribe();
 
-      // Stop device status monitoring
-      DeviceStatusService.stopMonitoring();
+      // Clean up IMU stream subscription
+      if (streamSubscriptionRef.current) {
+        try {
+          streamSubscriptionRef.current.remove();
+          streamSubscriptionRef.current = null;
+        } catch (err) {
+          console.warn('[DeviceDetailScreen] Error cleaning up subscription:', err);
+        }
+      }
 
       // Don't disconnect on unmount - user controls disconnect
     };
@@ -197,9 +214,8 @@ const DeviceDetailScreenContent: React.FC = () => {
       const connectedDevice = BleService.getConnectedDevice();
 
       if (connectedDevice?.id === deviceId) {
-        // Already connected - DeviceStatusService has already updated the store
+        // Already connected
         if (!isMountedRef.current) return;
-        console.log('[DeviceDetailScreen] Already connected, skipping reconnect');
 
         try {
           await discoverServices();
@@ -209,13 +225,11 @@ const DeviceDetailScreenContent: React.FC = () => {
       } else {
         // Not connected - need to connect
         if (!isMountedRef.current) return;
-        setStoreConnectionStatus(false, true); // Set isConnecting = true
 
         try {
           await BleService.connectToDevice(deviceId);
 
           if (!isMountedRef.current) return;
-          setStoreConnectionStatus(true, false); // Connected, not connecting
           safeSetState(setError, null);
 
           try {
@@ -238,16 +252,10 @@ const DeviceDetailScreenContent: React.FC = () => {
         }
       }
     } catch (error: any) {
-      // Connection failure has UI feedback via error banner - no console logging needed
+      // Connection failure has UI feedback via error banner
       if (!isMountedRef.current) return;
-
-      setStoreConnectionStatus(false, false); // Not connected, not connecting
-      // Show error banner with reconnect button, but no detailed error message
       safeSetState(setError, 'Connection failed');
-    } finally {
-      if (isMountedRef.current) {
-        setStoreConnectionStatus(false, false); // Set isConnecting = false
-      }
+      // DeviceStatusService will handle updating connection status
     }
   };
 
@@ -260,10 +268,8 @@ const DeviceDetailScreenContent: React.FC = () => {
       const stored = await AsyncStorage.getItem(ZERO_POINT_KEY + deviceId);
       if (stored) {
         const parsed = JSON.parse(stored);
-        safeSetState(setZeroPoint, parsed);
-        zeroPointRef.current = parsed;
-        console.log('[DeviceDetail] Loaded zero point for device:', deviceId);
-      }
+        setZeroPoint(parsed);
+        }
     } catch (error) {
       console.error('[DeviceDetail] Error loading zero point:', error);
     }
@@ -272,9 +278,7 @@ const DeviceDetailScreenContent: React.FC = () => {
   const saveZeroPoint = async (point: any) => {
     try {
       await AsyncStorage.setItem(ZERO_POINT_KEY + deviceId, JSON.stringify(point));
-      safeSetState(setZeroPoint, point);
-      zeroPointRef.current = point;
-      console.log('[DeviceDetail] Saved zero point for device:', deviceId);
+      setZeroPoint(point);
     } catch (error) {
       console.error('[DeviceDetail] Error saving zero point:', error);
     }
@@ -290,7 +294,7 @@ const DeviceDetailScreenContent: React.FC = () => {
       return;
     }
 
-    safeSetState(setIsZeroing, true);
+    setIsZeroing(true);
 
     try {
       // Calculate average of last 5 readings
@@ -325,16 +329,14 @@ const DeviceDetailScreenContent: React.FC = () => {
         variant: 'error',
       });
     } finally {
-      safeSetState(setIsZeroing, false);
+      setIsZeroing(false);
     }
   };
 
   const confirmClearZero = async () => {
     try {
       await AsyncStorage.removeItem(ZERO_POINT_KEY + deviceId);
-      safeSetState(setZeroPoint, null);
-      zeroPointRef.current = null;
-      console.log('[DeviceDetail] Cleared zero point for device:', deviceId);
+      setZeroPoint(null);
       showToast({
         message: 'Zero point cleared',
         variant: 'success',
@@ -358,7 +360,6 @@ const DeviceDetailScreenContent: React.FC = () => {
         setBattery(battery, null);
       }
     } catch (error) {
-      console.log('Battery service not available');
     }
   };
 
@@ -368,11 +369,21 @@ const DeviceDetailScreenContent: React.FC = () => {
   const startIMUStreaming = async () => {
     if (!isMountedRef.current) return;
 
+    // Clean up any existing subscription first
+    if (streamSubscriptionRef.current) {
+      try {
+        streamSubscriptionRef.current.remove();
+        streamSubscriptionRef.current = null;
+      } catch (err) {
+        console.warn('[DeviceDetailScreen] Error removing old subscription:', err);
+      }
+    }
+
     safeSetState(setIsStreaming, true);
     safeSetState(setStreamingError, null);
 
     try {
-      await BleService.subscribeToIMUStream(
+      streamSubscriptionRef.current = await BleService.subscribeToIMUStream(
         (data) => {
           if (!isMountedRef.current) return;
 
@@ -382,9 +393,9 @@ const DeviceDetailScreenContent: React.FC = () => {
             readingBufferRef.current.shift();
           }
 
-          // Apply zero point offset if set (use ref to get current value)
+          // Apply zero point offset if set (from recordingStore)
           let displayData = data;
-          const currentZeroPoint = zeroPointRef.current;
+          const currentZeroPoint = useRecordingStore.getState().zeroPoint;
           if (currentZeroPoint) {
             displayData = {
               ...data,
@@ -403,13 +414,14 @@ const DeviceDetailScreenContent: React.FC = () => {
             };
           }
 
-          setLatestReading(displayData);
+          // Update local state
+          safeSetState(setLatestReading, displayData);
           safeSetState(setLastReadingTime, new Date());
           safeSetState(setStreamingError, null);
 
           // Update battery voltage from sensor data
           if (data.batteryVoltage !== undefined && data.batteryVoltage !== null) {
-            setBattery(null, data.batteryVoltage);
+            safeSetState(setBatteryVoltage, data.batteryVoltage);
           }
 
           // Calculate sample rate with rolling average (updates every 10 samples)
@@ -429,7 +441,7 @@ const DeviceDetailScreenContent: React.FC = () => {
 
               // Calculate average and round
               const avgRate = sampleRateHistoryRef.current.reduce((a, b) => a + b, 0) / sampleRateHistoryRef.current.length;
-              setStoreSampleRate(Math.round(avgRate));
+              safeSetState(setSampleRate, Math.round(avgRate));
             }
             lastUpdateTimeRef.current = now;
             updateCountRef.current = 0;
@@ -442,9 +454,8 @@ const DeviceDetailScreenContent: React.FC = () => {
           safeSetState(setStreamingError, error.message);
 
           if (error.message.toLowerCase().includes('disconnect')) {
-            setStoreConnectionStatus(false);
-            safeSetState(setConnectionStatus, 'Disconnected');
             safeSetState(setIsStreaming, false);
+            // DeviceStatusService connection listener will handle updating connection status
           }
         }
       );
@@ -465,8 +476,6 @@ const DeviceDetailScreenContent: React.FC = () => {
       return;
     }
 
-    safeSetState(setIsPolling, true);
-    safeSetState(setSensorReading, null);
     safeSetState(setError, null);
 
     try {
@@ -482,7 +491,7 @@ const DeviceDetailScreenContent: React.FC = () => {
       );
 
       if (reading && isMountedRef.current) {
-        safeSetState(setSensorReading, reading);
+        setLatestReading(reading);
         safeSetState(setLastReadingTime, new Date());
         safeSetState(setError, null);
 
@@ -493,16 +502,13 @@ const DeviceDetailScreenContent: React.FC = () => {
           'Battery read failed'
         ).then(battery => {
           if (battery !== null && isMountedRef.current) {
-            safeSetState(setBatteryLevel, battery);
+            setBattery(battery, null);
           }
         }).catch(() => {
           // Silently fail battery read
         });
-      } else if (isMountedRef.current) {
-        // safeBleCall returned null, error already set
-        setStoreConnectionStatus(false);
-        safeSetState(setConnectionStatus, 'Disconnected');
       }
+      // DeviceStatusService handles connection status updates
     } catch (error: any) {
       if (!isMountedRef.current) return;
 
@@ -511,15 +517,10 @@ const DeviceDetailScreenContent: React.FC = () => {
 
       // Check if device disconnected
       if (errorMessage.includes('disconnected') || errorMessage.includes('connection') || errorMessage.includes('not connected')) {
-        safeSetState(setConnectionStatus, 'Disconnected');
         safeSetState(setError, 'Device disconnected. Please reconnect.');
         // DeviceStatusService will handle updating connection state
       } else {
         safeSetState(setError, errorMessage);
-      }
-    } finally {
-      if (isMountedRef.current) {
-        safeSetState(setIsPolling, false);
       }
     }
   };
@@ -528,23 +529,26 @@ const DeviceDetailScreenContent: React.FC = () => {
     setShowDisconnectDialog(false);
 
     try {
-      console.log('[DeviceDetail] Disconnecting device:', deviceId);
 
-      // Stop any active streaming/polling first
-      if (isStreaming || isPolling) {
-        console.log('[DeviceDetail] Stopping active streams before disconnect');
+      // Stop any active streaming first
+      if (isStreaming) {
         safeSetState(setIsStreaming, false);
-        safeSetState(setIsPolling, false);
+
+        // Clean up subscription
+        if (streamSubscriptionRef.current) {
+          try {
+            streamSubscriptionRef.current.remove();
+            streamSubscriptionRef.current = null;
+          } catch (err) {
+            console.warn('[DeviceDetail] Error removing subscription:', err);
+          }
+        }
       }
 
       // Disconnect from BLE
       await BleService.disconnect();
 
-      // Clear local UI state (DeviceStatusService handles connection state)
-      safeSetState(setConnectionStatus, 'Disconnected');
-      safeSetState(setSensorReading, null);
-      safeSetState(setBatteryLevel, null);
-      safeSetState(setSampleRate, null);
+      // Clear local UI state
       safeSetState(setError, null);
       safeSetState(setStreamingError, null);
 
@@ -555,8 +559,6 @@ const DeviceDetailScreenContent: React.FC = () => {
 
       // Even if disconnect fails, clear local UI state
       safeSetState(setIsStreaming, false);
-      safeSetState(setIsPolling, false);
-      safeSetState(setConnectionStatus, 'Disconnected');
 
       showToast({
         message: 'Device may already be disconnected or connection was lost',
@@ -600,8 +602,7 @@ const DeviceDetailScreenContent: React.FC = () => {
   };
 
   const renderStatusCard = () => {
-    const sensorReading = latestReading; // Use latestReading from store
-    const sampleRate = storeSampleRate; // Use storeSampleRate from store
+    const sensorReading = latestReading;
     const batteryVoltageSensor = sensorReading?.batteryVoltage;
     const batteryGood = batteryVoltage && batteryVoltage > 3.7;
     const BatteryIcon = batteryGood ? BatteryFull : Battery;
@@ -701,8 +702,7 @@ const DeviceDetailScreenContent: React.FC = () => {
   };
 
   const renderOrientationVisualization = () => {
-    const sensorReading = latestReading; // Use latestReading from store
-    if (!sensorReading || (sensorReading.roll === undefined && sensorReading.pitch === undefined && sensorReading.yaw === undefined)) {
+    if (!latestReading || (latestReading.roll === undefined && latestReading.pitch === undefined && latestReading.yaw === undefined)) {
       return null;
     }
 
@@ -711,12 +711,12 @@ const DeviceDetailScreenContent: React.FC = () => {
         <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>Orientation</Text>
         <View style={[styles.visualizationContainer, { backgroundColor: 'transparent', borderColor: 'transparent' }]}>
           <IMUVisualization3D
-            roll={sensorReading.roll || 0}
-            pitch={sensorReading.pitch || 0}
-            yaw={sensorReading.yaw || 0}
-            accelX={sensorReading.accelX || 0}
-            accelY={sensorReading.accelY || 0}
-            accelZ={sensorReading.accelZ || 0}
+            roll={latestReading.roll || 0}
+            pitch={latestReading.pitch || 0}
+            yaw={latestReading.yaw || 0}
+            accelX={latestReading.accelX || 0}
+            accelY={latestReading.accelY || 0}
+            accelZ={latestReading.accelZ || 0}
             backgroundColor={theme.colors.card}
           />
         </View>
@@ -725,8 +725,7 @@ const DeviceDetailScreenContent: React.FC = () => {
   };
 
   const renderSensorData = () => {
-    const sensorReading = latestReading; // Use latestReading from store
-    if (!sensorReading) {
+    if (!latestReading) {
       return (
         <View style={[styles.card, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}>
           <Text style={[styles.cardTitle, { color: theme.colors.textPrimary }]}>Sensor Reading</Text>
@@ -763,15 +762,15 @@ const DeviceDetailScreenContent: React.FC = () => {
         )}
 
         {/* For Whoop: Show Heart Rate */}
-        {sensorReading.heartRate !== undefined && (
+        {latestReading.heartRate !== undefined && (
           <View style={[styles.readingCard, { backgroundColor: theme.colors.background, borderColor: theme.colors.border }]}>
             <Heart size={32} color={theme.colors.error} />
             <View style={styles.readingInfo}>
               <Text style={[styles.readingLabel, { color: theme.colors.textSecondary }]}>Heart Rate</Text>
-              <Text style={[styles.readingValue, { color: theme.colors.textPrimary }]}>{sensorReading.heartRate} BPM</Text>
-              {sensorReading.contactDetected !== undefined && (
+              <Text style={[styles.readingValue, { color: theme.colors.textPrimary }]}>{latestReading.heartRate} BPM</Text>
+              {latestReading.contactDetected !== undefined && (
                 <Text style={[styles.readingMeta, { color: theme.colors.textTertiary }]}>
-                  Contact: {sensorReading.contactDetected ? 'Detected' : 'Not Detected'}
+                  Contact: {latestReading.contactDetected ? 'Detected' : 'Not Detected'}
                 </Text>
               )}
             </View>
@@ -779,107 +778,107 @@ const DeviceDetailScreenContent: React.FC = () => {
         )}
 
         {/* For Vertex IMU: Show orientation data */}
-        {(sensorReading.roll !== undefined || sensorReading.pitch !== undefined || sensorReading.yaw !== undefined) && (
+        {(latestReading.roll !== undefined || latestReading.pitch !== undefined || latestReading.yaw !== undefined) && (
           <>
             <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Orientation (degrees)</Text>
             <View style={styles.sensorGrid}>
               <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
                 <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Roll</Text>
-                <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.roll?.toFixed(1) ?? '0.0'}°</Text>
+                <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.roll?.toFixed(1) ?? '0.0'}°</Text>
               </View>
               <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
                 <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Pitch</Text>
-                <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.pitch?.toFixed(1) ?? '0.0'}°</Text>
+                <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.pitch?.toFixed(1) ?? '0.0'}°</Text>
               </View>
               <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
                 <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Yaw</Text>
-                <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.yaw?.toFixed(1) ?? '0.0'}°</Text>
+                <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.yaw?.toFixed(1) ?? '0.0'}°</Text>
               </View>
             </View>
 
             {/* Accelerometer */}
-            {(sensorReading.accelX !== undefined || sensorReading.accelY !== undefined || sensorReading.accelZ !== undefined) && (
+            {(latestReading.accelX !== undefined || latestReading.accelY !== undefined || latestReading.accelZ !== undefined) && (
               <>
                 <View style={[styles.divider, { backgroundColor: theme.colors.border }]} />
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Acceleration (m/s²)</Text>
                 <View style={styles.sensorGrid}>
                   <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
                     <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>X</Text>
-                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.accelX?.toFixed(2) ?? '0.00'}</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.accelX?.toFixed(2) ?? '0.00'}</Text>
                   </View>
                   <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
                     <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Y</Text>
-                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.accelY?.toFixed(2) ?? '0.00'}</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.accelY?.toFixed(2) ?? '0.00'}</Text>
                   </View>
                   <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
                     <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Z</Text>
-                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.accelZ?.toFixed(2) ?? '0.00'}</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.accelZ?.toFixed(2) ?? '0.00'}</Text>
                   </View>
                 </View>
               </>
             )}
 
             {/* Gyroscope */}
-            {(sensorReading.gyroX !== undefined || sensorReading.gyroY !== undefined || sensorReading.gyroZ !== undefined) && (
+            {(latestReading.gyroX !== undefined || latestReading.gyroY !== undefined || latestReading.gyroZ !== undefined) && (
               <>
                 <View style={[styles.divider, { backgroundColor: theme.colors.border }]} />
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Angular Velocity (rad/s)</Text>
                 <View style={styles.sensorGrid}>
                   <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
                     <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>X</Text>
-                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.gyroX?.toFixed(2) ?? '0.00'}</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.gyroX?.toFixed(2) ?? '0.00'}</Text>
                   </View>
                   <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
                     <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Y</Text>
-                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.gyroY?.toFixed(2) ?? '0.00'}</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.gyroY?.toFixed(2) ?? '0.00'}</Text>
                   </View>
                   <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
                     <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Z</Text>
-                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.gyroZ?.toFixed(2) ?? '0.00'}</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.gyroZ?.toFixed(2) ?? '0.00'}</Text>
                   </View>
                 </View>
               </>
             )}
 
             {/* Magnetometer */}
-            {(sensorReading.magX !== undefined || sensorReading.magY !== undefined || sensorReading.magZ !== undefined) && (
+            {(latestReading.magX !== undefined || latestReading.magY !== undefined || latestReading.magZ !== undefined) && (
               <>
                 <View style={[styles.divider, { backgroundColor: theme.colors.border }]} />
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Magnetic Field (µT)</Text>
                 <View style={styles.sensorGrid}>
                   <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
                     <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>X</Text>
-                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.magX?.toFixed(1) ?? '0.0'}</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.magX?.toFixed(1) ?? '0.0'}</Text>
                   </View>
                   <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
                     <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Y</Text>
-                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.magY?.toFixed(1) ?? '0.0'}</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.magY?.toFixed(1) ?? '0.0'}</Text>
                   </View>
                   <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
                     <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Z</Text>
-                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.magZ?.toFixed(1) ?? '0.0'}</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.magZ?.toFixed(1) ?? '0.0'}</Text>
                   </View>
                 </View>
               </>
             )}
 
             {/* Sensor Calibration Status */}
-            {sensorReading.calibration && (
+            {latestReading.calibration && (
               <>
                 <View style={[styles.divider, { backgroundColor: theme.colors.border }]} />
                 <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Sensor Calibration (0-3)</Text>
                 <View style={styles.sensorGrid}>
                   <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
                     <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Gyro</Text>
-                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.calibration.gyro}</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.calibration.gyro}</Text>
                   </View>
                   <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
                     <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Accel</Text>
-                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.calibration.accel}</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.calibration.accel}</Text>
                   </View>
                   <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
                     <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Mag</Text>
-                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{sensorReading.calibration.mag}</Text>
+                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.calibration.mag}</Text>
                   </View>
                 </View>
               </>

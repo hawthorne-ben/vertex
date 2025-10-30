@@ -30,14 +30,7 @@ import { Device } from 'react-native-ble-plx';
 import { RootStackNavigationProp } from '../types/navigation.types';
 import { BleError } from '../types/errors.types';
 import { getUserFriendlyError } from '../utils/errorUtils';
-
-const SAVED_DEVICES_KEY = '@vertex_saved_devices';
-
-interface SavedDevice {
-  id: string;
-  name: string;
-  lastConnected?: string;
-}
+import { useDeviceStore, SavedDevice } from '../stores/deviceStore';
 
 interface ScannedDevice {
   device: Device;
@@ -50,39 +43,27 @@ const DevicesScreen: React.FC = () => {
   const { theme } = useTheme();
   const { showToast } = useToast();
   const navigation = useNavigation<RootStackNavigationProp<'Tabs'>>();
-  const [savedDevices, setSavedDevices] = useState<SavedDevice[]>([]);
+
+  // Use deviceStore for connected device tracking and saved devices
+  const {
+    deviceId: connectedDeviceId,
+    savedDevices,
+    loadSavedDevices,
+    addSavedDevice,
+    removeSavedDevice,
+    updateDeviceLastConnected,
+  } = useDeviceStore();
+
   const [scannedDevices, setScannedDevices] = useState<Map<string, ScannedDevice>>(new Map());
   const [isScanning, setIsScanning] = useState(false);
   const [hasPermissions, setHasPermissions] = useState(false);
   const [showScanModal, setShowScanModal] = useState(false);
   const [deviceToDelete, setDeviceToDelete] = useState<SavedDevice | null>(null);
-  const [connectedDeviceId, setConnectedDeviceId] = useState<string | null>(null);
 
   useEffect(() => {
     checkAndRequestPermissions();
-    loadSavedDevices();
-
-    // Listen for connection state changes
-    const unsubscribe = BleService.addConnectionListener((device, isConnected) => {
-      console.log('[DevicesScreen] Connection state changed:', device?.id, isConnected);
-      setConnectedDeviceId(isConnected ? device?.id || null : null);
-    });
-
-    return () => {
-      unsubscribe();
-    };
+    loadSavedDevices(); // Load from store
   }, []);
-
-  const loadSavedDevices = async () => {
-    try {
-      const saved = await AsyncStorage.getItem(SAVED_DEVICES_KEY);
-      if (saved) {
-        setSavedDevices(JSON.parse(saved));
-      }
-    } catch (error) {
-      console.error('Error loading saved devices:', error);
-    }
-  };
 
   const checkAndRequestPermissions = async () => {
     if (Platform.OS !== 'android') {
@@ -173,15 +154,14 @@ const DevicesScreen: React.FC = () => {
     stopScanning();
     setShowScanModal(false);
 
-    // Save to saved devices
+    // Save to saved devices using store
     const newDevice: SavedDevice = {
       id: scannedDevice.device.id,
       name: scannedDevice.device.name || 'Unknown Device',
       lastConnected: new Date().toISOString(),
     };
 
-    const updated = [...savedDevices.filter(d => d.id !== newDevice.id), newDevice];
-    await saveDevices(updated);
+    await addSavedDevice(newDevice);
 
     // Navigate to detail screen
     navigation.navigate('DeviceDetail', {
@@ -209,13 +189,11 @@ const DevicesScreen: React.FC = () => {
       // Check if this device is currently connected
       const connectedDevice = BleService.getConnectedDevice();
       if (connectedDevice && connectedDevice.id === deviceToDelete.id) {
-        console.log('[DevicesScreen] Disconnecting device before removal:', deviceToDelete.id);
         await BleService.disconnect();
       }
 
-      // Remove from saved devices
-      const updated = savedDevices.filter(d => d.id !== deviceToDelete.id);
-      await saveDevices(updated);
+      // Remove from saved devices using store
+      await removeSavedDevice(deviceToDelete.id);
 
       showToast({
         message: 'Device removed',
@@ -231,14 +209,7 @@ const DevicesScreen: React.FC = () => {
     }
   };
 
-  const saveDevices = async (devices: SavedDevice[]) => {
-    try {
-      await AsyncStorage.setItem(SAVED_DEVICES_KEY, JSON.stringify(devices));
-      setSavedDevices(devices);
-    } catch (error) {
-      console.error('Error saving devices:', error);
-    }
-  };
+  // saveDevices removed - now using deviceStore actions directly
 
   const renderSavedDevice = ({ item }: { item: SavedDevice }) => {
     // Check if device is currently connected

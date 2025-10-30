@@ -5,7 +5,7 @@
  */
 
 import { create } from 'zustand';
-import { RecordingSession, RecordingFormat } from '../services/RecordingService';
+import { RecordingSession } from '../services/RecordingService';
 
 export interface RecordingStats {
   duration: number; // milliseconds

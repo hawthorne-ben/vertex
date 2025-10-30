@@ -5,6 +5,7 @@
  */
 
 export class BleError extends Error {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
   constructor(
     message: string,
     public code: BleErrorCode,
@@ -29,6 +30,7 @@ export type BleErrorCode =
   | 'UNKNOWN';
 
 export class RecordingError extends Error {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
   constructor(
     message: string,
     public code: RecordingErrorCode,
@@ -51,6 +53,7 @@ export type RecordingErrorCode =
   | 'UNKNOWN';
 
 export class AuthError extends Error {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars, no-unused-vars
   constructor(
     message: string,
     public code: AuthErrorCode,

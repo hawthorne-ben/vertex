@@ -103,7 +103,25 @@ const DataDetailScreen: React.FC = () => {
       calculateStatistics(recordingData);
     } catch (error) {
       console.error('[DataDetailScreen] Error loading data:', error);
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to load recording data. The file may be corrupted or in an unsupported format.');
+      const errorMsg = error instanceof Error ? error.message : 'Failed to load recording data';
+
+      // Check if this is a corrupt/in-progress file (VTX parse errors typically contain these phrases)
+      const isCorruptFile = errorMsg.includes('parse') ||
+                            errorMsg.includes('invalid') ||
+                            errorMsg.includes('corrupted') ||
+                            errorMsg.includes('incomplete');
+
+      if (isCorruptFile && fileName.endsWith('.vtx')) {
+        // Corrupt/in-progress file - navigate to RecordScreen as fallback
+        console.log('[DataDetailScreen] Detected corrupt/in-progress file, navigating to RecordScreen');
+        navigation.replace('Record', {
+          deviceId: '', // Will show disconnected state
+          deviceName: 'Unknown Device'
+        });
+      } else {
+        // Other errors - show error dialog
+        setErrorMessage(errorMsg + '. The file may be corrupted or in an unsupported format.');
+      }
     } finally {
       setIsLoading(false);
     }
@@ -166,39 +184,132 @@ const DataDetailScreen: React.FC = () => {
   };
 
   const getChartData = () => {
-    // Downsample data if too many points (keep every Nth point)
+    if (data.length === 0) {
+      return {
+        xData: [],
+        yData: [],
+        zData: [],
+        timeGaps: [],
+      };
+    }
+
+    // FIRST: Detect gaps in FULL data before downsampling
+    const fullIntervals: number[] = [];
+    for (let i = 1; i < data.length; i++) {
+      const interval = data[i].timestamp.getTime() - data[i - 1].timestamp.getTime();
+      fullIntervals.push(interval);
+    }
+
+    const sortedFullIntervals = [...fullIntervals].sort((a, b) => a - b);
+    const medianInterval = sortedFullIntervals[Math.floor(sortedFullIntervals.length / 2)] || 100;
+    const gapThreshold = medianInterval * 5; // 5x median to catch real gaps, not just noise
+
+    // Find gaps in FULL data
+    const detectedGaps = [];
+    for (let i = 1; i < data.length; i++) {
+      const interval = data[i].timestamp.getTime() - data[i - 1].timestamp.getTime();
+      if (interval > gapThreshold) {
+        detectedGaps.push({
+          index: i,
+          gapMs: interval,
+          beforeTime: data[i - 1].timestamp,
+          afterTime: data[i].timestamp,
+        });
+      }
+    }
+
+    // THEN: Insert synthetic zero data for gaps to show time proportion
+    let dataWithGaps = [...data];
+    if (detectedGaps.length > 0) {
+      // Process gaps in reverse to maintain indices
+      for (let g = detectedGaps.length - 1; g >= 0; g--) {
+        const gap = detectedGaps[g];
+        const gapStartTime = gap.beforeTime.getTime();
+        const gapEndTime = gap.afterTime.getTime();
+        const gapDurationMs = gap.gapMs;
+
+        // Generate synthetic points at median interval to fill the gap
+        const syntheticPoints = [];
+        const numPoints = Math.ceil(gapDurationMs / medianInterval);
+
+        for (let i = 1; i < numPoints; i++) {
+          const syntheticTime = new Date(gapStartTime + (i * medianInterval));
+          syntheticPoints.push({
+            timestamp: syntheticTime,
+            accel_x: 0,
+            accel_y: 0,
+            accel_z: 0,
+            gyro_x: 0,
+            gyro_y: 0,
+            gyro_z: 0,
+            mag_x: 0,
+            mag_y: 0,
+            mag_z: 0,
+            batteryVoltage: null,
+            isGap: true, // Mark as synthetic
+          });
+        }
+
+        // Insert synthetic points at gap position
+        dataWithGaps.splice(gap.index, 0, ...syntheticPoints);
+      }
+    }
+
+    // Downsample data with gaps for chart rendering
     const maxPoints = 200;
-    const step = Math.ceil(data.length / maxPoints);
-    const sampledData = data.filter((_, index) => index % step === 0);
+    const step = Math.ceil(dataWithGaps.length / maxPoints);
+    const sampledData = dataWithGaps.filter((_, index) => index % step === 0)
 
-    // Get relative time in seconds from start
-    const startTime = sampledData[0]?.timestamp.getTime() || 0;
+    // Get relative time in seconds from start for X-axis
+    const startTime = data[0].timestamp.getTime();
 
-    let xData: number[], yData: number[], zData: number[];
+    // Build data arrays (synthetic gap data is now included in sampledData)
+    const xData = sampledData.map(d => (selectedDataType === 'accelerometer' ? d.accel_x : selectedDataType === 'gyroscope' ? d.gyro_x : d.mag_x ?? 0));
+    const yData = sampledData.map(d => (selectedDataType === 'accelerometer' ? d.accel_y : selectedDataType === 'gyroscope' ? d.gyro_y : d.mag_y ?? 0));
+    const zData = sampledData.map(d => (selectedDataType === 'accelerometer' ? d.accel_z : selectedDataType === 'gyroscope' ? d.gyro_z : d.mag_z ?? 0));
+    const times = sampledData.map(d => (d.timestamp.getTime() - startTime) / 1000);
 
-    switch (selectedDataType) {
-      case 'accelerometer':
-        xData = sampledData.map(d => d.accel_x);
-        yData = sampledData.map(d => d.accel_y);
-        zData = sampledData.map(d => d.accel_z);
-        break;
-      case 'gyroscope':
-        xData = sampledData.map(d => d.gyro_x);
-        yData = sampledData.map(d => d.gyro_y);
-        zData = sampledData.map(d => d.gyro_z);
-        break;
-      case 'magnetometer':
-        const magSampled = sampledData.filter(d => d.mag_x !== undefined && d.mag_y !== undefined && d.mag_z !== undefined);
-        xData = magSampled.map(d => d.mag_x!);
-        yData = magSampled.map(d => d.mag_y!);
-        zData = magSampled.map(d => d.mag_z!);
-        break;
+    // For magnetometer, normalize each axis independently to make all data visible
+    let normalizedXData = xData;
+    let normalizedYData = yData;
+    let normalizedZData = zData;
+
+    if (selectedDataType === 'magnetometer') {
+      // Calculate range for each axis
+      const xMin = Math.min(...xData);
+      const xMax = Math.max(...xData);
+      const xRange = xMax - xMin;
+
+      const yMin = Math.min(...yData);
+      const yMax = Math.max(...yData);
+      const yRange = yMax - yMin;
+
+      const zMin = Math.min(...zData);
+      const zMax = Math.max(...zData);
+      const zRange = zMax - zMin;
+
+      // Normalize each axis to 0-100 range for display
+      normalizedXData = xData.map(v => xRange === 0 ? 50 : ((v - xMin) / xRange) * 100);
+      normalizedYData = yData.map(v => yRange === 0 ? 50 : ((v - yMin) / yRange) * 100);
+      normalizedZData = zData.map(v => zRange === 0 ? 50 : ((v - zMin) / zRange) * 100);
     }
 
     return {
-      xData: xData.map((value, index) => ({ value, dataPointText: '' })),
-      yData: yData.map((value, index) => ({ value, dataPointText: '' })),
-      zData: zData.map((value, index) => ({ value, dataPointText: '' })),
+      xData: normalizedXData.map((value, index) => ({
+        value: value,
+        dataPointText: '',
+        label: times[index].toFixed(1) + 's',
+      })),
+      yData: normalizedYData.map((value, index) => ({
+        value: value,
+        dataPointText: '',
+      })),
+      zData: normalizedZData.map((value, index) => ({
+        value: value,
+        dataPointText: '',
+      })),
+      timeGaps: [],
+      isNormalized: selectedDataType === 'magnetometer',
     };
   };
 
@@ -386,6 +497,11 @@ const DataDetailScreen: React.FC = () => {
         {/* Chart */}
         <View style={styles.chartContainer}>
           <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>{getDataTypeLabel(selectedDataType)}</Text>
+          {selectedDataType === 'magnetometer' && (
+            <Text style={[styles.chartNote, { color: theme.colors.textSecondary }]}>
+              Each axis normalized independently for visibility
+            </Text>
+          )}
 
           {/* Legend */}
           <View style={styles.legend}>
@@ -406,51 +522,95 @@ const DataDetailScreen: React.FC = () => {
           <View style={[styles.chartWrapper, { backgroundColor: theme.colors.card }]}>
             {chartData.xData.length > 0 ? (
               (() => {
-                // Calculate min/max with padding to prevent cutoff
-                const dataMax = Math.max(
-                  ...chartData.xData.map(d => d.value),
-                  ...chartData.yData.map(d => d.value),
-                  ...chartData.zData.map(d => d.value)
-                );
-                const dataMin = Math.min(
-                  ...chartData.xData.map(d => d.value),
-                  ...chartData.yData.map(d => d.value),
-                  ...chartData.zData.map(d => d.value)
-                );
-                const range = dataMax - dataMin;
-                const padding = range * 0.15; // 15% padding on each side
+                let dataMax: number;
+                let dataMin: number;
+                let padding: number;
+
+                if (chartData.isNormalized) {
+                  // For normalized data (magnetometer), use fixed 0-100 range
+                  dataMin = 0;
+                  dataMax = 100;
+                  padding = 0;
+                } else {
+                  // Calculate min/max with padding to prevent cutoff
+                  const allValues = [
+                    ...chartData.xData.map(d => d.value),
+                    ...chartData.yData.map(d => d.value),
+                    ...chartData.zData.map(d => d.value)
+                  ];
+
+                  dataMax = Math.max(...allValues);
+                  dataMin = Math.min(...allValues);
+                  const range = dataMax - dataMin;
+
+                  // Handle edge cases for padding
+                  if (range === 0) {
+                    // Flat data - use absolute padding based on value magnitude
+                    padding = Math.abs(dataMax) * 0.1 || 0.1; // 10% of value or 0.1 minimum
+                  } else if (range < 0.01) {
+                    // Very small range - use minimum padding
+                    padding = 0.01;
+                  } else {
+                    // Normal case - 15% padding
+                    padding = range * 0.15;
+                  }
+                }
+
+                const finalMin = dataMin - padding;
+                const finalMax = dataMax + padding;
+
+                // Shift data to be positive if we have negative values (chart library limitation)
+                const offset = finalMin < 0 ? -finalMin : 0;
+                const shiftedData = offset > 0 ? {
+                  xData: chartData.xData.map(d => ({ ...d, value: d.value + offset })),
+                  yData: chartData.yData.map(d => ({ ...d, value: d.value + offset })),
+                  zData: chartData.zData.map(d => ({ ...d, value: d.value + offset })),
+                } : chartData;
+
+                const shiftedMax = finalMax + offset;
 
                 return (
-                  <LineChart
-                    data={chartData.xData}
-                    data2={chartData.yData}
-                    data3={chartData.zData}
-                    height={250}
-                    width={screenWidth - 80}
-                    maxValue={dataMax + padding}
-                    minValue={dataMin - padding}
-                    spacing={Math.max(1, (screenWidth - 100) / chartData.xData.length)}
-                    thickness={2}
-                    color1="#ef4444"
-                    color2="#22c55e"
-                    color3="#3b82f6"
-                    hideDataPoints
-                    hideRules
-                    rulesColor={theme.colors.border}
-                    yAxisColor={theme.colors.border}
-                    xAxisColor={theme.colors.border}
-                    yAxisTextStyle={{ color: theme.colors.textSecondary, fontSize: 10 }}
-                    xAxisLabelTextStyle={{ color: theme.colors.textSecondary, fontSize: 10 }}
-                    curved
-                    animateOnDataChange={false}
-                    areaChart={false}
-                    yAxisThickness={1}
-                    xAxisThickness={1}
-                    initialSpacing={15}
-                    endSpacing={15}
-                    noOfSections={4}
-                  />
+                  <View style={{ maxHeight: 280, overflow: 'hidden' }}>
+                    <LineChart
+                      data={shiftedData.xData}
+                      data2={shiftedData.yData}
+                      data3={shiftedData.zData}
+                      height={250}
+                      width={screenWidth - 80}
+                      maxValue={shiftedMax}
+                      noOfSections={4}
+                      stepValue={shiftedMax / 4}
+                      formatYLabel={(value) => {
+                        // Shift labels back to show actual values
+                        const actualValue = parseFloat(value) - offset;
+                        return actualValue.toFixed(1);
+                      }}
+                      spacing={Math.max(1, (screenWidth - 100) / chartData.xData.length)}
+                      thickness={2}
+                      color1="#ef4444"
+                      color2="#22c55e"
+                      color3="#3b82f6"
+                      hideDataPoints
+                      hideRules
+                      showReferenceLine1={false}
+                      showReferenceLine2={false}
+                      showReferenceLine3={false}
+                      rulesColor={theme.colors.border}
+                      yAxisColor={theme.colors.border}
+                      xAxisColor="transparent"
+                      yAxisTextStyle={{ color: theme.colors.textSecondary, fontSize: 10 }}
+                      xAxisLabelTextStyle={{ color: theme.colors.textSecondary, fontSize: 10 }}
+                      curved
+                      animateOnDataChange={false}
+                      areaChart={false}
+                      yAxisThickness={1}
+                      xAxisThickness={0}
+                      initialSpacing={15}
+                      endSpacing={15}
+                    />
+                  </View>
                 );
+
               })()
 
             ) : (
@@ -655,6 +815,14 @@ const styles = StyleSheet.create({
   chartContainer: {
     marginBottom: staticTheme.spacing.xxl * 2,
   },
+  chartNote: {
+    fontSize: staticTheme.typography.fontSize.xs,
+    color: staticTheme.colors.textSecondary,
+    fontFamily: staticTheme.typography.mono,
+    marginTop: 4,
+    marginBottom: staticTheme.spacing.sm,
+    fontStyle: 'italic',
+  },
   legend: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -687,6 +855,7 @@ const styles = StyleSheet.create({
     borderColor: staticTheme.colors.border,
     alignItems: 'center',
     overflow: 'hidden',
+    maxHeight: 350, // Constrain chart height for large value ranges
   },
   noDataContainer: {
     height: 250,
