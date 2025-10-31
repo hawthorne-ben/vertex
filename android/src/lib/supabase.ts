@@ -1,15 +1,24 @@
 import 'react-native-url-polyfill/auto';
-import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { createClient as createSupabaseClient, SupabaseClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '@env';
 
+// Singleton instance
+let supabaseInstance: SupabaseClient | null = null;
+
 export const createClient = () => {
+  // Return existing instance if available
+  if (supabaseInstance) {
+    return supabaseInstance;
+  }
+
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     console.error('⚠️ Supabase not configured. Please check your .env file');
     throw new Error('Supabase credentials not configured. Please add SUPABASE_URL and SUPABASE_ANON_KEY to your .env file');
   }
 
-  return createSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  // Create and cache the instance
+  supabaseInstance = createSupabaseClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: {
       storage: AsyncStorage,
       autoRefreshToken: true,
@@ -23,5 +32,7 @@ export const createClient = () => {
       },
     },
   });
+
+  return supabaseInstance;
 };
 

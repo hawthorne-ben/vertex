@@ -26,24 +26,21 @@ export function DataTabs({ imuFiles: initialImuFiles, fitFiles: initialFitFiles 
     try {
       const supabase = createClient()
       const { data: { user } } = await supabase.auth.getUser()
-      
+
       if (user) {
-        // Fetch updated IMU files
-        const { data: updatedImuFiles } = await supabase
-          .from('imu_data_files')
+        // Fetch all recordings and separate by file type
+        const { data: recordings } = await supabase
+          .from('recordings')
           .select('*')
           .eq('user_id', user.id)
           .order('uploaded_at', { ascending: false })
 
-        // Fetch updated FIT files
-        const { data: updatedFitFiles } = await supabase
-          .from('fit_files')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('uploaded_at', { ascending: false })
-
-        if (updatedImuFiles) setImuFiles(updatedImuFiles)
-        if (updatedFitFiles) setFitFiles(updatedFitFiles)
+        if (recordings) {
+          const vtxFiles = recordings.filter(r => r.file_type === 'vtx')
+          const fitFiles = recordings.filter(r => r.file_type === 'fit')
+          setImuFiles(vtxFiles)
+          setFitFiles(fitFiles)
+        }
       }
     } catch (error) {
       console.error('Error refreshing data:', error)

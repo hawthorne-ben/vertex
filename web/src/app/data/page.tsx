@@ -16,38 +16,31 @@ export default async function DataPage({ searchParams }: DataPageProps) {
     redirect('/login')
   }
 
-  // Fetch user's IMU data time ranges (sorted by most recent data)
-  const { data: imuFiles, error: imuError } = await supabase
-    .from('imu_data_files')
+  // Fetch user's recordings (VTX and FIT files from new recordings table)
+  const { data: recordings, error: recordingsError } = await supabase
+    .from('recordings')
     .select('*')
     .eq('user_id', user.id)
     .order('uploaded_at', { ascending: false })
 
-  // Fetch user's FIT files (sorted by most recent upload)
-  const { data: fitFiles, error: fitError } = await supabase
-    .from('fit_files')
-    .select('*')
-    .eq('user_id', user.id)
-    .order('uploaded_at', { ascending: false })
-
-  if (imuError) {
-    console.error('Error fetching IMU data:', imuError)
+  if (recordingsError) {
+    console.error('Error fetching recordings:', recordingsError)
   }
 
-  if (fitError) {
-    console.error('Error fetching FIT data:', fitError)
-  }
+  // Separate by file type for backward compatibility with DataTabs component
+  const vtxFiles = (recordings || []).filter(r => r.file_type === 'vtx')
+  const fitFiles = (recordings || []).filter(r => r.file_type === 'fit')
 
   return (
     <div className="container mx-auto px-4 md:px-6 py-8 max-w-6xl">
       <div className="mb-8">
-        <h1 className="text-3xl font-normal text-primary mb-2">Data Files</h1>
+        <h1 className="text-3xl font-normal text-primary mb-2">Recordings</h1>
         <p className="text-secondary">
-          View and manage your uploaded sensor data and cycling computer files
+          View and analyze your VTX sensor recordings and FIT cycling computer files
         </p>
       </div>
 
-      <DataTabs imuFiles={imuFiles || []} fitFiles={fitFiles || []} />
+      <DataTabs imuFiles={vtxFiles} fitFiles={fitFiles} />
     </div>
   )
 }

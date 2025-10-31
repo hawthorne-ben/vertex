@@ -2,7 +2,6 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect, notFound } from 'next/navigation'
 import { IMUUPlotCharts } from '@/components/imu-uplot-charts'
 import { DataDetailHeader } from '@/components/data-detail-header'
-import { downsampleMultiSeries } from '@/lib/imu/lttb-downsample'
 import { Loader2 } from 'lucide-react'
 
 export default async function DataDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -15,131 +14,103 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
     redirect('/login')
   }
 
-  // Fetch the data segment metadata
-  const { data: fileData, error: fileError } = await supabase
-    .from('imu_data_files')
+  // Fetch the recording metadata
+  const { data: recording, error: recordingError } = await supabase
+    .from('recordings')
     .select('*')
     .eq('id', id)
     .eq('user_id', user.id)
     .single()
 
-  if (fileError || !fileData) {
+  if (recordingError || !recording) {
     notFound()
   }
 
-  // Only fetch samples if status is 'ready'
+  // Only fetch samples if status is 'ready' and it's a VTX file
   let samples = null
   let originalSampleCount = 0
-  if (fileData.status === 'ready') {
-    // Scalable data fetching strategy:
-    // 1. For small datasets (≤5k samples): Fetch all data
-    // 2. For large datasets (>5k): Use SQL function to systematically sample every Nth row
-    // 3. Apply LTTB downsampling to 2k points for optimal chart performance
-    
-    const { count: totalCount } = await supabase
-      .from('imu_samples')
-      .select('*', { count: 'exact', head: true })
-      .eq('imu_file_id', id)
-    
-    const TARGET_SAMPLES = 5000 // Target samples to fetch before LTTB downsampling
-    const PAGE_SIZE = 1000 // Supabase page size for small datasets
-    
-    let samplesData: any[] = []
-    
-    if (totalCount && totalCount <= TARGET_SAMPLES) {
-      // Small dataset: fetch all data in one or more pages
-      const numPages = Math.ceil(totalCount / PAGE_SIZE)
-      
-      for (let page = 0; page < numPages; page++) {
-        const from = page * PAGE_SIZE
-        const to = from + PAGE_SIZE - 1
-        
-        const { data, error } = await supabase
-          .from('imu_samples')
-          .select('timestamp, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z, mag_x, mag_y, mag_z')
-          .eq('imu_file_id', id)
-          .order('timestamp', { ascending: true })
-          .range(from, to)
-        
-        if (error) break
-        if (data) samplesData.push(...data)
-      }
-    } else {
-      // Large dataset: systematic sampling using SQL
-      const stride = Math.ceil((totalCount || 1) / TARGET_SAMPLES)
-      
-      // PostgREST has a hard 1000-row limit per RPC call
-      // We need to fetch in batches of 1000 and combine them
-      const BATCH_SIZE = 1000
-      const numBatches = Math.ceil(TARGET_SAMPLES / BATCH_SIZE)
-      
-      for (let batch = 0; batch < numBatches; batch++) {
-        const batchStart = batch * BATCH_SIZE
-        const batchLimit = Math.min(BATCH_SIZE, TARGET_SAMPLES - batchStart)
-        
-        // Calculate offset in terms of actual rows (stride * batchStart)
-        const { data, error } = await supabase
-          .rpc('sample_imu_data', {
-            p_file_id: id,
-            p_stride: stride,
-            p_limit: TARGET_SAMPLES // Still pass full limit to function
-          })
-          .range(batchStart, batchStart + batchLimit - 1) // Fetch this batch's slice
-        
-        if (error || !data) break
-        
-        // Map sample_timestamp back to timestamp for consistency
-        const mappedData = data.map((row: any) => ({
-          ...row,
-          timestamp: row.sample_timestamp
-        }))
-        
-        samplesData.push(...mappedData)
-      }
+  let gaps = []
+
+  if (recording.status === 'ready' && recording.file_type === 'vtx') {
+    // Use VTX streaming API with built-in LTTB downsampling
+    // The API handles:
+    // 1. Direct VTX file parsing with O(1) timestamp seeking
+    // 2. LTTB downsampling to 2000 points for optimal performance
+    // 3. Gap information for visualization
+
+    const {data: { session}} = await supabase.auth.getSession()
+
+    if (!session) {
+      redirect('/login')
     }
 
-    if (samplesData.length > 0) {
-      originalSampleCount = totalCount || samplesData.length
-      
-      // Apply LTTB downsampling to 2000 points for optimal chart performance
-      const targetPoints = 2000
-      samples = downsampleMultiSeries(samplesData, targetPoints)
+    const apiUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+    const samplesUrl = `${apiUrl}/api/recordings/${id}/samples?resolution=2000&downsample=lttb`
+
+    const response = await fetch(samplesUrl, {
+      headers: {
+        'Authorization': `Bearer ${session.access_token}`
+      },
+      cache: 'no-store'
+    })
+
+    if (response.ok) {
+      const result = await response.json()
+      originalSampleCount = result.metadata.total_samples
+      gaps = result.gaps || []
+
+      // Convert samples to match expected format (timestamp as ISO string)
+      const samplesData = result.samples.map((s: any) => ({
+        timestamp: new Date(s.timestamp).toISOString(),
+        accel_x: s.accel.x,
+        accel_y: s.accel.y,
+        accel_z: s.accel.z,
+        gyro_x: s.gyro.x,
+        gyro_y: s.gyro.y,
+        gyro_z: s.gyro.z,
+        mag_x: s.mag?.x,
+        mag_y: s.mag?.y,
+        mag_z: s.mag?.z
+      }))
+
+      // API already applies LTTB downsampling, use samples directly
+      samples = samplesData
     }
   }
 
   return (
     <div className="container mx-auto px-4 md:px-6 py-8 max-w-7xl">
       {/* Header */}
-      {fileData.start_time && fileData.end_time ? (
+      {recording.start_time && recording.end_time ? (
         <DataDetailHeader
-          startTime={fileData.start_time}
-          endTime={fileData.end_time}
-          sampleCount={fileData.sample_count}
-          sampleRate={fileData.sample_rate}
-          status={fileData.status}
-          filename={fileData.filename}
+          startTime={recording.start_time}
+          endTime={recording.end_time}
+          sampleCount={recording.sample_count}
+          sampleRate={recording.sample_rate}
+          status={recording.status}
+          filename={recording.filename}
         />
       ) : (
         <div className="mb-8">
           <h1 className="text-3xl font-normal text-primary mb-2">
-            IMU Data Segment
+            Recording Detail
           </h1>
         </div>
       )}
 
       {/* Status-based content */}
-      {fileData.status === 'ready' && samples ? (
+      {recording.status === 'ready' && samples ? (
         <IMUUPlotCharts fileId={id} initialSamples={samples} originalCount={originalSampleCount} />
-      ) : fileData.status === 'parsing' ? (
+      ) : recording.status === 'processing' ? (
         <div className="text-center py-12 border border-border rounded-lg bg-muted">
           <Loader2 className="w-8 h-8 text-info animate-spin mx-auto mb-4" />
           <p className="text-secondary">Processing data...</p>
         </div>
-      ) : fileData.status === 'failed' ? (
+      ) : recording.status === 'failed' ? (
         <div className="text-center py-12 border border-error rounded-lg bg-error">
-          <p className="text-error mb-2">Failed to process data</p>
-          {fileData.error_message && (
-            <p className="text-sm text-error/80">{fileData.error_message}</p>
+          <p className="text-error mb-2">Failed to process recording</p>
+          {recording.error_message && (
+            <p className="text-sm text-error/80">{recording.error_message}</p>
           )}
         </div>
       ) : (

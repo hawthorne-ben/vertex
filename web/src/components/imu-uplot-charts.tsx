@@ -37,21 +37,6 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
   const prevDataTypeRef = useRef<DataType>(dataType)
   const prevDataTypeForChartRef = useRef<DataType>(dataType)
 
-  // Debug log on mount
-  useEffect(() => {
-    if (initialSamples.length > 0) {
-      console.log('📊 Chart initialized with:', {
-        sampleCount: initialSamples.length,
-        originalCount,
-        firstTimestamp: initialSamples[0]?.timestamp,
-        lastTimestamp: initialSamples[initialSamples.length - 1]?.timestamp,
-        timeRange: initialSamples.length > 0 ? 
-          `${new Date(initialSamples[0].timestamp).toLocaleTimeString()} → ${new Date(initialSamples[initialSamples.length - 1].timestamp).toLocaleTimeString()}` 
-          : 'N/A'
-      })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   // Check if magnetometer data exists
   const hasMagData = samples.some(s => s.mag_x !== null && s.mag_y !== null && s.mag_z !== null)

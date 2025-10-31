@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { Activity, FileText, Trash2 } from 'lucide-react-native';
+import { Activity, FileText, Trash2, CloudUpload } from 'lucide-react-native';
 import { LineChart } from 'react-native-gifted-charts';
 import { theme as staticTheme } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
@@ -25,6 +25,9 @@ import FileService, { IMUSensorData, RecordingMetadata } from '../services/FileS
 import VTXFileService from '../services/VTXFileService';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import RNFS from 'react-native-fs';
+import { useToast } from '../contexts/ToastContext';
+import { createClient } from '../lib/supabase';
+import { API_URL } from '@env';
 
 type DataDetailRouteProp = RouteProp<RootStackParamList, 'DataDetail'>;
 
@@ -45,6 +48,7 @@ interface Statistics {
 const DataDetailScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
   const { theme } = useTheme();
+  const { showToast } = useToast();
   const navigation = useNavigation();
   const route = useRoute<DataDetailRouteProp>();
   const { fileName, filePath } = route.params;
@@ -60,6 +64,8 @@ const DataDetailScreen: React.FC = () => {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [showUploadDialog, setShowUploadDialog] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     loadData();
@@ -180,6 +186,146 @@ const DataDetailScreen: React.FC = () => {
       setShowDeleteDialog(false);
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleUploadFile = async () => {
+    setIsUploading(true);
+    setShowUploadDialog(false);
+
+    try {
+      if (!API_URL) {
+        showToast({
+          message: 'API_URL not configured in .env',
+          variant: 'error',
+        });
+        return;
+      }
+
+      const supabase = createClient();
+
+      // Get current user session
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+      if (sessionError || !session) {
+        console.error('[DataDetailScreen] Auth error:', sessionError);
+        showToast({
+          message: 'Not authenticated. Please log in.',
+          variant: 'error',
+        });
+        return;
+      }
+
+      // Only support VTX files
+      if (!fileName.toLowerCase().endsWith('.vtx')) {
+        showToast({
+          message: 'Only VTX files can be uploaded',
+          variant: 'error',
+        });
+        return;
+      }
+
+      // Read file and get file size
+      const fileStats = await RNFS.stat(filePath);
+      const fileSize = fileStats.size;
+
+      // Read file as ArrayBuffer for Supabase upload
+      const fileBase64 = await RNFS.readFile(filePath, 'base64');
+
+      // Convert base64 to ArrayBuffer
+      const binaryString = atob(fileBase64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const arrayBuffer = bytes.buffer;
+
+      // Upload file to Supabase storage (recordings bucket)
+      const userId = session.user.id;
+      const storageFileName = `${fileName}`;
+      const storagePath = `${userId}/${storageFileName}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('recordings')
+        .upload(storagePath, arrayBuffer, {
+          contentType: 'application/octet-stream',
+          upsert: true, // Allow overwriting existing files
+        });
+
+      if (uploadError) {
+        console.error('[DataDetailScreen] Storage upload error:', uploadError);
+        showToast({
+          message: `Storage upload failed: ${uploadError.message}`,
+          variant: 'error',
+        });
+        return;
+      }
+
+      // Call API to process the recording
+      // Ensure API_URL has protocol
+      const baseUrl = API_URL.startsWith('http') ? API_URL : `https://${API_URL}`;
+      const apiUrl = `${baseUrl}/api/upload/recording`;
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          fileName: fileName,
+          fileSize: fileSize,
+          storagePath: storagePath,
+        }),
+      });
+
+      // Check if response is JSON
+      const contentType = response.headers.get('content-type');
+      const isJson = contentType && contentType.includes('application/json');
+
+      if (!response.ok) {
+        let errorMessage = 'Unknown error';
+
+        if (isJson) {
+          const result = await response.json();
+          console.error('[DataDetailScreen] API error:', result);
+          errorMessage = result.error || 'Unknown error';
+        } else {
+          const text = await response.text();
+          console.error('[DataDetailScreen] API error:', text.substring(0, 200));
+          errorMessage = response.status === 404
+            ? 'API endpoint not found. Check API_URL in .env'
+            : `Server error (${response.status})`;
+        }
+
+        // Clean up uploaded file on error
+        await supabase.storage
+          .from('recordings')
+          .remove([storagePath]);
+
+        showToast({
+          message: `Upload failed: ${errorMessage}`,
+          variant: 'error',
+        });
+        return;
+      }
+
+      const result = await response.json();
+      console.log('[DataDetailScreen] Upload successful:', result);
+
+      showToast({
+        message: 'Recording uploaded successfully',
+        variant: 'success',
+      });
+
+    } catch (error) {
+      console.error('[DataDetailScreen] Upload error:', error);
+      showToast({
+        message: `Upload failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        variant: 'error',
+      });
+    } finally {
+      setIsUploading(false);
     }
   };
 
@@ -348,13 +494,25 @@ const DataDetailScreen: React.FC = () => {
       <View style={[styles.header, { paddingTop: insets.top, backgroundColor: theme.colors.background, borderBottomColor: theme.colors.border }]}>
         <BackButton onPress={() => navigation.goBack()} />
         <Text style={[styles.title, { color: theme.colors.textPrimary }]} numberOfLines={1}>Detail</Text>
-        <TouchableOpacity
-          style={styles.deleteButton}
-          onPress={() => setShowDeleteDialog(true)}
-          disabled={isDeleting}
-        >
-          <Trash2 size={20} color={theme.colors.error} />
-        </TouchableOpacity>
+        <View style={styles.headerActions}>
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => setShowUploadDialog(true)}
+            disabled={isUploading || !fileName.toLowerCase().endsWith('.vtx')}
+          >
+            <CloudUpload
+              size={20}
+              color={isUploading || !fileName.toLowerCase().endsWith('.vtx') ? theme.colors.textSecondary : theme.colors.primary}
+            />
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => setShowDeleteDialog(true)}
+            disabled={isDeleting}
+          >
+            <Trash2 size={20} color={theme.colors.error} />
+          </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView style={styles.scrollView}>
@@ -650,6 +808,27 @@ const DataDetailScreen: React.FC = () => {
         },
       ]}
     />
+
+    {/* Upload Confirmation Dialog */}
+    <ConfirmDialog
+      visible={showUploadDialog}
+      onDismiss={() => setShowUploadDialog(false)}
+      title="Upload Recording"
+      message={`Upload "${fileName.replace(/\.(csv|vtx)$/, '')}" to cloud storage?`}
+      icon={<CloudUpload size={48} color={theme.colors.primary} />}
+      actions={[
+        {
+          label: 'Cancel',
+          onPress: () => setShowUploadDialog(false),
+          variant: 'default',
+        },
+        {
+          label: 'Upload',
+          onPress: handleUploadFile,
+          variant: 'primary',
+        },
+      ]}
+    />
     </View>
   );
 };
@@ -689,9 +868,13 @@ const styles = StyleSheet.create({
     color: staticTheme.colors.textPrimary,
     fontFamily: staticTheme.typography.serif,
   },
-  deleteButton: {
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: staticTheme.spacing.sm,
+  },
+  actionButton: {
     padding: staticTheme.spacing.sm,
-    marginLeft: staticTheme.spacing.md,
   },
   loadingText: {
     fontSize: staticTheme.typography.fontSize.md,
