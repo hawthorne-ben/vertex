@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { VTXDecoder } from '@vertex/vtx-parser'
+import { VTXDecoder } from '@/lib/vtx-parser'
 import { downsampleLTTB } from '@/lib/data/downsampling'
 
 export const dynamic = 'force-dynamic'
@@ -116,16 +116,10 @@ export async function GET(
     const fileBuffer = Buffer.from(await fileData.arrayBuffer())
 
     // Convert Buffer to ArrayBuffer
-    let arrayBuffer: ArrayBuffer
-    if (fileBuffer instanceof Buffer) {
-      arrayBuffer = new ArrayBuffer(fileBuffer.length)
-      const view = new Uint8Array(arrayBuffer)
-      for (let i = 0; i < fileBuffer.length; i++) {
-        view[i] = fileBuffer[i]
-      }
-    } else {
-      arrayBuffer = fileBuffer
-    }
+    const arrayBuffer = fileBuffer.buffer.slice(
+      fileBuffer.byteOffset,
+      fileBuffer.byteOffset + fileBuffer.byteLength
+    ) as ArrayBuffer
 
     const decoder = new VTXDecoder(arrayBuffer)
     const header = decoder.getHeader()

@@ -11,7 +11,7 @@ import {
   VTXMetadata,
   VTXFile,
   VTXHeader,
-} from '@vertex/vtx-parser';
+} from '@vertex-pkg/vtx-parser';
 
 export interface VTXRecordingMetadata {
   fileName: string;

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { VTXDecoder } from '@vertex/vtx-parser'
+import { VTXDecoder } from '@/lib/vtx-parser'
 import { detectDataRanges, extractVTXMetadata, rangesToPgArray } from '@/lib/vtx/gap-detection'
 
 export const dynamic = 'force-dynamic'
@@ -119,18 +119,11 @@ export async function POST(request: NextRequest) {
       // Parse VTX file header and detect gaps
       const fileBuffer = await downloadFile(finalStoragePath, fileId, totalChunks)
 
-      // Parse VTX file - convert Buffer to ArrayBuffer if needed
-      let arrayBuffer: ArrayBuffer
-      if (fileBuffer instanceof Buffer) {
-        // Create a new ArrayBuffer and copy the Buffer data into it
-        arrayBuffer = new ArrayBuffer(fileBuffer.length)
-        const view = new Uint8Array(arrayBuffer)
-        for (let i = 0; i < fileBuffer.length; i++) {
-          view[i] = fileBuffer[i]
-        }
-      } else {
-        arrayBuffer = fileBuffer
-      }
+      // Parse VTX file - convert Buffer to ArrayBuffer
+      const arrayBuffer = fileBuffer.buffer.slice(
+        fileBuffer.byteOffset,
+        fileBuffer.byteOffset + fileBuffer.byteLength
+      ) as ArrayBuffer
 
       const decoder = new VTXDecoder(arrayBuffer)
 
@@ -187,10 +180,21 @@ export async function POST(request: NextRequest) {
       // Clean up chunks
       await cleanupChunks(fileId, totalChunks)
     } else {
-      // For direct uploads, check if file is already in recordings bucket
+      // For direct uploads, need to move/rename file to use unique recordingId
       if (finalStoragePath.startsWith(userId)) {
-        // File is already in recordings bucket with user_id prefix, use as-is
-        finalPath = finalStoragePath
+        // File is already in recordings bucket with user_id prefix
+        // Move it to use unique recordingId to avoid duplicates
+        const { error: moveError } = await supabase.storage
+          .from('recordings')
+          .move(finalStoragePath, finalPath)
+
+        if (moveError) {
+          console.error('Error renaming file in recordings bucket:', moveError)
+          return NextResponse.json(
+            { error: 'Failed to rename file to unique path' },
+            { status: 500 }
+          )
+        }
       } else {
         // File is in uploads bucket, move it to recordings
         const { error: moveError } = await supabase.storage

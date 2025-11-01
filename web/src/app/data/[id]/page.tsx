@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect, notFound } from 'next/navigation'
+import { headers } from 'next/headers'
 import { IMUUPlotCharts } from '@/components/imu-uplot-charts'
 import { DataDetailHeader } from '@/components/data-detail-header'
 import { Loader2 } from 'lucide-react'
@@ -44,7 +45,11 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
       redirect('/login')
     }
 
-    const apiUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
+    // Get the base URL for server-side API calls
+    const headersList = await headers()
+    const host = headersList.get('host') || 'localhost:3000'
+    const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http'
+    const apiUrl = `${protocol}://${host}`
     const samplesUrl = `${apiUrl}/api/recordings/${id}/samples?resolution=2000&downsample=lttb`
 
     const response = await fetch(samplesUrl, {

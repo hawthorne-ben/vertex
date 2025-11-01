@@ -1,6 +1,6 @@
 {
-  "name": "@vertex/vtx-parser",
-  "version": "0.1.0",
+  "name": "@vertex-pkg/vtx-parser",
+  "version": "0.2.0",
   "description": "TypeScript encoder and decoder for VTX binary format",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -20,11 +20,12 @@
   ],
   "author": "Vertex Team",
   "license": "MIT",
-  "dependencies": {
-    "@vertex/vtx-constants": "^0.1.0"
-  },
+  "dependencies": {},
   "devDependencies": {
+    "@types/jest": "^29.5.0",
     "@types/node": "^20.0.0",
+    "jest": "^29.5.0",
+    "ts-jest": "^29.1.0",
     "typescript": "^5.0.0"
   },
   "files": [

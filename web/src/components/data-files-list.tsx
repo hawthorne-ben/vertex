@@ -197,11 +197,10 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
     setShowDeleteModal(false)
 
     try {
-      // Use the admin API endpoint for proper deletion
-      const response = await fetch('/api/admin/delete-file', {
+      // Use the recordings API endpoint with proper authentication
+      const response = await fetch(`/api/recordings/${fileToDelete.id}`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fileId: fileToDelete.id })
+        headers: { 'Content-Type': 'application/json' }
       })
 
       if (!response.ok) {

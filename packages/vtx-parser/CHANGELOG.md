@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2025-10-31
+
+### Added
+- **VTXStreamEncoder**: New streaming encoder for incremental writes without memory accumulation
+- Comprehensive test suite with 32 tests covering encoder, decoder, and streaming functionality
+- `WriteCallback` type for custom write implementations
+- Jest test configuration and test scripts
+- Tests for VTXEncoder, VTXDecoder, and VTXStreamEncoder
+
+### Changed
+- Package now includes proper test coverage
+- Improved error messages in decoder
+
+### Fixed
+- Memory issues with long recordings by introducing streaming encoder
+- Prevents app hanging/thrashing with large datasets
+
 ## [0.1.0] - 2025-10-28
 
 ### Added

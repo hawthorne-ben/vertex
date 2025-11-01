@@ -15,5 +15,7 @@ export { StatCard } from './StatCard';
 export { ErrorBanner } from './ErrorBanner';
 export { ConfirmDialog } from './ConfirmDialog';
 export { ErrorDialog } from './ErrorDialog';
+export { InfoDialog } from './InfoDialog';
+export { UploadProgressDialog } from './UploadProgressDialog';
 export { BottomSheet } from './BottomSheet';
 export type { BottomSheetOption } from './BottomSheet';

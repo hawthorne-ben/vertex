@@ -5,7 +5,7 @@
  * Uses O(n) single-pass algorithm with configurable gap threshold.
  */
 
-import { VTXDecoder, VTXHeader, IMURecord } from '@vertex/vtx-parser';
+import { VTXDecoder, VTXHeader, IMURecord } from '@/lib/vtx-parser';
 
 /**
  * Represents a continuous range of data
@@ -206,8 +206,7 @@ export function extractVTXMetadata(decoder: VTXDecoder) {
     deviceInfo: metadata ? {
       id: metadata.device?.id,
       name: metadata.device?.name,
-      firmware_version: metadata.device?.firmware_version,
-      calibration: metadata.device?.calibration,
+      firmware_version: metadata.device?.firmwareVersion,
     } : null,
     sessionMetadata: metadata?.session || null,
   };

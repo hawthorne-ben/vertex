@@ -1,13 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { inngest } from '@/inngest/client'
+import { createClient } from '@/lib/supabase/server'
 
 export const dynamic = 'force-dynamic'
 
 /**
  * Trigger FIT file parsing
+ * Requires authentication via Bearer token
  */
 export async function POST(request: NextRequest) {
   try {
+    // Authenticate user properly
+    const supabase = await createClient()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+    if (authError || !user) {
+      return NextResponse.json(
+        { error: 'Unauthorized - Authentication required' },
+        { status: 401 }
+      )
+    }
+
     const body = await request.json()
     const { fileId } = body
 
@@ -18,12 +31,24 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Get user ID from header
-    const userId = request.headers.get('x-user-id')
-    if (!userId) {
+    // Verify user owns this file (security check)
+    const { data: recording, error: fetchError } = await supabase
+      .from('recordings')
+      .select('id, user_id')
+      .eq('id', fileId)
+      .single()
+
+    if (fetchError || !recording) {
       return NextResponse.json(
-        { error: 'Missing user ID' },
-        { status: 400 }
+        { error: 'Recording not found' },
+        { status: 404 }
+      )
+    }
+
+    if (recording.user_id !== user.id) {
+      return NextResponse.json(
+        { error: 'Access denied - you do not own this recording' },
+        { status: 403 }
       )
     }
 
@@ -35,7 +60,7 @@ export async function POST(request: NextRequest) {
         name: 'fit/parse',
         data: {
           fileId,
-          userId
+          userId: user.id
         }
       })
       

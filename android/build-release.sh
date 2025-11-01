@@ -16,9 +16,9 @@ if [ ! -f ".env.production" ]; then
     exit 1
 fi
 
-# Copy production env to .env
+# Set environment to use .env.production via ENVFILE
 echo "📝 Using production environment variables..."
-cp .env.production .env
+export ENVFILE=.env.production
 
 # Set production environment for Babel (strips console.log)
 export NODE_ENV=production

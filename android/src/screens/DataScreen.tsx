@@ -9,13 +9,14 @@ import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, A
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { FileText, Trash2, RefreshCw, Clock, Database, Activity, AlertCircle } from 'lucide-react-native';
+import { FileText, Trash2, RefreshCw, Clock, Database, Activity, AlertCircle, CheckCircle } from 'lucide-react-native';
 import { theme as staticTheme } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
-import { ConfirmDialog, ErrorDialog } from '../components/ui';
+import { ConfirmDialog, ErrorDialog, InfoDialog } from '../components/ui';
 import { RecordingMetadata } from '../services/FileService';
 import { useDataStore } from '../stores/dataStore';
+import { useSyncStore } from '../stores/syncStore';
 import { RootStackParamList } from '../navigation/AppNavigator';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -36,13 +37,25 @@ const DataScreen: React.FC = () => {
     clearError,
   } = useDataStore();
 
+  // Use syncStore to track which files are uploaded
+  const { checkSyncStatus, isSynced, isChecking } = useSyncStore();
+
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [recordingToDelete, setRecordingToDelete] = useState<RecordingMetadata | null>(null);
+  const [showSyncInfo, setShowSyncInfo] = useState(false);
 
   // Load recordings only on initial mount
   useEffect(() => {
     loadRecordings();
   }, []);
+
+  // Check sync status whenever recordings change
+  useEffect(() => {
+    if (recordings.length > 0) {
+      const filenames = recordings.map(r => r.fileName);
+      checkSyncStatus(filenames);
+    }
+  }, [recordings, checkSyncStatus]);
 
   const handleRefresh = async () => {
     setIsRefreshing(true);
@@ -220,6 +233,7 @@ const DataScreen: React.FC = () => {
               const duration = formatDuration(recording.startTime, recording.endTime);
               const displayName = getDisplayName(recording.fileName);
               const displayTitle = displayName ? `${displayName} - ${dateRange}` : dateRange;
+              const synced = isSynced(recording.fileName);
 
               return (
                 <TouchableOpacity
@@ -261,15 +275,28 @@ const DataScreen: React.FC = () => {
                         </View>
                       </View>
                     </View>
-                    <TouchableOpacity
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        handleDeleteRecording(recording);
-                      }}
-                      style={styles.fileRowDelete}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                      <Trash2 size={18} color={theme.colors.error} />
-                    </TouchableOpacity>
+                    <View style={styles.fileRowActions}>
+                      {synced && (
+                        <TouchableOpacity
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            setShowSyncInfo(true);
+                          }}
+                          style={styles.fileRowAction}
+                          hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                          <CheckCircle size={18} color={theme.colors.success} />
+                        </TouchableOpacity>
+                      )}
+                      <TouchableOpacity
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          handleDeleteRecording(recording);
+                        }}
+                        style={styles.fileRowAction}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                        <Trash2 size={18} color={theme.colors.error} />
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 </TouchableOpacity>
               );
@@ -283,7 +310,7 @@ const DataScreen: React.FC = () => {
       visible={recordingToDelete !== null}
       onDismiss={() => setRecordingToDelete(null)}
       title="Delete Recording"
-      message={recordingToDelete ? `Delete recording from ${formatDateRange(recordingToDelete.startTime, recordingToDelete.endTime)}? This cannot be undone.` : ''}
+      message={recordingToDelete ? `Delete local recording from ${formatDateRange(recordingToDelete.startTime, recordingToDelete.endTime)}? This only deletes the file from your device. Cloud recordings can be managed through the web app.` : ''}
       icon={<AlertCircle size={48} color={theme.colors.error} />}
       actions={[
         {
@@ -297,6 +324,14 @@ const DataScreen: React.FC = () => {
           variant: 'danger',
         },
       ]}
+    />
+
+    <InfoDialog
+      visible={showSyncInfo}
+      onDismiss={() => setShowSyncInfo(false)}
+      title="Synced with Cloud"
+      message="This recording has been successfully uploaded to cloud storage and can be accessed from the web app."
+      icon={<CheckCircle size={48} color={theme.colors.success} />}
     />
 
     <ErrorDialog
@@ -415,9 +450,13 @@ const styles = StyleSheet.create({
   fileRowDivider: {
     fontSize: staticTheme.typography.fontSize.xs,
   },
-  fileRowDelete: {
+  fileRowActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: staticTheme.spacing.sm,
+  },
+  fileRowAction: {
     padding: staticTheme.spacing.xs,
-    marginLeft: staticTheme.spacing.sm,
   },
   fileRowTitle: {
     flexDirection: 'row',
@@ -428,4 +467,3 @@ const styles = StyleSheet.create({
 });
 
 export default DataScreen;
-

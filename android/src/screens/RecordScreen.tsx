@@ -119,14 +119,33 @@ const RecordScreen: React.FC = () => {
     { label: 'CSV (Text)', value: 'csv', description: 'Compatible with spreadsheets' },
   ], []);
 
-  // Update file size estimate based on session data
+  // Poll recording stats every second (instead of callback-driven updates)
   useEffect(() => {
-    if (session && session.isRecording && !session.isPaused) {
-      const bytesPerSample = session.format === 'vtx' ? 60 : 200; // VTX is ~60 bytes, CSV is ~200 bytes
-      const estimatedSize = session.sampleCount * bytesPerSample;
-      updateStats({ fileSize: estimatedSize, sampleCount: session.sampleCount });
-    }
-  }, [session?.sampleCount, session?.isRecording, session?.isPaused, updateStats]);
+    if (!session?.isRecording) return;
+
+    const pollInterval = setInterval(() => {
+      const currentSession = RecordingService.getCurrentSession();
+
+      if (currentSession && isMountedRef.current) {
+        // Update session in store
+        setSession(currentSession);
+
+        // Calculate derived stats
+        const bytesPerSample = currentSession.format === 'vtx' ? 28 : 200;
+        const estimatedSize = currentSession.sampleCount * bytesPerSample;
+        const duration = Date.now() - currentSession.startTime.getTime();
+
+        updateStats({
+          sampleCount: currentSession.sampleCount,
+          fileSize: estimatedSize,
+          duration: duration,
+          droppedSamples: 0
+        });
+      }
+    }, 1000); // Poll every 1 second
+
+    return () => clearInterval(pollInterval);
+  }, [session?.isRecording, setSession, updateStats]);
 
   // Update persistent notification when recording state changes
   useEffect(() => {
@@ -144,14 +163,14 @@ const RecordScreen: React.FC = () => {
         isConnected,
         deviceName,
         timeStr,
-        session.sampleCount,
+        stats.sampleCount, // Use stats from store instead of session
         deviceId
       );
     } else {
       // Recording stopped - hide persistent notification
       NotificationService.hideRecordingNotification();
     }
-  }, [session?.isRecording, session?.sampleCount, isConnected, deviceName, currentTime]);
+  }, [session?.isRecording, stats.sampleCount, isConnected, deviceName, currentTime]);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -304,16 +323,6 @@ const RecordScreen: React.FC = () => {
       const newSession = await RecordingService.startRecording(
         deviceId,
         deviceName,
-        (updatedSession) => {
-          if (isMountedRef.current) {
-            setSession(updatedSession);
-          }
-        },
-        (recordingError) => {
-          if (isMountedRef.current) {
-            setError(recordingError.message);
-          }
-        },
         zeroPointRef.current, // Pass current zero point to recording service
         recordingFormat, // Recording format (csv or vtx)
         10 // Sample rate in Hz (must match firmware broadcast rate)

@@ -16,11 +16,11 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { Activity, FileText, Trash2, CloudUpload } from 'lucide-react-native';
+import { Activity, FileText, Trash2, CloudUpload, CheckCircle } from 'lucide-react-native';
 import { LineChart } from 'react-native-gifted-charts';
 import { theme as staticTheme } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
-import { BackButton, ErrorDialog, ConfirmDialog } from '../components/ui';
+import { BackButton, ErrorDialog, ConfirmDialog, InfoDialog, UploadProgressDialog } from '../components/ui';
 import FileService, { IMUSensorData, RecordingMetadata } from '../services/FileService';
 import VTXFileService from '../services/VTXFileService';
 import { RootStackParamList } from '../navigation/AppNavigator';
@@ -28,6 +28,7 @@ import RNFS from 'react-native-fs';
 import { useToast } from '../contexts/ToastContext';
 import { createClient } from '../lib/supabase';
 import { API_URL } from '@env';
+import { useSyncStore } from '../stores/syncStore';
 
 type DataDetailRouteProp = RouteProp<RootStackParamList, 'DataDetail'>;
 
@@ -53,6 +54,9 @@ const DataDetailScreen: React.FC = () => {
   const route = useRoute<DataDetailRouteProp>();
   const { fileName, filePath } = route.params;
 
+  // Use syncStore to track if file is synced
+  const { checkSyncStatus, isSynced, markAsSynced } = useSyncStore();
+
   const [isLoading, setIsLoading] = useState(true);
   const [data, setData] = useState<IMUSensorData[]>([]);
   const [selectedDataType, setSelectedDataType] = useState<DataType>('accelerometer');
@@ -66,9 +70,12 @@ const DataDetailScreen: React.FC = () => {
   const [isDeleting, setIsDeleting] = useState(false);
   const [showUploadDialog, setShowUploadDialog] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [showSyncInfo, setShowSyncInfo] = useState(false);
 
   useEffect(() => {
     loadData();
+    checkSyncStatus([fileName]);
   }, []);
 
   const loadData = async () => {
@@ -191,9 +198,11 @@ const DataDetailScreen: React.FC = () => {
 
   const handleUploadFile = async () => {
     setIsUploading(true);
+    setUploadProgress(0);
     setShowUploadDialog(false);
 
     try {
+      console.log('[DataDetailScreen] API_URL from env:', API_URL);
       if (!API_URL) {
         showToast({
           message: 'API_URL not configured in .env',
@@ -229,36 +238,50 @@ const DataDetailScreen: React.FC = () => {
       const fileStats = await RNFS.stat(filePath);
       const fileSize = fileStats.size;
 
-      // Read file as ArrayBuffer for Supabase upload
-      const fileBase64 = await RNFS.readFile(filePath, 'base64');
+      // Upload file to Supabase storage
+      const userId = session.user.id;
+      const storageFileName = `${fileName}`;
+      const storagePath = `${userId}/${storageFileName}`;
 
-      // Convert base64 to ArrayBuffer
+      console.log(`[DataDetailScreen] Starting upload: ${fileName} (${fileSize} bytes)`);
+
+      // Read file as base64 and convert to ArrayBuffer
+      const fileBase64 = await RNFS.readFile(filePath, 'base64');
       const binaryString = atob(fileBase64);
       const bytes = new Uint8Array(binaryString.length);
       for (let i = 0; i < binaryString.length; i++) {
         bytes[i] = binaryString.charCodeAt(i);
       }
-      const arrayBuffer = bytes.buffer;
 
-      // Upload file to Supabase storage (recordings bucket)
-      const userId = session.user.id;
-      const storageFileName = `${fileName}`;
-      const storagePath = `${userId}/${storageFileName}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from('recordings')
-        .upload(storagePath, arrayBuffer, {
-          contentType: 'application/octet-stream',
-          upsert: true, // Allow overwriting existing files
+      // Simulate progress updates (since Supabase SDK doesn't provide native progress)
+      const progressInterval = setInterval(() => {
+        setUploadProgress(prev => {
+          if (prev >= 90) return prev; // Cap at 90% until complete
+          return prev + 10;
         });
+      }, 200);
 
-      if (uploadError) {
-        console.error('[DataDetailScreen] Storage upload error:', uploadError);
-        showToast({
-          message: `Storage upload failed: ${uploadError.message}`,
-          variant: 'error',
-        });
-        return;
+      try {
+        // Use Supabase SDK for reliable upload
+        const { error: uploadError } = await supabase.storage
+          .from('recordings')
+          .upload(storagePath, bytes.buffer, {
+            contentType: 'application/octet-stream',
+            upsert: false,
+          });
+
+        clearInterval(progressInterval);
+        setUploadProgress(100);
+
+        if (uploadError) {
+          console.error('[DataDetailScreen] Storage upload error:', uploadError);
+          throw new Error(`Storage upload failed: ${uploadError.message}`);
+        }
+
+        console.log('[DataDetailScreen] Upload successful');
+      } catch (error) {
+        clearInterval(progressInterval);
+        throw error;
       }
 
       // Call API to process the recording
@@ -312,6 +335,11 @@ const DataDetailScreen: React.FC = () => {
 
       const result = await response.json();
       console.log('[DataDetailScreen] Upload successful:', result);
+
+      // Mark file as synced in store
+      if (result.recordingId) {
+        markAsSynced(fileName, result.recordingId);
+      }
 
       showToast({
         message: 'Recording uploaded successfully',
@@ -495,16 +523,28 @@ const DataDetailScreen: React.FC = () => {
         <BackButton onPress={() => navigation.goBack()} />
         <Text style={[styles.title, { color: theme.colors.textPrimary }]} numberOfLines={1}>Detail</Text>
         <View style={styles.headerActions}>
-          <TouchableOpacity
-            style={styles.actionButton}
-            onPress={() => setShowUploadDialog(true)}
-            disabled={isUploading || !fileName.toLowerCase().endsWith('.vtx')}
-          >
-            <CloudUpload
-              size={20}
-              color={isUploading || !fileName.toLowerCase().endsWith('.vtx') ? theme.colors.textSecondary : theme.colors.primary}
-            />
-          </TouchableOpacity>
+          {isSynced(fileName) ? (
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={() => setShowSyncInfo(true)}
+            >
+              <CheckCircle
+                size={20}
+                color={theme.colors.success}
+              />
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={styles.actionButton}
+              onPress={() => setShowUploadDialog(true)}
+              disabled={isUploading || !fileName.toLowerCase().endsWith('.vtx')}
+            >
+              <CloudUpload
+                size={20}
+                color={isUploading || !fileName.toLowerCase().endsWith('.vtx') ? theme.colors.textSecondary : theme.colors.primary}
+              />
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             style={styles.actionButton}
             onPress={() => setShowDeleteDialog(true)}
@@ -793,7 +833,7 @@ const DataDetailScreen: React.FC = () => {
       visible={showDeleteDialog}
       onDismiss={() => setShowDeleteDialog(false)}
       title="Delete Recording"
-      message={`Are you sure you want to delete "${fileName.replace(/\.(csv|vtx)$/, '')}"? This action cannot be undone.`}
+      message={`Delete local recording "${fileName.replace(/\.(csv|vtx)$/, '')}"? This only deletes the file from your device. Cloud recordings can be managed through the web app.`}
       icon={<Trash2 size={48} color={theme.colors.error} />}
       actions={[
         {
@@ -807,6 +847,15 @@ const DataDetailScreen: React.FC = () => {
           variant: 'danger',
         },
       ]}
+    />
+
+    {/* Sync Info Dialog */}
+    <InfoDialog
+      visible={showSyncInfo}
+      onDismiss={() => setShowSyncInfo(false)}
+      title="Synced with Cloud"
+      message="This recording has been successfully uploaded to cloud storage and can be accessed from the web app."
+      icon={<CheckCircle size={48} color={theme.colors.success} />}
     />
 
     {/* Upload Confirmation Dialog */}
@@ -828,6 +877,13 @@ const DataDetailScreen: React.FC = () => {
           variant: 'primary',
         },
       ]}
+    />
+
+    {/* Upload Progress Dialog */}
+    <UploadProgressDialog
+      visible={isUploading}
+      fileName={fileName}
+      progress={uploadProgress}
     />
     </View>
   );

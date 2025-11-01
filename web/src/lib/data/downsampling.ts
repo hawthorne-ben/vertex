@@ -28,12 +28,12 @@ export function downsampleLTTB(samples: Sample[], targetSize: number): Sample[] 
 
   // Convert to format expected by lttb library: [x, y] pairs
   const timestamps = samples.map((s, i) => i) // Use indices for x-axis
-  const accelX = samples.map((s, i) => [i, s.accel.x])
-  const accelY = samples.map((s, i) => [i, s.accel.y])
-  const accelZ = samples.map((s, i) => [i, s.accel.z])
-  const gyroX = samples.map((s, i) => [i, s.gyro.x])
-  const gyroY = samples.map((s, i) => [i, s.gyro.y])
-  const gyroZ = samples.map((s, i) => [i, s.gyro.z])
+  const accelX = samples.map((s, i) => [i, s.accel.x] as [number, number])
+  const accelY = samples.map((s, i) => [i, s.accel.y] as [number, number])
+  const accelZ = samples.map((s, i) => [i, s.accel.z] as [number, number])
+  const gyroX = samples.map((s, i) => [i, s.gyro.x] as [number, number])
+  const gyroY = samples.map((s, i) => [i, s.gyro.y] as [number, number])
+  const gyroZ = samples.map((s, i) => [i, s.gyro.z] as [number, number])
 
   // Downsample each axis
   const downsampledAccelX = lttb(accelX, targetSize)
@@ -58,7 +58,7 @@ export function downsampleLTTB(samples: Sample[], targetSize: number): Sample[] 
   // If we have more than target, do a final LTTB pass on the merged indices
   let finalIndices = selectedIndices
   if (selectedIndices.length > targetSize) {
-    const mergedData = selectedIndices.map(idx => [idx, samples[idx].accel.x])
+    const mergedData = selectedIndices.map(idx => [idx, samples[idx].accel.x] as [number, number])
     const finalDownsampled = lttb(mergedData, targetSize)
     finalIndices = finalDownsampled.map(([idx]) => Math.round(idx))
   }
@@ -75,7 +75,7 @@ export function downsampleAxis(data: number[], timestamps: number[], targetSize:
     return { data, timestamps }
   }
 
-  const points = data.map((value, i) => [timestamps[i], value])
+  const points = data.map((value, i) => [timestamps[i], value] as [number, number])
   const downsampled = lttb(points, targetSize)
 
   return {

@@ -1,19 +1,20 @@
 /**
- * Recording Service
+ * Recording Service - Foreground with Optimized Buffering
  *
- * Manages IMU data recording sessions with robust error handling:
+ * Architecture:
+ * - BLE subscription on main thread (required by BLE stack)
+ * - Large buffers (1000 samples = 10 seconds @ 100Hz)
+ * - Async file writes that yield to event loop
  * - Handles connection interruptions gracefully
- * - Buffers data to prevent loss during file writes
- * - Tracks recording metadata (start time, sample count, etc.)
- * - Auto-recovery on reconnection
  * - Supports both CSV and VTX binary formats
  */
 
 import FileService, { IMUSensorData } from './FileService';
 import VTXFileService from './VTXFileService';
 import BleService from './BleService';
-import { IMURecord, VTXMetadata } from '@vertex/vtx-parser';
+import { IMURecord, VTXMetadata, VTXStreamEncoder } from '@vertex-pkg/vtx-parser';
 import { useDeviceStore } from '../stores/deviceStore';
+import RNFS from 'react-native-fs';
 
 export type RecordingFormat = 'csv' | 'vtx';
 
@@ -24,69 +25,60 @@ export interface RecordingSession {
   deviceId: string;
   deviceName: string;
   startTime: Date;
-  endTime?: Date; // Time when recording stopped
+  endTime?: Date;
   sampleCount: number;
   isRecording: boolean;
   isPaused: boolean;
   lastSampleTime?: Date;
   connectionLostTime?: Date;
-  zeroPoint?: any; // Zero point calibration applied to this recording
-  format: RecordingFormat; // File format (csv or vtx)
-  sampleRate: number; // Sample rate for VTX encoding
+  zeroPoint?: any;
+  format: RecordingFormat;
+  sampleRate: number;
 }
-
-export type RecordingStatusCallback = (session: RecordingSession) => void;
-export type RecordingErrorCallback = (error: Error) => void;
 
 class RecordingService {
   private currentSession: RecordingSession | null = null;
+  private zeroPoint: any = null;
+
+  // BLE subscription
   private subscription: any = null;
+
+  // Buffering with larger size for better performance
   private writeBuffer: IMUSensorData[] = [];
-  private allRecords: IMUSensorData[] = []; // Store all records for VTX encoding
+  private readonly BUFFER_SIZE = 1000; // 10 seconds at 100Hz
   private isWriting: boolean = false;
-  private statusCallback: RecordingStatusCallback | null = null;
-  private errorCallback: RecordingErrorCallback | null = null;
-  private writeInterval: NodeJS.Timeout | null = null;
-  private zeroPoint: any = null; // Current zero point for offset calculations
+  private isStopping: boolean = false; // Flag to prevent new flushes during stop
 
-  // Debug: Track actual sample rate
-  private debugSampleCount: number = 0;
-  private debugStartTime: number = 0;
-  private debugLastLogTime: number = 0;
+  // VTX stream encoder
+  private vtxStreamEncoder: VTXStreamEncoder | null = null;
 
-  // Buffer configuration
-  private readonly BUFFER_SIZE = 50; // Write every 50 samples
-  private readonly BUFFER_FLUSH_INTERVAL = 2000; // Flush every 2 seconds minimum
-  private readonly DEFAULT_SAMPLE_RATE = 100; // Default sample rate in Hz
+  // Timestamp synchronization (firmware timestamp → absolute time)
+  private baseTimestamp: number | null = null;  // Android Date.now() at recording start
+  private baseOffset: number | null = null;      // First firmware timestamp
+
+  // Debug tracking
+  private debugSampleCount = 0;
+  private debugStartTime = Date.now();
+  private debugLastLogTime = Date.now();
+
+  private readonly DEFAULT_SAMPLE_RATE = 100;
 
   /**
-   * Initialize service on app start - clears any stale session state
+   * Initialize service
    */
   initialize(): void {
-    console.log('[RecordingService] Initializing - clearing any stale session state');
-    this.currentSession = null;
-    this.subscription = null;
-    this.writeBuffer = [];
-    this.allRecords = [];
-    this.isWriting = false;
-    this.statusCallback = null;
-    this.errorCallback = null;
-    if (this.writeInterval) {
-      clearInterval(this.writeInterval);
-      this.writeInterval = null;
-    }
+    console.log('[RecordingService] Initializing');
+    this.cleanup();
   }
 
   /**
-   * Start a new recording session
+   * Start recording session
    */
   async startRecording(
     deviceId: string,
     deviceName: string,
-    onStatus?: RecordingStatusCallback,
-    onError?: RecordingErrorCallback,
     zeroPoint?: any,
-    format: RecordingFormat = 'csv',
+    format: RecordingFormat = 'vtx',
     sampleRate: number = this.DEFAULT_SAMPLE_RATE
   ): Promise<RecordingSession> {
     if (this.currentSession?.isRecording) {
@@ -95,19 +87,51 @@ class RecordingService {
 
     console.log(`[RecordingService] Starting ${format.toUpperCase()} recording for device: ${deviceName}`);
 
-    // Store callbacks and zero point
-    this.statusCallback = onStatus || null;
-    this.errorCallback = onError || null;
     this.zeroPoint = zeroPoint || null;
 
     try {
-      // Create new recording file based on format
+      // Create file
       let filePath: string;
       let fileName: string;
 
       if (format === 'vtx') {
         filePath = await VTXFileService.createRecordingFile(deviceName, sampleRate);
         fileName = filePath.split('/').pop() || 'recording.vtx';
+
+        // Initialize VTX stream encoder
+        const writeCallback = async (chunk: Uint8Array) => {
+          let binary = '';
+          for (let i = 0; i < chunk.byteLength; i++) {
+            binary += String.fromCharCode(chunk[i]);
+          }
+          const base64 = btoa(binary);
+          await RNFS.appendFile(filePath, base64, 'base64');
+        };
+
+        const vtxMetadata: VTXMetadata = {
+          device: {
+            id: deviceId,
+            name: deviceName,
+          },
+          session: {
+            createdAt: new Date().toISOString(),
+          },
+          calibration: this.zeroPoint ? {
+            zeroPoint: this.zeroPoint,
+            applied: true,
+          } : undefined,
+        };
+
+        this.vtxStreamEncoder = new VTXStreamEncoder({
+          sampleRate,
+          includeMag: true,
+          includeQuat: false,
+          metadata: vtxMetadata,
+          writeCallback,
+        });
+
+        await this.vtxStreamEncoder.initialize();
+        console.log('[RecordingService] VTX stream encoder initialized');
       } else {
         const result = await FileService.createRecordingFile(deviceName);
         filePath = result.filePath;
@@ -130,28 +154,18 @@ class RecordingService {
         sampleRate
       };
 
-      // Clear previous recording data
-      this.writeBuffer = [];
-      this.allRecords = [];
-
-      // Reset debug counters
+      // Reset debug tracking
       this.debugSampleCount = 0;
       this.debugStartTime = Date.now();
       this.debugLastLogTime = Date.now();
 
-      // Start data subscription
+      // Reset timestamp synchronization
+      this.baseTimestamp = null;
+      this.baseOffset = null;
+
+      // Subscribe to BLE data stream
       await this.subscribeToData();
 
-      // Start periodic buffer flush (CSV only)
-      if (format === 'csv') {
-        this.writeInterval = setInterval(() => {
-          this.flushBuffer().catch(err => {
-            console.error('[RecordingService] Buffer flush error:', err);
-          });
-        }, this.BUFFER_FLUSH_INTERVAL);
-      }
-
-      this.notifyStatus();
       console.log(`[RecordingService] Recording started: ${fileName}`);
 
       return this.currentSession;
@@ -163,7 +177,7 @@ class RecordingService {
   }
 
   /**
-   * Stop the current recording session
+   * Stop recording session
    */
   async stopRecording(): Promise<RecordingSession | null> {
     if (!this.currentSession) {
@@ -171,97 +185,55 @@ class RecordingService {
     }
 
     console.log('[RecordingService] Stopping recording...');
+    this.isStopping = true; // Set flag to prevent new background flushes
 
     const session = { ...this.currentSession };
     session.isRecording = false;
-    session.endTime = new Date(); // Capture the end time
+    session.endTime = new Date();
 
     try {
-      // Handle format-specific finalization
-      if (session.format === 'vtx') {
-        // For VTX: encode all records at once
-        console.log(`[RecordingService] Encoding ${this.allRecords.length} records to VTX format...`);
-
-        // Convert IMUSensorData to IMURecord format
-        const imuRecords: IMURecord[] = this.allRecords.map(data => ({
-          timestamp: data.timestamp.getTime(),
-          accelX: data.accel_x,
-          accelY: data.accel_y,
-          accelZ: data.accel_z,
-          gyroX: data.gyro_x,
-          gyroY: data.gyro_y,
-          gyroZ: data.gyro_z,
-          magX: data.mag_x,
-          magY: data.mag_y,
-          magZ: data.mag_z,
-          quatW: data.quat_w,
-          quatX: data.quat_x,
-          quatY: data.quat_y,
-          quatZ: data.quat_z,
-        }));
-
-        // Create metadata
-        const metadata: VTXMetadata = {
-          device: {
-            id: session.deviceId,
-            name: session.deviceName,
-          },
-          session: {
-            createdAt: session.startTime.toISOString(),
-          },
-          calibration: session.zeroPoint ? {
-            zeroPoint: session.zeroPoint,
-            applied: true,
-          } : undefined,
-        };
-
-        // Write VTX file
-        await VTXFileService.writeVTXFile(
-          session.filePath,
-          imuRecords,
-          session.sampleRate,
-          metadata,
-          {
-            includeMag: imuRecords.some(r => r.magX !== undefined),
-            includeQuat: imuRecords.some(r => r.quatW !== undefined),
-          }
-        );
-
-        console.log(`[RecordingService] VTX file written: ${session.filePath}`);
-      } else {
-        // For CSV: flush any remaining buffered data
-        await this.flushBuffer();
-      }
-
-      // Unsubscribe from data stream
+      // Unsubscribe from BLE
       if (this.subscription) {
-        try {
-          this.subscription.remove();
-        } catch (err) {
-          console.warn('[RecordingService] Error removing subscription:', err);
-        }
+        this.subscription.remove();
         this.subscription = null;
       }
 
-      // Clear flush interval
-      if (this.writeInterval) {
-        clearInterval(this.writeInterval);
-        this.writeInterval = null;
+      // Wait a moment for any pending setImmediate callbacks to see isStopping flag
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Flush any remaining buffered data
+      await this.flushBuffer();
+
+      // Finalize VTX file if needed
+      if (session.format === 'vtx' && this.vtxStreamEncoder) {
+        const finalHeader = this.vtxStreamEncoder.finalize();
+
+        // Read file and update header
+        const currentFile = await RNFS.readFile(session.filePath, 'base64');
+        const currentBytes = atob(currentFile);
+        const currentArray = new Uint8Array(currentBytes.length);
+        for (let i = 0; i < currentBytes.length; i++) {
+          currentArray[i] = currentBytes.charCodeAt(i);
+        }
+
+        // Replace header
+        for (let i = 0; i < finalHeader.length; i++) {
+          currentArray[i] = finalHeader[i];
+        }
+
+        // Write back
+        let binary = '';
+        for (let i = 0; i < currentArray.length; i++) {
+          binary += String.fromCharCode(currentArray[i]);
+        }
+        await RNFS.writeFile(session.filePath, btoa(binary), 'base64');
+
+        console.log('[RecordingService] VTX file finalized');
       }
 
-      // Log final sample rate
-      const totalElapsed = (Date.now() - this.debugStartTime) / 1000;
-      const finalHz = this.debugSampleCount / totalElapsed;
       console.log(`[RecordingService] Recording stopped: ${session.sampleCount} samples recorded`);
-      console.log(`[RecordingService] Final sample rate: ${finalHz.toFixed(1)} Hz (${this.debugSampleCount} samples in ${totalElapsed.toFixed(1)}s)`);
 
-      // Clear data
-      this.writeBuffer = [];
-      this.allRecords = [];
-      this.currentSession = null;
-      this.statusCallback = null;
-      this.errorCallback = null;
-      this.zeroPoint = null;
+      this.cleanup();
 
       return session;
     } catch (error: any) {
@@ -272,13 +244,12 @@ class RecordingService {
   }
 
   /**
-   * Pause recording (stops writing data but keeps session active)
+   * Pause recording
    */
   pauseRecording(): void {
     if (this.currentSession && this.currentSession.isRecording) {
       this.currentSession.isPaused = true;
       console.log('[RecordingService] Recording paused');
-      this.notifyStatus();
     }
   }
 
@@ -290,12 +261,10 @@ class RecordingService {
       this.currentSession.isPaused = false;
       this.currentSession.connectionLostTime = undefined;
       console.log('[RecordingService] Recording resumed');
-      this.notifyStatus();
 
-      // Clean up any existing subscription first
+      // Clean up old subscription
       if (this.subscription) {
         try {
-          console.log('[RecordingService] Cleaning up old subscription before resuming');
           this.subscription.remove();
           this.subscription = null;
         } catch (err) {
@@ -303,13 +272,12 @@ class RecordingService {
         }
       }
 
-      // Wait for BLE service discovery to complete (typically ~1.5s)
-      console.log('[RecordingService] Waiting for BLE to stabilize...');
+      // Wait for BLE to stabilize
       await new Promise(resolve => setTimeout(resolve, 2000));
 
-      // Re-subscribe to data stream with retry logic
+      // Re-subscribe with retry
       let retries = 0;
-      const maxRetries = 2; // Reduced from 3 to 2 retries
+      const maxRetries = 2;
       while (retries < maxRetries) {
         try {
           await this.subscribeToData();
@@ -318,10 +286,8 @@ class RecordingService {
         } catch (error: any) {
           retries++;
           if (retries >= maxRetries) {
-            console.error('[RecordingService] Failed to subscribe after retries');
             throw error;
           }
-          // Wait 2 seconds between retries instead of 1
           await new Promise(resolve => setTimeout(resolve, 2000));
         }
       }
@@ -329,17 +295,17 @@ class RecordingService {
   }
 
   /**
-   * Get current recording session
+   * Get current session
    */
   getCurrentSession(): RecordingSession | null {
     return this.currentSession ? { ...this.currentSession } : null;
   }
 
   /**
-   * Check if currently recording
+   * Check if recording
    */
   isRecording(): boolean {
-    return this.currentSession?.isRecording && !this.currentSession?.isPaused || false;
+    return (this.currentSession?.isRecording && !this.currentSession?.isPaused) || false;
   }
 
   /**
@@ -374,25 +340,42 @@ class RecordingService {
       return;
     }
 
-    // Debug: Track actual sample rate
+    // Track actual sample rate
     this.debugSampleCount++;
     const now = Date.now();
     const elapsedSeconds = (now - this.debugStartTime) / 1000;
     const actualHz = this.debugSampleCount / elapsedSeconds;
 
-    // Log every 2 seconds
-    if (now - this.debugLastLogTime >= 2000) {
-      console.log(`[RecordingService] Sample rate: ${actualHz.toFixed(1)} Hz (${this.debugSampleCount} samples in ${elapsedSeconds.toFixed(1)}s)`);
+    // Log every 5 seconds (reduced logging frequency)
+    if (now - this.debugLastLogTime >= 5000) {
+      console.log(`[RecordingService] Sample rate: ${actualHz.toFixed(1)} Hz | Buffer: ${this.writeBuffer.length}/${this.BUFFER_SIZE}`);
       this.debugLastLogTime = now;
     }
 
     try {
-      // Update battery voltage in device store
-      if (data.batteryVoltage !== undefined) {
+      // Initialize timestamp synchronization on first sample
+      if (this.baseTimestamp === null && data.timestamp !== undefined) {
+        this.baseTimestamp = Date.now();
+        this.baseOffset = data.timestamp;
+        console.log(`[RecordingService] Timestamp sync initialized: base=${this.baseTimestamp}, offset=${this.baseOffset}`);
+      }
+
+      // Calculate absolute timestamp from firmware timestamp
+      let absoluteTime: number;
+      if (this.baseTimestamp !== null && this.baseOffset !== null && data.timestamp !== undefined) {
+        // Firmware timestamp (ms since boot) + offset = absolute time
+        absoluteTime = this.baseTimestamp + (data.timestamp - this.baseOffset);
+      } else {
+        // Fallback to Android time if firmware timestamp unavailable
+        absoluteTime = Date.now();
+      }
+
+      // Update battery voltage ONLY once every 10 samples (once per second @ 10Hz)
+      if (data.batteryVoltage !== undefined && this.currentSession.sampleCount % 10 === 0) {
         useDeviceStore.getState().setBattery(null, data.batteryVoltage);
       }
 
-      // Apply zero point offset if set
+      // Apply zero point offset (reuse data object instead of spread for performance)
       let processedData = data;
       if (this.zeroPoint) {
         processedData = {
@@ -409,9 +392,9 @@ class RecordingService {
         };
       }
 
-      // Convert BLE data to IMU format (with offsets applied)
+      // Convert to IMU format with firmware-based timestamp
       const imuData: IMUSensorData = {
-        timestamp: new Date(),
+        timestamp: new Date(absoluteTime),  // Use firmware timestamp + offset
         accel_x: processedData.accelX ?? 0,
         accel_y: processedData.accelY ?? 0,
         accel_z: processedData.accelZ ?? 0,
@@ -421,38 +404,35 @@ class RecordingService {
         mag_x: processedData.magX,
         mag_y: processedData.magY,
         mag_z: processedData.magZ
-        // Note: BNO055 doesn't provide quaternions in current firmware
       };
 
-      // Add to write buffer
+      // Add to buffer
       this.writeBuffer.push(imuData);
       this.currentSession.sampleCount++;
       this.currentSession.lastSampleTime = new Date();
 
-      // Store all records for VTX encoding (in-memory during recording)
-      if (this.currentSession.format === 'vtx') {
-        this.allRecords.push(imuData);
-      }
-
-      // Clear connection lost time if recovering
+      // Clear connection lost time
       if (this.currentSession.connectionLostTime) {
         this.currentSession.connectionLostTime = undefined;
       }
 
-      // Notify UI of sample count updates (every 10 samples to avoid excessive updates)
-      if (this.currentSession.sampleCount % 10 === 0) {
-        this.notifyStatus();
-      }
+      // Don't notify on every sample - let UI poll getCurrentSession() instead
+      // This prevents forcing React re-renders on a callback schedule
 
-      // Flush buffer if it reaches the threshold (CSV only)
-      if (this.currentSession.format === 'csv' && this.writeBuffer.length >= this.BUFFER_SIZE) {
-        this.flushBuffer().catch(err => {
-          console.error('[RecordingService] Buffer flush error:', err);
+      // Flush buffer when it reaches threshold
+      if (this.writeBuffer.length >= this.BUFFER_SIZE && !this.isStopping) {
+        // Use setImmediate to yield to event loop
+        setImmediate(() => {
+          // Double-check we're not stopping before flushing
+          if (!this.isStopping) {
+            this.flushBuffer().catch(err => {
+              console.error('[RecordingService] Buffer flush error:', err);
+            });
+          }
         });
       }
     } catch (error: any) {
       console.error('[RecordingService] Error handling data:', error);
-      this.notifyError(error);
     }
   }
 
@@ -460,32 +440,24 @@ class RecordingService {
    * Handle connection errors
    */
   private handleConnectionError(error: Error): void {
-    if (!this.currentSession) {
-      return;
-    }
-
-    // Only handle if not already paused (prevent duplicate error handling)
-    if (this.currentSession.isPaused) {
+    if (!this.currentSession || this.currentSession.isPaused) {
       return;
     }
 
     console.error('[RecordingService] Connection error:', error.message);
 
-    // Pause recording but keep session alive for recovery
+    // Pause recording
     this.currentSession.isPaused = true;
     this.currentSession.connectionLostTime = new Date();
 
-    this.notifyStatus();
-    this.notifyError(error);
-
-    // Attempt to flush any buffered data
+    // Flush any buffered data
     this.flushBuffer().catch(err => {
       console.error('[RecordingService] Failed to flush buffer after connection error:', err);
     });
   }
 
   /**
-   * Flush write buffer to file
+   * Flush write buffer to file (async, non-blocking)
    */
   private async flushBuffer(): Promise<void> {
     if (this.writeBuffer.length === 0 || this.isWriting || !this.currentSession) {
@@ -497,75 +469,97 @@ class RecordingService {
     this.writeBuffer = [];
 
     try {
-      // Write all buffered data
-      for (const data of dataToWrite) {
-        await FileService.appendIMUData(this.currentSession.filePath, data);
+      if (this.currentSession.format === 'vtx' && this.vtxStreamEncoder) {
+        // Write to VTX stream in chunks to avoid blocking
+        const CHUNK_SIZE = 100;
+        const encoder = this.vtxStreamEncoder; // Cache reference to avoid null check issues
+
+        for (let i = 0; i < dataToWrite.length; i += CHUNK_SIZE) {
+          // Check if session still exists (recording might have stopped during async operation)
+          if (!this.currentSession) {
+            console.log('[RecordingService] Session was stopped, aborting flush');
+            break;
+          }
+
+          const chunk = dataToWrite.slice(i, i + CHUNK_SIZE);
+
+          for (const data of chunk) {
+            const imuRecord: IMURecord = {
+              timestamp: data.timestamp.getTime(),
+              accelX: data.accel_x,
+              accelY: data.accel_y,
+              accelZ: data.accel_z,
+              gyroX: data.gyro_x,
+              gyroY: data.gyro_y,
+              gyroZ: data.gyro_z,
+              magX: data.mag_x,
+              magY: data.mag_y,
+              magZ: data.mag_z,
+              quatW: data.quat_w,
+              quatX: data.quat_x,
+              quatY: data.quat_y,
+              quatZ: data.quat_z,
+            };
+            await encoder.addRecord(imuRecord);
+          }
+
+          // Yield to event loop every chunk
+          if (i + CHUNK_SIZE < dataToWrite.length) {
+            await new Promise(resolve => setImmediate(resolve));
+          }
+        }
+      } else {
+        // CSV: Write in chunks
+        const CHUNK_SIZE = 100;
+        for (let i = 0; i < dataToWrite.length; i += CHUNK_SIZE) {
+          const chunk = dataToWrite.slice(i, i + CHUNK_SIZE);
+
+          for (const data of chunk) {
+            await FileService.appendIMUData(this.currentSession.filePath, data);
+          }
+
+          // Yield to event loop every chunk
+          if (i + CHUNK_SIZE < dataToWrite.length) {
+            await new Promise(resolve => setImmediate(resolve));
+          }
+        }
       }
 
-      console.log(`[RecordingService] Flushed ${dataToWrite.length} samples to file`);
-      this.notifyStatus();
+      console.log(`[RecordingService] Flushed ${dataToWrite.length} samples to ${this.currentSession.format} file`);
     } catch (error: any) {
       console.error('[RecordingService] Write error:', error);
 
-      // Put data back in buffer on write failure
+      // Put data back in buffer on error
       this.writeBuffer.unshift(...dataToWrite);
-
-      this.notifyError(new Error(`Failed to write data: ${error.message}`));
     } finally {
       this.isWriting = false;
     }
   }
 
   /**
-   * Notify status callback
-   */
-  private notifyStatus(): void {
-    if (this.statusCallback && this.currentSession) {
-      try {
-        this.statusCallback({ ...this.currentSession });
-      } catch (error) {
-        console.error('[RecordingService] Status callback error:', error);
-      }
-    }
-  }
-
-  /**
-   * Notify error callback
-   */
-  private notifyError(error: Error): void {
-    if (this.errorCallback) {
-      try {
-        this.errorCallback(error);
-      } catch (err) {
-        console.error('[RecordingService] Error callback error:', err);
-      }
-    }
-  }
-
-  /**
-   * Clean up resources
+   * Cleanup
    */
   private cleanup(): void {
     if (this.subscription) {
       try {
         this.subscription.remove();
       } catch (err) {
-        console.warn('[RecordingService] Cleanup subscription error:', err);
+        console.warn('[RecordingService] Error removing subscription:', err);
       }
       this.subscription = null;
     }
 
-    if (this.writeInterval) {
-      clearInterval(this.writeInterval);
-      this.writeInterval = null;
-    }
-
+    this.currentSession = null;
+    this.zeroPoint = null;
     this.writeBuffer = [];
     this.isWriting = false;
-    this.currentSession = null;
-    this.statusCallback = null;
-    this.errorCallback = null;
-    this.zeroPoint = null;
+    this.isStopping = false;
+    this.vtxStreamEncoder = null;
+    this.baseTimestamp = null;
+    this.baseOffset = null;
+    this.debugSampleCount = 0;
+    this.debugStartTime = Date.now();
+    this.debugLastLogTime = Date.now();
   }
 }
 

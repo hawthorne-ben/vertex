@@ -21,7 +21,7 @@ export async function GET() {
     )
     
     const { data, error } = await supabase
-      .from('imu_data_files')
+      .from('recordings')
       .select('count')
       .limit(1)
     

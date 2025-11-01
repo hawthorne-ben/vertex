@@ -4,11 +4,6 @@
   "private": true,
   "description": "Vertex IMU cycling data analysis platform - Monorepo",
   "homepage": "https://ridevertex.com",
-  "workspaces": [
-    "packages/*",
-    "web",
-    "android"
-  ],
   "scripts": {
     "version:vtx-format": "lerna version --scope @vertex/vtx-format",
     "version:vtx-constants": "lerna version --scope @vertex/vtx-constants",
@@ -19,9 +14,11 @@
     "dev:web": "cd web && npm run dev",
     "dev:android": "cd android && npm run android",
     "build:web": "cd web && npm run build",
+    "build:android:local": "cd android && ./android/gradlew assembleDebug -p android",
+    "build:android:prod": "cd android && ./build-release.sh",
     "build:android:debug": "cd android && ./android/gradlew assembleDebug -p android",
     "build:android:release": "cd android && ./android/gradlew assembleRelease -p android",
-    "build:android": "npm run build:android:debug",
+    "build:android": "npm run build:android:local",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
     "lint:fix": "eslint . --ext .js,.jsx,.ts,.tsx --fix",
     "format": "prettier --write \"**/*.{js,jsx,ts,tsx,json,md}\"",
@@ -55,5 +52,8 @@
   "overrides": {
     "react": "19.1.1",
     "react-test-renderer": "19.1.1"
+  },
+  "dependencies": {
+    "react-dom": "^19.2.0"
   }
 }

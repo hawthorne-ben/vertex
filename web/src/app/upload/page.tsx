@@ -81,7 +81,7 @@ export default function UploadPage() {
         reject(new Error('Upload failed: Network error'))
       }
       
-      const uploadUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/uploads/${storagePath}`
+      const uploadUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/recordings/${storagePath}`
       
       xhr.open('POST', uploadUrl, true)
       xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`)

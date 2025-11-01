@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import '@/css/uplot-custom.css'
+import { createClient } from '@/lib/supabase/client'
 
 interface IMUSample {
   timestamp: string
@@ -48,17 +49,42 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
     const fetchDetailData = async () => {
       setLoading(true)
       try {
+        const supabase = createClient()
+        const { data: { session } } = await supabase.auth.getSession()
+
+        if (!session) {
+          console.error('No session found for zoom fetch')
+          return
+        }
+
         const params = new URLSearchParams({
           start: zoomRange.start,
           end: zoomRange.end,
           resolution: 'high'
         })
-        
-        const response = await fetch(`/api/data/${fileId}/samples?${params}`)
+
+        const response = await fetch(`/api/recordings/${fileId}/samples?${params}`, {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`
+          }
+        })
         const responseData = await response.json()
-        
+
         if (responseData.samples && responseData.samples.length > 0) {
-          setSamples(responseData.samples)
+          // Transform API response format to component format
+          const transformedSamples: IMUSample[] = responseData.samples.map((s: any) => ({
+            timestamp: new Date(s.timestamp).toISOString(),
+            accel_x: s.accel.x,
+            accel_y: s.accel.y,
+            accel_z: s.accel.z,
+            gyro_x: s.gyro.x,
+            gyro_y: s.gyro.y,
+            gyro_z: s.gyro.z,
+            mag_x: s.mag?.x ?? null,
+            mag_y: s.mag?.y ?? null,
+            mag_z: s.mag?.z ?? null,
+          }))
+          setSamples(transformedSamples)
         }
       } catch (error) {
         console.error('Failed to fetch detail data:', error)

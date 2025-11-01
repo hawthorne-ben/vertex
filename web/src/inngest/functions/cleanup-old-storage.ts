@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 
 /**
  * Cleanup old storage files after 30 days
- * Runs daily to remove CSV files from Supabase Storage for files that were successfully parsed 30+ days ago
+ * Runs daily to remove VTX files from Supabase Storage for files that were successfully parsed 30+ days ago
  * Database records are retained for querying, only storage files are deleted
  */
 export const cleanupOldStorage = inngest.createFunction(
