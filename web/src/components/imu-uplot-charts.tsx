@@ -110,8 +110,30 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
   useEffect(() => {
     if (!chartRef.current || samples.length === 0) return
 
+    // Detect gaps in timestamps and insert null markers
+    // A gap is defined as a jump >500ms between consecutive samples
+    const GAP_THRESHOLD_MS = 500
+    const samplesWithGaps: (IMUSample | null)[] = []
+
+    for (let i = 0; i < samples.length; i++) {
+      samplesWithGaps.push(samples[i])
+
+      if (i < samples.length - 1) {
+        const currentTime = new Date(samples[i].timestamp).getTime()
+        const nextTime = new Date(samples[i + 1].timestamp).getTime()
+        const gap = nextTime - currentTime
+
+        if (gap > GAP_THRESHOLD_MS) {
+          // Insert null marker to break the line
+          samplesWithGaps.push(null)
+        }
+      }
+    }
+
     // Convert samples to uPlot format
-    const timestamps = samples.map(s => new Date(s.timestamp).getTime() / 1000) // Unix seconds
+    const timestamps = samplesWithGaps.map(s =>
+      s ? new Date(s.timestamp).getTime() / 1000 : null
+    ) // Unix seconds or null
 
     let series: uPlot.Series[]
     let data: uPlot.AlignedData
@@ -120,46 +142,46 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
     switch (dataType) {
       case 'accel':
         data = [
-          timestamps,
-          samples.map(s => s.accel_x),
-          samples.map(s => s.accel_y),
-          samples.map(s => s.accel_z)
+          timestamps as number[],
+          samplesWithGaps.map(s => s ? s.accel_x : null) as (number | null)[],
+          samplesWithGaps.map(s => s ? s.accel_y : null) as (number | null)[],
+          samplesWithGaps.map(s => s ? s.accel_z : null) as (number | null)[]
         ]
         series = [
           {}, // Timestamp series (no label, no stroke - won't show in legend)
-          { label: 'X', stroke: 'hsl(0, 70%, 50%)', width: 2 },
-          { label: 'Y', stroke: 'hsl(120, 70%, 40%)', width: 2 },
-          { label: 'Z', stroke: 'hsl(210, 70%, 50%)', width: 2 }
+          { label: 'X', stroke: 'hsl(0, 70%, 50%)', width: 2, spanGaps: false },
+          { label: 'Y', stroke: 'hsl(120, 70%, 40%)', width: 2, spanGaps: false },
+          { label: 'Z', stroke: 'hsl(210, 70%, 50%)', width: 2, spanGaps: false }
         ]
         yAxisLabel = 'Acceleration (m/s²)'
         break
       case 'gyro':
         data = [
-          timestamps,
-          samples.map(s => s.gyro_x),
-          samples.map(s => s.gyro_y),
-          samples.map(s => s.gyro_z)
+          timestamps as number[],
+          samplesWithGaps.map(s => s ? s.gyro_x : null) as (number | null)[],
+          samplesWithGaps.map(s => s ? s.gyro_y : null) as (number | null)[],
+          samplesWithGaps.map(s => s ? s.gyro_z : null) as (number | null)[]
         ]
         series = [
           {}, // Timestamp series (no label, no stroke - won't show in legend)
-          { label: 'X', stroke: 'hsl(0, 70%, 50%)', width: 2 },
-          { label: 'Y', stroke: 'hsl(120, 70%, 40%)', width: 2 },
-          { label: 'Z', stroke: 'hsl(210, 70%, 50%)', width: 2 }
+          { label: 'X', stroke: 'hsl(0, 70%, 50%)', width: 2, spanGaps: false },
+          { label: 'Y', stroke: 'hsl(120, 70%, 40%)', width: 2, spanGaps: false },
+          { label: 'Z', stroke: 'hsl(210, 70%, 50%)', width: 2, spanGaps: false }
         ]
         yAxisLabel = 'Angular Velocity (rad/s)'
         break
       case 'mag':
         data = [
-          timestamps,
-          samples.map(s => s.mag_x ?? null),
-          samples.map(s => s.mag_y ?? null),
-          samples.map(s => s.mag_z ?? null)
+          timestamps as number[],
+          samplesWithGaps.map(s => s ? (s.mag_x ?? null) : null) as (number | null)[],
+          samplesWithGaps.map(s => s ? (s.mag_y ?? null) : null) as (number | null)[],
+          samplesWithGaps.map(s => s ? (s.mag_z ?? null) : null) as (number | null)[]
         ]
         series = [
           {}, // Timestamp series (no label, no stroke - won't show in legend)
-          { label: 'X', stroke: 'hsl(0, 70%, 50%)', width: 2 },
-          { label: 'Y', stroke: 'hsl(120, 70%, 40%)', width: 2 },
-          { label: 'Z', stroke: 'hsl(210, 70%, 50%)', width: 2 }
+          { label: 'X', stroke: 'hsl(0, 70%, 50%)', width: 2, spanGaps: false },
+          { label: 'Y', stroke: 'hsl(120, 70%, 40%)', width: 2, spanGaps: false },
+          { label: 'Z', stroke: 'hsl(210, 70%, 50%)', width: 2, spanGaps: false }
         ]
         yAxisLabel = 'Magnetic Field (µT)'
         break

@@ -70,6 +70,9 @@ void loop() {
     return;  // Never reached (deep sleep)
   }
 
+  // Sync sample interval from BLE manager to sensor manager
+  sensorManager.setSampleIntervalMs(bleManager.getSampleIntervalMs());
+
   // Update sensor data
   if (sensorManager.update()) {
     performance.recordSample();

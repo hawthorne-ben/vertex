@@ -21,7 +21,7 @@ export default async function DataPage({ searchParams }: DataPageProps) {
     .from('recordings')
     .select('*')
     .eq('user_id', user.id)
-    .order('uploaded_at', { ascending: false })
+    .order('start_time', { ascending: false })
 
   if (recordingsError) {
     console.error('Error fetching recordings:', recordingsError)

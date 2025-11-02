@@ -62,8 +62,8 @@ const RecordScreen: React.FC = () => {
   const route = useRoute<RecordRouteProp>();
   const { deviceId, deviceName } = route.params;
 
-  // Zustand stores (battery only, connection is local to this screen)
-  const { batteryLevel, batteryVoltage } = useDeviceStore();
+  // Zustand stores (battery, sample rate, connection is local to this screen)
+  const { batteryLevel, batteryVoltage, sampleRate } = useDeviceStore();
 
   // Local connection state for THIS device
   const [isConnected, setIsConnected] = useState(false);
@@ -325,7 +325,7 @@ const RecordScreen: React.FC = () => {
         deviceName,
         zeroPointRef.current, // Pass current zero point to recording service
         recordingFormat, // Recording format (csv or vtx)
-        10 // Sample rate in Hz (must match firmware broadcast rate)
+        sampleRate || 10 // Use measured sample rate from device, fallback to 10 Hz
       );
 
       if (isMountedRef.current) {
