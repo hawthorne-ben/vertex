@@ -30,6 +30,7 @@ import {
   Settings,
   HardDrive,
   Battery,
+  BatteryFull,
 } from 'lucide-react-native';
 import { theme as staticTheme } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
@@ -45,6 +46,7 @@ import { useDeviceStore } from '../stores/deviceStore';
 import { useRecordingStore } from '../stores/recordingStore';
 import { useAppStore } from '../stores/appStore';
 import DeviceStatusService from '../services/DeviceStatusService';
+import { getBatteryStatus, formatBatteryDisplay } from '../utils/battery';
 
 type RecordRouteProp = RouteProp<RootStackParamList, 'Record'>;
 
@@ -772,13 +774,22 @@ const RecordScreen: React.FC = () => {
               </View>
               <View style={styles.statusGridRow}>
                 <View style={styles.statusCompactItem}>
-                  <Battery
-                    size={18}
-                    color={batteryVoltage && batteryVoltage > 3.3 ? theme.colors.success : theme.colors.warning}
-                    style={styles.statusIcon}
-                  />
+                  {(() => {
+                    const batteryStatus = getBatteryStatus(batteryVoltage);
+                    const BatteryIcon = (batteryStatus?.level === 'good') ? BatteryFull : Battery;
+                    return (
+                      <BatteryIcon
+                        size={18}
+                        color={
+                          batteryStatus === null ? theme.colors.textTertiary :
+                          theme.colors[batteryStatus.color as keyof typeof theme.colors]
+                        }
+                        style={styles.statusIcon}
+                      />
+                    );
+                  })()}
                   <Text style={[styles.statusCompactValue, { color: theme.colors.textPrimary }]}>
-                    {batteryVoltage !== null ? `${batteryVoltage.toFixed(2)}V` : '--'}
+                    {formatBatteryDisplay(batteryVoltage)}
                   </Text>
                 </View>
                 <View style={styles.statusCompactItem}>
@@ -820,13 +831,22 @@ const RecordScreen: React.FC = () => {
               </View>
               <View style={styles.statusGridRow}>
                 <View style={styles.statusCompactItem}>
-                  <Battery
-                    size={18}
-                    color={batteryVoltage && batteryVoltage > 3.3 ? theme.colors.success : theme.colors.warning}
-                    style={styles.statusIcon}
-                  />
+                  {(() => {
+                    const batteryStatus = getBatteryStatus(batteryVoltage);
+                    const BatteryIcon = (batteryStatus?.level === 'good') ? BatteryFull : Battery;
+                    return (
+                      <BatteryIcon
+                        size={18}
+                        color={
+                          batteryStatus === null ? theme.colors.textTertiary :
+                          theme.colors[batteryStatus.color as keyof typeof theme.colors]
+                        }
+                        style={styles.statusIcon}
+                      />
+                    );
+                  })()}
                   <Text style={[styles.statusCompactValue, { color: theme.colors.textPrimary }]}>
-                    {batteryVoltage !== null ? `${batteryVoltage.toFixed(2)}V` : '--'}
+                    {formatBatteryDisplay(batteryVoltage)}
                   </Text>
                 </View>
               </View>

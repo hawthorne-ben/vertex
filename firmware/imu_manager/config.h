@@ -33,6 +33,7 @@
 // ===== Battery Configuration =====
 #define BATTERY_VOLTAGE_DIVIDER 2.0  // Feather has 2:1 voltage divider
 #define BATTERY_READ_INTERVAL_MS 1000  // Read battery once per second
+#define BATTERY_CUTOFF_VOLTAGE 3.2  // Auto-shutdown below 3.2V to protect battery
 
 // ===== Timing Constants =====
 #define CONNECTION_STABILIZE_MS 1000  // Wait 1s after BLE connection
@@ -41,7 +42,7 @@
 // ===== Sample Rate Constraints =====
 #define MIN_SAMPLE_INTERVAL_MS 20   // 50Hz max sampling rate
 #define MAX_SAMPLE_INTERVAL_MS 1000 // 1Hz min sampling rate
-#define DEFAULT_SAMPLE_INTERVAL_MS 100  // 10Hz default
+#define DEFAULT_SAMPLE_INTERVAL_MS 20  // 50Hz default
 
 // ===== I2C Configuration =====
 #define I2C_CLOCK_SPEED_LOW 100000   // 100kHz - low power mode

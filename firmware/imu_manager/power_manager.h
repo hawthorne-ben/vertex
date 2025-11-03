@@ -22,11 +22,14 @@ public:
   // Update battery voltage in sensor data (call periodically)
   void updateBatteryReading(float& battery_voltage);
 
+  // Check if battery is critically low (returns true if below cutoff)
+  bool isBatteryCritical(float voltage);
+
   // Check if power button is pressed (returns true if should shutdown)
   bool shouldShutdown();
 
-  // Enter deep sleep
-  void shutdown();
+  // Enter deep sleep (with reason for logging)
+  void shutdown(const char* reason = "Button pressed");
 
   // Update LED status based on connection and mode
   void updateLED(bool connected, uint8_t ledMode);

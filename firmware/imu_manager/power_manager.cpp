@@ -46,6 +46,20 @@ void PowerManager::init() {
   lastBatteryRead = millis();
   lastLEDToggle = millis();
   lastButtonCheck = millis();
+
+  // Check battery on boot - critical safety check
+  float bootVoltage = getBatteryVoltage();
+  Serial.print("[POWER] Boot battery check: ");
+  Serial.print(bootVoltage, 2);
+  Serial.println("V");
+
+  if (isBatteryCritical(bootVoltage)) {
+    Serial.println("[POWER] ⚠️  CRITICAL: Battery below cutoff voltage!");
+    Serial.print("[POWER] Cutoff threshold: ");
+    Serial.print(BATTERY_CUTOFF_VOLTAGE, 1);
+    Serial.println("V");
+    shutdown("Battery protection - critically low voltage");
+  }
 }
 
 float PowerManager::getBatteryVoltage() {
@@ -59,7 +73,24 @@ void PowerManager::updateBatteryReading(float& battery_voltage) {
   if (now - lastBatteryRead >= BATTERY_READ_INTERVAL_MS) {
     battery_voltage = getBatteryVoltage();
     lastBatteryRead = now;
+
+    // Check battery safety on every reading
+    if (isBatteryCritical(battery_voltage)) {
+      Serial.println("\n[POWER] ⚠️  CRITICAL: Battery voltage critically low!");
+      Serial.print("[POWER] Voltage: ");
+      Serial.print(battery_voltage, 2);
+      Serial.print("V (cutoff: ");
+      Serial.print(BATTERY_CUTOFF_VOLTAGE, 1);
+      Serial.println("V)");
+      shutdown("Battery protection - critically low voltage");
+    }
   }
+}
+
+bool PowerManager::isBatteryCritical(float voltage) {
+  // Return true if voltage is below safe cutoff threshold
+  // 3.2V is conservative - protects battery with margin above damage threshold
+  return voltage < BATTERY_CUTOFF_VOLTAGE;
 }
 
 bool PowerManager::shouldShutdown() {
@@ -75,10 +106,18 @@ bool PowerManager::shouldShutdown() {
   return false;
 }
 
-void PowerManager::shutdown() {
-  Serial.println("\n[POWER] Button pressed - entering deep sleep");
+void PowerManager::shutdown(const char* reason) {
+  Serial.print("\n[POWER] Shutting down: ");
+  Serial.println(reason);
+  Serial.println("[POWER] Entering deep sleep mode");
   Serial.println("[POWER] Press RESET button to wake\n");
+
+  // Turn off LED
   digitalWrite(LED_PIN, LOW);
+
+  // Flush serial to ensure message is sent
+  Serial.flush();
+  delay(100);
 
   // Enter deep sleep with NO wake source
   esp_deep_sleep_start();

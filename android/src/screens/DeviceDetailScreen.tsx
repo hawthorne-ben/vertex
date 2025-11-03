@@ -41,6 +41,7 @@ import IMUVisualization3D from '../components/IMUVisualization3D';
 import { useDeviceStore } from '../stores/deviceStore';
 import { useRecordingStore } from '../stores/recordingStore';
 import DeviceStatusService from '../services/DeviceStatusService';
+import { getBatteryStatus, formatBatteryDisplay } from '../utils/battery';
 
 type DeviceDetailRouteProp = RouteProp<RootStackParamList, 'DeviceDetail'>;
 
@@ -55,7 +56,7 @@ const DeviceDetailScreenContent: React.FC = () => {
   const { showToast } = useToast();
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<DeviceDetailRouteProp>();
-  const { deviceId, deviceName } = route.params;
+  const { deviceId, deviceName, autoConnect } = route.params;
 
   // Use LOCAL state for this device's sensor data - NO global store pollution
   const [isConnected, setIsConnected] = useState(false);
@@ -240,6 +241,12 @@ const DeviceDetailScreenContent: React.FC = () => {
         } catch (connectError: any) {
           throw connectError;
         }
+      }
+
+      // Start DeviceStatusService to monitor connection and battery
+      // This updates the global deviceStore so Dashboard and DevicesList can see the connection
+      if (!DeviceStatusService.isMonitoring()) {
+        DeviceStatusService.startMonitoring(deviceId, deviceName);
       }
 
       // If this is a Vertex device, automatically start streaming
@@ -439,9 +446,13 @@ const DeviceDetailScreenContent: React.FC = () => {
                 sampleRateHistoryRef.current.shift();
               }
 
-              // Calculate average and round
+              // Calculate average and bucket to nearest 10 Hz
               const avgRate = sampleRateHistoryRef.current.reduce((a, b) => a + b, 0) / sampleRateHistoryRef.current.length;
-              safeSetState(setSampleRate, Math.round(avgRate));
+              const bucketedRate = Math.round(avgRate / 10) * 10; // Round to nearest 10
+              safeSetState(setSampleRate, bucketedRate);
+
+              // Update global deviceStore so RecordScreen can use the measured rate
+              useDeviceStore.getState().setSampleRate(bucketedRate);
             }
             lastUpdateTimeRef.current = now;
             updateCountRef.current = 0;
@@ -548,6 +559,9 @@ const DeviceDetailScreenContent: React.FC = () => {
       // Disconnect from BLE
       await BleService.disconnect();
 
+      // Stop device status monitoring
+      DeviceStatusService.stopMonitoring();
+
       // Clear local UI state
       safeSetState(setError, null);
       safeSetState(setStreamingError, null);
@@ -581,6 +595,9 @@ const DeviceDetailScreenContent: React.FC = () => {
         }
       }
 
+      // Stop device status monitoring
+      DeviceStatusService.stopMonitoring();
+
       // Remove from saved devices
       const saved = await AsyncStorage.getItem(SAVED_DEVICES_KEY);
       if (saved) {
@@ -604,8 +621,8 @@ const DeviceDetailScreenContent: React.FC = () => {
   const renderStatusCard = () => {
     const sensorReading = latestReading;
     const batteryVoltageSensor = sensorReading?.batteryVoltage;
-    const batteryGood = batteryVoltage && batteryVoltage > 3.7;
-    const BatteryIcon = batteryGood ? BatteryFull : Battery;
+    const batteryStatus = getBatteryStatus(batteryVoltage);
+    const BatteryIcon = (batteryStatus?.level === 'good') ? BatteryFull : Battery;
 
     return (
       <View style={[styles.card, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}>
@@ -638,18 +655,16 @@ const DeviceDetailScreenContent: React.FC = () => {
               <BatteryIcon
                 size={18}
                 color={
-                  batteryVoltage === null || batteryVoltage === undefined ? theme.colors.textTertiary :
-                  batteryVoltage > 3.7 ? theme.colors.success :
-                  batteryVoltage > 3.4 ? theme.colors.warning :
-                  theme.colors.error
+                  batteryStatus === null ? theme.colors.textTertiary :
+                  theme.colors[batteryStatus.color as keyof typeof theme.colors]
                 }
                 style={styles.statusIcon}
               />
               <Text style={[styles.statusCompactValue, {
-                color: batteryVoltage === null || batteryVoltage === undefined ? theme.colors.textTertiary : theme.colors.textPrimary,
+                color: batteryStatus === null ? theme.colors.textTertiary : theme.colors.textPrimary,
                 fontFamily: staticTheme.typography.mono,
               }]}>
-                {batteryVoltage !== null && batteryVoltage !== undefined ? `${batteryVoltage.toFixed(2)}V` : 'Battery'}
+                {formatBatteryDisplay(batteryVoltage)}
               </Text>
             </View>
           </View>

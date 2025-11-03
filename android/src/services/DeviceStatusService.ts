@@ -165,9 +165,9 @@ class DeviceStatusService {
 
       // TODO: Parse response from notification
       // For now, we'll set a default config based on known firmware defaults
-      // Firmware defaults: 100ms interval (10 Hz), powerMode=1, ledMode=1
+      // Firmware defaults: 20ms interval (50 Hz), powerMode=1, ledMode=1
       useDeviceStore.getState().setDeviceConfig({
-        sampleRate: 10, // 10 Hz default
+        sampleRate: 50, // 50 Hz default
         ledMode: 1,     // Status LED
         powerMode: 1,   // Normal power
       });

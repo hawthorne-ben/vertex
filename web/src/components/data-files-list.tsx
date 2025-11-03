@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { FileText, CheckCircle2, AlertCircle, Loader2, Trash2, Clock } from 'lucide-react'
+import { FileText, CheckCircle2, AlertCircle, Loader2, Trash2, Clock, Download } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useToast } from '@/components/ui/toast-context'
 import { ConfirmationModal } from '@/components/ui/confirmation-modal'
@@ -118,6 +118,7 @@ interface DataFilesListProps {
 export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesListProps) {
   const [files, setFiles] = useState(initialFiles)
   const [deleting, setDeleting] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState<string | null>(null)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [fileToDelete, setFileToDelete] = useState<IMUDataFile | null>(null)
   const timeEstimatesRef = useRef<Record<string, number[]>>({}) // Use ref to avoid render-time state updates
@@ -243,6 +244,52 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
   const handleDeleteCancel = () => {
     setShowDeleteModal(false)
     setFileToDelete(null)
+  }
+
+  const handleDownload = async (file: IMUDataFile, event: React.MouseEvent) => {
+    event.preventDefault() // Prevent navigation to detail page
+
+    if (downloading || file.status !== 'ready') return
+
+    setDownloading(file.id)
+
+    try {
+      const supabase = createClient()
+
+      // Download file from storage
+      const { data, error } = await supabase.storage
+        .from('recordings')
+        .download(file.storage_path)
+
+      if (error || !data) {
+        throw new Error(error?.message || 'Failed to download file')
+      }
+
+      // Create download link
+      const url = URL.createObjectURL(data)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = file.filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+
+      addToast({
+        type: 'success',
+        title: 'Download started',
+        message: `Downloading ${file.filename}`
+      })
+    } catch (err) {
+      console.error('Download error:', err)
+      addToast({
+        type: 'error',
+        title: 'Download failed',
+        message: `Failed to download file: ${err instanceof Error ? err.message : 'Unknown error'}`
+      })
+    } finally {
+      setDownloading(null)
+    }
   }
 
   const formatDate = (dateString: string) => {
@@ -373,21 +420,37 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
                     <span className="text-secondary">Processing...</span>
                   )}
                 </h3>
-                <button
-                  onClick={(e) => {
-                    e.preventDefault()
-                    handleDeleteClick(file)
-                  }}
-                  disabled={deleting === file.id}
-                  className="p-2 text-secondary hover:text-error hover:bg-error/10 transition-colors rounded-md disabled:opacity-50 flex-shrink-0"
-                  title="Delete segment"
-                >
-                  {deleting === file.id ? (
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                  ) : (
-                    <Trash2 className="w-5 h-5" />
+                <div className="flex gap-2">
+                  {file.status === 'ready' && (
+                    <button
+                      onClick={(e) => handleDownload(file, e)}
+                      disabled={downloading === file.id}
+                      className="p-2 text-secondary hover:text-primary hover:bg-primary/10 transition-colors rounded-md disabled:opacity-50 flex-shrink-0"
+                      title="Download file"
+                    >
+                      {downloading === file.id ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      ) : (
+                        <Download className="w-5 h-5" />
+                      )}
+                    </button>
                   )}
-                </button>
+                  <button
+                    onClick={(e) => {
+                      e.preventDefault()
+                      handleDeleteClick(file)
+                    }}
+                    disabled={deleting === file.id}
+                    className="p-2 text-secondary hover:text-error hover:bg-error/10 transition-colors rounded-md disabled:opacity-50 flex-shrink-0"
+                    title="Delete segment"
+                  >
+                    {deleting === file.id ? (
+                      <Loader2 className="w-5 h-5 animate-spin" />
+                    ) : (
+                      <Trash2 className="w-5 h-5" />
+                    )}
+                  </button>
+                </div>
               </div>
 
               {/* Metadata grid - only show for completed files */}

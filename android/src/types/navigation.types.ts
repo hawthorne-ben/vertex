@@ -13,7 +13,7 @@ export type RootStackParamList = {
   Landing: undefined;
   Login: undefined;
   Tabs: undefined;
-  DeviceDetail: { deviceId: string; deviceName: string };
+  DeviceDetail: { deviceId: string; deviceName: string; autoConnect?: boolean };
   Record: { deviceId: string; deviceName: string };
   DataDetail: { fileName: string; filePath: string };
 };

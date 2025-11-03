@@ -163,10 +163,11 @@ const DevicesScreen: React.FC = () => {
 
     await addSavedDevice(newDevice);
 
-    // Navigate to detail screen
+    // Navigate to detail screen and auto-connect for new devices
     navigation.navigate('DeviceDetail', {
       deviceId: newDevice.id,
       deviceName: newDevice.name,
+      autoConnect: true, // Auto-connect only for newly added devices
     });
   };
 
