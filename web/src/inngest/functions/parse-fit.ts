@@ -18,37 +18,46 @@ export const parseFitFile = inngest.createFunction(
     try {
       // Step 1: Download FIT file from storage
       const fileData = await step.run('download-fit-file', async () => {
-        console.log(`📥 Downloading FIT file ${fileId} from storage`)
-        
+        console.log(`📥 Downloading FIT recording ${fileId} from storage`)
+
         const { data: fileRecord, error: fileError } = await supabase
-          .from('fit_files')
+          .from('recordings')
           .select('*')
           .eq('id', fileId)
           .eq('user_id', userId)
+          .eq('file_type', 'fit')
           .single()
 
         if (fileError || !fileRecord) {
-          throw new Error(`File not found: ${fileError?.message}`)
+          throw new Error(`Recording not found: ${fileError?.message}`)
         }
 
         // Download file (either direct or chunked)
         let fileBuffer: Uint8Array
-        
-        // Check if this is a chunked upload by looking for chunk_count or if storage_path contains chunks
-        const isChunkedUpload = fileRecord.chunk_count && fileRecord.chunk_count > 1 || fileRecord.storage_path.includes('chunks/')
+
+        // Check if this is a chunked upload by looking if storage_path contains chunks
+        const isChunkedUpload = fileRecord.storage_path.includes('chunks/')
         
         if (isChunkedUpload) {
           // Chunked upload - download and combine chunks
           console.log(`📦 Downloading chunked FIT file: ${fileRecord.filename}`)
-          
-          const chunkPaths = []
-          for (let i = 0; i < (fileRecord.chunk_count || 1); i++) {
-            const chunkFileName = `${fileId}_chunk_${i.toString().padStart(3, '0')}`
-            chunkPaths.push(`chunks/${fileId}/${chunkFileName}`)
+
+          // List all chunks in the directory
+          const { data: chunkFiles, error: listError } = await supabase.storage
+            .from('uploads')
+            .list(`chunks/${fileId}`)
+
+          if (listError || !chunkFiles || chunkFiles.length === 0) {
+            throw new Error(`Failed to list chunks: ${listError?.message || 'No chunks found'}`)
           }
 
+          // Sort chunks by name to ensure correct order
+          const sortedChunks = chunkFiles.sort((a, b) => a.name.localeCompare(b.name))
+          console.log(`📦 Found ${sortedChunks.length} chunks`)
+
           const chunks = []
-          for (const chunkPath of chunkPaths) {
+          for (const chunkFile of sortedChunks) {
+            const chunkPath = `chunks/${fileId}/${chunkFile.name}`
             const { data: chunkData, error: chunkError } = await supabase.storage
               .from('uploads')
               .download(chunkPath)
@@ -73,10 +82,26 @@ export const parseFitFile = inngest.createFunction(
           // Direct upload - download file directly
           console.log(`📁 Downloading direct FIT file: ${fileRecord.filename}`)
           console.log(`📁 Storage path: ${fileRecord.storage_path}`)
-          
-          const { data: fileData, error: fileError } = await supabase.storage
-            .from('uploads')
+
+          // Try recordings bucket first (new unified upload flow)
+          let fileData, fileError
+          const { data: recData, error: recError } = await supabase.storage
+            .from('recordings')
             .download(fileRecord.storage_path)
+
+          if (recError) {
+            console.log(`⚠️ Not found in recordings bucket, trying uploads bucket...`)
+            // Fallback to uploads bucket (old flow)
+            const { data: uploadData, error: uploadError } = await supabase.storage
+              .from('uploads')
+              .download(fileRecord.storage_path)
+
+            fileData = uploadData
+            fileError = uploadError
+          } else {
+            fileData = recData
+            fileError = recError
+          }
 
           if (fileError) {
             throw new Error(`Failed to download file ${fileRecord.storage_path}: ${fileError.message}`)
@@ -318,13 +343,25 @@ export const parseFitFile = inngest.createFunction(
 
         if (recordsToProcess && recordsToProcess.length > 0) {
           console.log(`📊 Processing ${recordsToProcess.length} data records`)
-          
+
+          // Debug first record to see available altitude fields
+          if (recordsToProcess.length > 0) {
+            const firstRecord = recordsToProcess[0]
+            const altFields = Object.keys(firstRecord).filter(k =>
+              k.toLowerCase().includes('alt') || k.toLowerCase().includes('elev')
+            )
+            console.log(`📊 Altitude-related fields in records: ${altFields.join(', ')}`)
+            altFields.forEach(field => {
+              console.log(`   ${field}: ${firstRecord[field]}`)
+            })
+          }
+
           for (const record of recordsToProcess) {
             const dataPoint: any = {
               timestamp: record.timestamp ? new Date(record.timestamp).toISOString() : null,
               latitude: record.position_lat ? record.position_lat * (180 / Math.pow(2, 31)) : null,
               longitude: record.position_long ? record.position_long * (180 / Math.pow(2, 31)) : null,
-              altitude: record.altitude || null,
+              altitude: record.altitude || record.enhanced_altitude || null,
               speed_ms: record.speed ? record.speed / 1000 : null, // Convert mm/s to m/s
               power_watts: record.power || null,
               heart_rate: record.heart_rate || null,
@@ -360,10 +397,13 @@ export const parseFitFile = inngest.createFunction(
         const startTime = session.start_time ? new Date(session.start_time).toISOString() : null
         const endTime = session.timestamp ? new Date(session.timestamp).toISOString() : null
         const durationSeconds = session.total_elapsed_time ? Math.round(session.total_elapsed_time) : null
-        
-        // Convert distance from km to meters, then to feet
+
+        // Use session's already calculated distance (parser is configured for km, we need meters)
+        // The parser settings show lengthUnit: 'km', so total_distance is in km
         const distanceMeters = session.total_distance ? Math.round(session.total_distance * 1000) : null
         const distanceFeet = distanceMeters ? Math.round(distanceMeters * 3.28084) : null
+
+        console.log(`📊 Distance: ${session.total_distance}km = ${distanceMeters}m`)
         
         // Debug elevation data - show ALL available fields
         console.log('📊 Complete FIT data structure debug:')
@@ -412,35 +452,33 @@ export const parseFitFile = inngest.createFunction(
           })
         }
         
-        // Use total ascent (represents work done climbing hills)
-        let elevationGainMeters = session.total_ascent || session.elevation_gain || session.ascent || 0
-        let elevationGainFeet = Math.round(elevationGainMeters * 3.28084)
-        
-        // If session elevation seems too low, try calculating from altitude data
-        if (elevationGainMeters < 10 && recordsToProcess && recordsToProcess.length > 0) {
-          console.log('⚠️ Session elevation seems low, calculating from altitude data...')
-          
-          const altitudePoints = recordsToProcess
-            .map((r: any) => r.altitude)
-            .filter((alt: any) => alt !== null && alt !== undefined && alt > 0)
-          
-          if (altitudePoints.length > 10) {
-            // Calculate elevation gain by summing positive altitude changes
-            let calculatedGain = 0
-            for (let i = 1; i < altitudePoints.length; i++) {
-              const change = altitudePoints[i] - altitudePoints[i-1]
-              if (change > 0) {
-                calculatedGain += change
-              }
-            }
-            
-            if (calculatedGain > elevationGainMeters) {
-              console.log(`📊 Calculated elevation gain from altitude: ${calculatedGain.toFixed(2)}m (was ${elevationGainMeters}m)`)
-              elevationGainMeters = calculatedGain
-              elevationGainFeet = Math.round(elevationGainMeters * 3.28084)
+        // Calculate elevation gain from altitude data if available
+        let elevationGainMeters = 0
+        const altitudePoints = dataPoints
+          .map((p: any) => p.altitude)
+          .filter((alt: any) => alt !== null && alt !== undefined && !isNaN(alt))
+
+        console.log(`📊 Altitude data: ${altitudePoints.length} points, min=${Math.min(...altitudePoints)}, max=${Math.max(...altitudePoints)}, first=${altitudePoints[0]}, last=${altitudePoints[altitudePoints.length-1]}`)
+
+        if (altitudePoints.length > 10) {
+          // Calculate elevation gain by summing positive altitude changes (ignore small GPS noise)
+          for (let i = 1; i < altitudePoints.length; i++) {
+            const change = altitudePoints[i] - altitudePoints[i-1]
+            if (change > 0.5) { // Ignore tiny GPS fluctuations
+              elevationGainMeters += change
             }
           }
+          console.log(`📊 Calculated elevation gain from altitude: ${elevationGainMeters.toFixed(1)}m`)
         }
+
+        // If calculation resulted in very low value, use session data as fallback
+        if (elevationGainMeters < 5) {
+          elevationGainMeters = session.total_ascent || session.elevation_gain || session.ascent || 0
+          console.log(`📊 Using session elevation (calculated was too low): ${elevationGainMeters}m`)
+        }
+
+        const elevationGainFeet = Math.round(elevationGainMeters * 3.28084)
+        console.log(`📊 Final elevation gain: ${elevationGainMeters}m = ${elevationGainFeet}ft`)
 
         // Calculate averages and maximums from data points
         const validPowerPoints = dataPoints.filter(p => p.power_watts !== null)
@@ -454,12 +492,26 @@ export const parseFitFile = inngest.createFunction(
         const avgHeartRate = validHRPoints.length > 0 ? Math.round(validHRPoints.reduce((sum, p) => sum + p.heart_rate, 0) / validHRPoints.length) : null
         const maxCadence = validCadencePoints.length > 0 ? Math.max(...validCadencePoints.map(p => p.cadence)) : null
         const avgCadence = validCadencePoints.length > 0 ? Math.round(validCadencePoints.reduce((sum, p) => sum + p.cadence, 0) / validCadencePoints.length) : null
-        const maxSpeedMs = validSpeedPoints.length > 0 ? Math.max(...validSpeedPoints.map(p => p.speed_ms)) : null
-        const avgSpeedMs = validSpeedPoints.length > 0 ? validSpeedPoints.reduce((sum, p) => sum + p.speed_ms, 0) / validSpeedPoints.length : null
-        
-        // Convert speeds from m/s to mph for imperial units
-        const maxSpeedMph = maxSpeedMs ? Math.round(maxSpeedMs * 2.23694 * 10) / 10 : null // Convert m/s to mph, round to 1 decimal
-        const avgSpeedMph = avgSpeedMs ? Math.round(avgSpeedMs * 2.23694 * 10) / 10 : null
+
+        // Use session speed data (parser configured for km/h, we need mph)
+        let maxSpeedKmh = session.max_speed || null
+        let avgSpeedKmh = session.avg_speed || null
+
+        // If session speeds not available, calculate from data points
+        if (!maxSpeedKmh && validSpeedPoints.length > 0) {
+          maxSpeedKmh = Math.max(...validSpeedPoints.map(p => p.speed_ms))
+        }
+        if (!avgSpeedKmh && validSpeedPoints.length > 0) {
+          avgSpeedKmh = validSpeedPoints.reduce((sum, p) => sum + p.speed_ms, 0) / validSpeedPoints.length
+        }
+
+        // Convert speeds from km/h to mph and m/s for storage
+        const maxSpeedMph = maxSpeedKmh ? Math.round(maxSpeedKmh * 0.621371 * 10) / 10 : null // Convert km/h to mph, round to 1 decimal
+        const avgSpeedMph = avgSpeedKmh ? Math.round(avgSpeedKmh * 0.621371 * 10) / 10 : null
+        const maxSpeedMs = maxSpeedKmh ? maxSpeedKmh / 3.6 : null // Convert km/h to m/s
+        const avgSpeedMs = avgSpeedKmh ? avgSpeedKmh / 3.6 : null
+
+        console.log(`📊 Speed: avg ${avgSpeedKmh}km/h = ${avgSpeedMph}mph, max ${maxSpeedKmh}km/h = ${maxSpeedMph}mph`)
 
         return {
           metadata: {
@@ -507,82 +559,122 @@ export const parseFitFile = inngest.createFunction(
         return analysis
       })
 
-      // Step 4: Update FIT file metadata
-      await step.run('update-fit-metadata', async () => {
-        console.log(`💾 Updating FIT file metadata`)
-        
+      // Step 4: Update FIT recording metadata
+      await step.run('update-recording-metadata', async () => {
+        console.log(`💾 Updating FIT recording metadata`)
+
+        // Calculate duration from start/end times
+        const durationMs = extractedData.metadata.start_time && extractedData.metadata.end_time
+          ? new Date(extractedData.metadata.end_time).getTime() - new Date(extractedData.metadata.start_time).getTime()
+          : extractedData.metadata.duration_seconds ? extractedData.metadata.duration_seconds * 1000 : 0
+
         const { error } = await supabase
-          .from('fit_files')
+          .from('recordings')
           .update({
             status: 'ready',
-            parsed_at: new Date().toISOString(),
-            ...extractedData.metadata,
-            riding_time_seconds: Math.round(ridingTimeAnalysis.ridingTimeSeconds),
-            stationary_time_seconds: Math.round(ridingTimeAnalysis.stationaryTimeSeconds),
-            riding_data_points_count: ridingTimeAnalysis.ridingDataPoints.length,
-            stationary_periods_count: ridingTimeAnalysis.stationaryPeriods.length
+            processed_at: new Date().toISOString(),
+            start_time: extractedData.metadata.start_time,
+            end_time: extractedData.metadata.end_time,
+            duration_ms: durationMs,
+            // Store FIT-specific metadata in analysis_results JSONB field
+            analysis_results: {
+              distance_meters: extractedData.metadata.distance_meters,
+              distance_feet: extractedData.metadata.distance_feet,
+              elevation_gain_meters: extractedData.metadata.elevation_gain_meters,
+              elevation_gain_feet: extractedData.metadata.elevation_gain_feet,
+              max_speed_ms: extractedData.metadata.max_speed_ms,
+              avg_speed_ms: extractedData.metadata.avg_speed_ms,
+              max_speed_mph: extractedData.metadata.max_speed_mph,
+              avg_speed_mph: extractedData.metadata.avg_speed_mph,
+              max_power_watts: extractedData.metadata.max_power_watts,
+              avg_power_watts: extractedData.metadata.avg_power_watts,
+              max_heart_rate: extractedData.metadata.max_heart_rate,
+              avg_heart_rate: extractedData.metadata.avg_heart_rate,
+              max_cadence: extractedData.metadata.max_cadence,
+              avg_cadence: extractedData.metadata.avg_cadence,
+              gps_points_count: extractedData.metadata.gps_points_count,
+              has_gps_data: extractedData.metadata.has_gps_data,
+              riding_time_seconds: Math.round(ridingTimeAnalysis.ridingTimeSeconds),
+              stationary_time_seconds: Math.round(ridingTimeAnalysis.stationaryTimeSeconds),
+              riding_data_points_count: ridingTimeAnalysis.ridingDataPoints.length,
+              stationary_periods_count: ridingTimeAnalysis.stationaryPeriods.length
+            }
           })
           .eq('id', fileId)
 
         if (error) {
-          throw new Error(`Failed to update FIT file metadata: ${error.message}`)
+          throw new Error(`Failed to update recording metadata: ${error.message}`)
         }
 
-        console.log(`✅ FIT file metadata updated`)
+        console.log(`✅ FIT recording metadata updated`)
       })
 
-      // Step 5: Insert data points in batches
-      await step.run('insert-fit-data-points', async () => {
-        console.log(`📊 Inserting ${extractedData.dataPoints.length} FIT data points`)
-        
-        if (extractedData.dataPoints.length === 0) {
-          console.log('⚠️ No data points to insert')
-          return
+      // Step 5: Automatically create ride entry
+      const rideId = await step.run('create-ride-entry', async () => {
+        console.log(`🚴‍♂️ Creating ride entry for FIT recording ${fileId}`)
+
+        // Generate ride name from filename and date
+        const { data: recording } = await supabase
+          .from('recordings')
+          .select('filename, start_time')
+          .eq('id', fileId)
+          .single()
+
+        const rideName = recording?.filename.replace(/\.fit$/i, '') || 'Unnamed Ride'
+        const rideStartTime = extractedData.metadata.start_time
+        const rideEndTime = extractedData.metadata.end_time
+        const rideDurationSeconds = extractedData.metadata.duration_seconds || 0
+        const distanceMeters = extractedData.metadata.distance_meters || null
+        const elevationGainMeters = extractedData.metadata.elevation_gain_meters || null
+
+        // Create ride entry
+        const { data: ride, error: rideError } = await supabase
+          .from('rides')
+          .insert({
+            user_id: userId,
+            name: rideName,
+            start_time: rideStartTime,
+            end_time: rideEndTime,
+            duration_seconds: rideDurationSeconds,
+            distance_meters: distanceMeters,
+            elevation_gain_meters: elevationGainMeters
+          })
+          .select()
+          .single()
+
+        if (rideError) {
+          throw new Error(`Failed to create ride entry: ${rideError.message}`)
         }
 
-        const BATCH_SIZE = 1000
-        const batches = []
-        for (let i = 0; i < extractedData.dataPoints.length; i += BATCH_SIZE) {
-          batches.push(extractedData.dataPoints.slice(i, i + BATCH_SIZE))
+        console.log(`✅ Ride created: ${ride.id}`)
+
+        // Create ride_recordings association
+        const { error: assocError } = await supabase
+          .from('ride_recordings')
+          .insert({
+            ride_id: ride.id,
+            recording_id: fileId
+          })
+
+        if (assocError) {
+          throw new Error(`Failed to create ride_recordings association: ${assocError.message}`)
         }
 
-        for (let i = 0; i < batches.length; i++) {
-          const batch = batches[i]
-          const dataPointsWithIds = batch.map(point => ({
-            fit_file_id: fileId,
-            ...point
-          }))
+        console.log(`✅ Associated recording ${fileId} with ride ${ride.id}`)
 
-          const { error } = await supabase
-            .from('fit_data_points')
-            .insert(dataPointsWithIds)
-
-          if (error) {
-            throw new Error(`Failed to insert batch ${i + 1}: ${error.message}`)
-          }
-
-          console.log(`✅ Inserted batch ${i + 1}/${batches.length} (${batch.length} points)`)
-        }
-
-        console.log(`✅ All FIT data points inserted successfully`)
+        return ride.id
       })
 
-      // Step 4: Automatic ride creation disabled - use Ride Builder for manual creation
-      await step.run('log-manual-ride-creation', async () => {
-        console.log(`🚴‍♂️ FIT file parsing complete for ${fileId}`)
-        console.log(`ℹ️ Use the Ride Builder (/ride-builder) to manually create rides`)
-        console.log(`ℹ️ Automatic ride creation is disabled - manual control preferred`)
-      })
-
-      console.log(`🎉 FIT file parsing completed successfully for file ${fileId}`)
-      return { success: true, dataPointsCount: extractedData.dataPoints.length }
+      console.log(`🎉 FIT file parsing completed successfully for recording ${fileId}`)
+      console.log(`🚴‍♂️ Ride created: ${rideId}`)
+      return { success: true, rideId, recordingId: fileId }
 
     } catch (error) {
-      console.error(`❌ FIT file parsing failed for file ${fileId}:`, error)
-      
-      // Update file status to failed
+      console.error(`❌ FIT file parsing failed for recording ${fileId}:`, error)
+
+      // Update recording status to failed
       await supabase
-        .from('fit_files')
+        .from('recordings')
         .update({
           status: 'failed',
           error_message: error instanceof Error ? error.message : 'Unknown error'

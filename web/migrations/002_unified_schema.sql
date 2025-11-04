@@ -79,7 +79,10 @@ CREATE TABLE IF NOT EXISTS recording_analysis (
 -- 3. Create rides table with proper schema
 -- ============================================
 
-CREATE TABLE IF NOT EXISTS rides (
+-- Drop old rides table if it exists with wrong schema
+DROP TABLE IF EXISTS rides CASCADE;
+
+CREATE TABLE rides (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   name TEXT NOT NULL,
@@ -100,12 +103,14 @@ CREATE TABLE IF NOT EXISTS rides (
 -- ============================================
 -- This replaces the old ride_data_files table and associates recordings with rides
 
-CREATE TABLE IF NOT EXISTS ride_recordings (
+DROP TABLE IF EXISTS ride_recordings CASCADE;
+
+CREATE TABLE ride_recordings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   ride_id UUID NOT NULL REFERENCES rides(id) ON DELETE CASCADE,
   recording_id UUID NOT NULL REFERENCES recordings(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  
+
   -- Ensure one recording appears only once per ride
   CONSTRAINT ride_recordings_unique UNIQUE (ride_id, recording_id)
 );

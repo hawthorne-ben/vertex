@@ -257,7 +257,7 @@ export async function POST(request: NextRequest) {
         await inngest.send({
           name: 'fit/parse',
           data: {
-            recordingId: recordingRecord.id,
+            fileId: recordingRecord.id,
             userId
           }
         })

@@ -88,22 +88,28 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Create FIT file metadata record
+    // Create FIT recording metadata record
+    // Note: We need placeholder timestamps for now, will be updated after parsing
+    const now = new Date().toISOString()
     const { data: fileRecord, error: insertError } = await supabase
-      .from('fit_files')
+      .from('recordings')
       .insert({
         user_id: userId,
         filename: fileName,
+        file_type: 'fit',
         file_size_bytes: fileSize,
         storage_path: `chunks/${fileId}`, // Points to chunk directory
         status: 'uploaded',
-        processing_started_at: new Date().toISOString()
+        start_time: now, // Placeholder, will be updated after parsing
+        end_time: now, // Placeholder, will be updated after parsing
+        duration_ms: 0, // Placeholder, will be updated after parsing
+        uploaded_at: now
       })
       .select()
       .single()
 
     if (insertError) {
-      console.error('Error creating FIT file record:', insertError)
+      console.error('Error creating FIT recording record:', insertError)
       return NextResponse.json(
         { error: 'Failed to create file record' },
         { status: 500 }
@@ -119,21 +125,21 @@ export async function POST(request: NextRequest) {
           userId
         }
       })
-      console.log(`✅ FIT parsing triggered for file ${fileRecord.id}`)
+      console.log(`✅ FIT parsing triggered for recording ${fileRecord.id}`)
     } catch (inngestError) {
-      console.warn(`⚠️ Failed to trigger Inngest FIT parsing for file ${fileRecord.id}:`, inngestError)
-      
-      // Update file status to indicate manual processing needed
+      console.warn(`⚠️ Failed to trigger Inngest FIT parsing for recording ${fileRecord.id}:`, inngestError)
+
+      // Update recording status to indicate manual processing needed
       await supabase
-        .from('fit_files')
+        .from('recordings')
         .update({
           status: 'uploaded',
           error_message: 'Inngest not available - manual processing required'
         })
         .eq('id', fileRecord.id)
-      
+
       // Don't fail the upload - just warn that processing needs to be triggered manually
-      console.log(`📝 FIT file ${fileRecord.id} uploaded successfully but requires manual processing trigger`)
+      console.log(`📝 FIT recording ${fileRecord.id} uploaded successfully but requires manual processing trigger`)
     }
 
     return NextResponse.json({
