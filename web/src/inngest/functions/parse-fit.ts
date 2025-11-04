@@ -84,10 +84,11 @@ export const parseFitFile = inngest.createFunction(
           console.log(`📁 Storage path: ${fileRecord.storage_path}`)
 
           // Try recordings bucket first (new unified upload flow)
-          let fileData, fileError
           const { data: recData, error: recError } = await supabase.storage
             .from('recordings')
             .download(fileRecord.storage_path)
+
+          let fileData: Blob
 
           if (recError) {
             console.log(`⚠️ Not found in recordings bucket, trying uploads bucket...`)
@@ -96,15 +97,16 @@ export const parseFitFile = inngest.createFunction(
               .from('uploads')
               .download(fileRecord.storage_path)
 
-            fileData = uploadData
-            fileError = uploadError
-          } else {
-            fileData = recData
-            fileError = recError
-          }
+            if (uploadError || !uploadData) {
+              throw new Error(`Failed to download file ${fileRecord.storage_path}: ${uploadError?.message || 'No data returned'}`)
+            }
 
-          if (fileError) {
-            throw new Error(`Failed to download file ${fileRecord.storage_path}: ${fileError.message}`)
+            fileData = uploadData
+          } else {
+            if (!recData) {
+              throw new Error(`Failed to download file ${fileRecord.storage_path}: No data returned from recordings bucket`)
+            }
+            fileData = recData
           }
 
           console.log(`📁 Downloaded file type: ${fileData.constructor.name}`)

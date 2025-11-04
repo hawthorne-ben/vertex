@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Loader2, Plus, CheckCircle } from 'lucide-react'
@@ -28,14 +28,7 @@ export function AddVtxDataButton({ rideId }: AddVtxDataButtonProps) {
   const [submitting, setSubmitting] = useState(false)
   const { addToast } = useToast()
 
-  // Fetch VTX files when modal opens
-  useEffect(() => {
-    if (isOpen) {
-      fetchVtxFiles()
-    }
-  }, [isOpen])
-
-  const fetchVtxFiles = async () => {
+  const fetchVtxFiles = useCallback(async () => {
     setLoading(true)
     try {
       const supabase = createClient()
@@ -67,7 +60,14 @@ export function AddVtxDataButton({ rideId }: AddVtxDataButtonProps) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [addToast])
+
+  // Fetch VTX files when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      fetchVtxFiles()
+    }
+  }, [isOpen, fetchVtxFiles])
 
   const toggleSelection = (id: string) => {
     const newSelected = new Set(selectedIds)
