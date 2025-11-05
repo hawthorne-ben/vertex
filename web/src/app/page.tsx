@@ -10,6 +10,8 @@ import { ThemeToggle } from '@/components/theme-toggle'
 export default function Home() {
   const [email, setEmail] = useState('')
   const [subscribed, setSubscribed] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [openFaq, setOpenFaq] = useState<number | null>(null)
   const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
@@ -31,17 +33,45 @@ export default function Home() {
     return () => subscription.unsubscribe()
   }, [])
 
-  const handleWaitlistSignup = (e: React.FormEvent) => {
+  const handleWaitlistSignup = async (e: React.FormEvent) => {
     e.preventDefault()
-    // Email capture not implemented yet
-    console.log('Waitlist signup:', email)
-    setSubscribed(true)
+    setSubmitting(true)
+    setError(null)
+
+    try {
+      const response = await fetch('/api/waitlist', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        if (response.status === 409) {
+          setError('This email is already on the waitlist!')
+        } else {
+          setError(data.error || 'Failed to join waitlist. Please try again.')
+        }
+        setSubmitting(false)
+        return
+      }
+
+      setSubscribed(true)
+      setEmail('')
+    } catch (err) {
+      console.error('Waitlist signup error:', err)
+      setError('Network error. Please try again.')
+      setSubmitting(false)
+    }
   }
 
   const faqs = [
     {
-      question: "What data formats are supported?",
-      answer: "Vertex supports CSV files from IMU sensors and standard FIT files from cycling computers. The IMU CSV should include timestamp, accelerometer (X/Y/Z), and gyroscope (X/Y/Z) data at a minimum sampling rate of 50Hz."
+      question: "How does data transfer work?",
+      answer: "The IMU logger streams data to your phone via Bluetooth LE. Your phone provides basic real-time analysis and uploads data to the cloud for in-depth post-processing. No SD cards or cables required."
     },
     {
       question: "How is my data stored and secured?",
@@ -49,19 +79,19 @@ export default function Home() {
     },
     {
       question: "Do I need the custom hardware?",
-      answer: "Currently, yes. Vertex is designed to work with a custom IMU data logger that's in development. If you already have IMU data in CSV format from another device, you can upload it directly."
+      answer: "Currently, yes. Vertex is designed to work with a custom IMU data logger that's in development. The mobile app requires BLE streaming from the Vertex logger."
     },
     {
       question: "Can I use this with my existing cycling computer?",
-      answer: "Yes! Vertex complements your cycling computer. Upload your FIT file alongside IMU data to overlay power, heart rate, and GPS data with motion analysis."
+      answer: "Yes! Vertex complements your cycling computer. Upload your FIT file alongside IMU data to overlay power, heart rate, and GPS data with comfort and stability analysis."
     },
     {
       question: "What analysis features are included?",
-      answer: "Vertex provides traction circle visualization, lean angle timeline analysis, braking event detection, cornering force analysis, GPS line comparison, and road surface quality assessment."
+      answer: "Vertex provides comfort metrics, body position stability scores, traction circle visualization, braking technique analysis, cornering forces, and road surface quality assessment."
     },
     {
       question: "Is there a mobile app?",
-      answer: "Not currently. Vertex is a web-based platform optimized for desktop analysis. Mobile support may be added in the future for viewing rides on the go."
+      answer: "Yes! The mobile app is in development. It connects to the logger via Bluetooth, provides basic real-time analysis during rides, and uploads data to the cloud for detailed post-ride review."
     }
   ]
 
@@ -163,12 +193,12 @@ export default function Home() {
             <div className="max-w-xl">
               <div className="bg-card/95 backdrop-blur-sm rounded-lg p-5 sm:p-6 md:p-8 shadow-2xl">
                 <h2 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-light tracking-tight leading-tight mb-3 sm:mb-4 text-card-foreground">
-                  Your ride, unencrypted
+                  Measure how <em>well</em> you ride
                 </h2>
                 <p className="text-sm sm:text-base md:text-lg text-muted-foreground leading-relaxed mb-5 sm:mb-6">
-                  Measure how you actually ride. Understand cornering forces, braking smoothness, 
-                  body position stability, and how your equipment affects comfort—with objective data 
-                  from IMU motion analysis.
+                  Cycling is a technical sport, but standard cycling computers can only measure how <em>hard</em> you&apos;re riding.
+                  Vertex measures stability, braking smoothness, cornering technique, traction limits,
+                  and comfort with precision, high frequency, 9 axis motion analysis.
                 </p>
                 <div className="flex flex-col sm:flex-row gap-2.5 sm:gap-3">
                   {user ? (
@@ -202,11 +232,20 @@ export default function Home() {
         <section id="why" className="bg-muted border-y border-border">
           <div className="container mx-auto px-4 sm:px-6 py-12 sm:py-16 md:py-20">
             <div className="max-w-4xl mx-auto">
-              <h3 className="text-2xl sm:text-3xl font-light mb-6 sm:mb-8 text-center text-foreground">Why Vertex Exists</h3>
+              <h3 className="text-2xl sm:text-3xl font-light mb-6 sm:mb-8 text-center text-foreground">Skill and effort are equally important</h3>
               <p className="text-base sm:text-lg md:text-xl text-muted-foreground leading-relaxed text-center mb-8 sm:mb-12">
-                Standard cycling computers track speed, cadence, and heart rate. 
-                But they can&apos;t measure how you actually ride: cornering forces, braking technique, 
-                body position stability, or how equipment changes affect your comfort and performance.
+                We all love a social/sunset/soul ride with no data distractions, but we also love a training ride with as many objective metrics as possible.
+                Effort and output are only half the equation, gps computers tell you how hard you&apos;re riding—power,
+                heart rate, speed, <span className="relative group inline-block">
+                  <span className="border-b border-dotted border-muted-foreground cursor-help">grade*</span>
+                  <span className="invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-opacity absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-80 p-4 bg-popover text-popover-foreground text-xs sm:text-sm leading-relaxed rounded-lg shadow-lg border border-border z-50">
+                    *GPS grade is a lagging indicator, its accuracy fails when the grade changes rapidly, or isn&apos;t consistent. Vertex
+                    not only logs all 9 axis (acceleration, gyro, magnetometer), but also broadcasts the current grade in real-time to your head unit.
+                    Compatible only as a custom profile on Garmin devices, but we&apos;re advocating for the addition of this feature to the standard profile.
+                    <span className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-8 border-transparent border-t-popover"></span>
+                  </span>
+                </span>. But they can&apos;t measure how well you&apos;re riding: your comfort, stability,
+                traction, or technique.
               </p>
               
               {/* Comparison */}
@@ -216,13 +255,14 @@ export default function Home() {
                     Standard Cycling Computer
                   </h4>
                   <ul className="space-y-1.5 sm:space-y-2 text-secondary text-sm sm:text-base">
-                    <li>• Speed & Cadence</li>
-                    <li>• Heart Rate</li>
-                    <li>• Power Output</li>
-                    <li>• GPS Track</li>
-                    <li className="text-secondary">• Lean Angle: ❌</li>
-                    <li className="text-secondary">• G-Forces: ❌</li>
-                    <li className="text-secondary">• Cornering Analysis: ❌</li>
+                    <li>Speed & Cadence</li>
+                    <li>Heart Rate</li>
+                    <li>Power Output</li>
+                    <li>Grade and total elevation</li>
+                    <li className="text-secondary">Body position stability: ❌</li>
+                    <li className="text-secondary">Cornering Forces: ❌</li>
+                    <li className="text-secondary">Symmetry analysis: ❌</li>
+                    <li className="text-secondary">Braking and acceleration: ❌</li>
                   </ul>
                 </div>
                 <div className="bg-primary text-primary-foreground p-5 sm:p-6 md:p-8 rounded-lg">
@@ -230,13 +270,12 @@ export default function Home() {
                     Vertex + IMU Logger
                   </h4>
                   <ul className="space-y-1.5 sm:space-y-2 text-sm sm:text-base">
-                    <li>• All Standard Metrics</li>
-                    <li>• + Lean Angle & Cornering Forces</li>
-                    <li>• + Braking Smoothness Analysis</li>
-                    <li>• + Road Surface Quality (Vibration)</li>
-                    <li>• + Body Position Stability</li>
-                    <li>• + Equipment Impact Testing</li>
-                    <li>• + Traction Circle & Line Analysis</li>
+                    <li>+ Comfort & Vibration Analysis</li>
+                    <li>+ Body Position Stability</li>
+                    <li>+ Traction & Cornering Forces</li>
+                    <li>+ Braking Technique</li>
+                    <li>+ Equipment Impact Testing</li>
+                    <li>+ Road Surface Quality Metrics</li>
                   </ul>
                 </div>
               </div>
@@ -258,9 +297,9 @@ export default function Home() {
                 </div>
               </div>
               <div className="text-xs sm:text-sm text-secondary font-medium mb-2">STEP 1</div>
-              <h4 className="text-lg sm:text-xl font-medium mb-2 sm:mb-3">Collect Data</h4>
+              <h4 className="text-lg sm:text-xl font-medium mb-2 sm:mb-3">Ride & Record</h4>
               <p className="text-sm sm:text-base text-secondary leading-relaxed">
-                Install the IMU logger on your bike via Garmin mount. Records 100Hz motion data to SD card during your ride.
+                Mount the Vertex logger on your bike. Records and broadcasts 100Hz motion data during your ride—no cables, no SD cards to manage.
               </p>
             </div>
 
@@ -269,14 +308,14 @@ export default function Home() {
               <div className="bg-muted rounded-lg aspect-square mb-4 sm:mb-6 flex items-center justify-center">
                 <div className="text-secondary">
                   <svg className="w-16 sm:w-20 h-16 sm:h-20 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
                   </svg>
                 </div>
               </div>
               <div className="text-xs sm:text-sm text-secondary font-medium mb-2">STEP 2</div>
-              <h4 className="text-lg sm:text-xl font-medium mb-2 sm:mb-3">Upload Files</h4>
+              <h4 className="text-lg sm:text-xl font-medium mb-2 sm:mb-3">Stream via BLE (Bluetooth Low Energy)</h4>
               <p className="text-sm sm:text-base text-secondary leading-relaxed">
-                Drag and drop your IMU CSV file and optional FIT file from your cycling computer. Automatic ride detection and parsing.
+                Connect your phone to the logger via Bluetooth. View basic analysis on-device, then upload to the cloud for detailed post-ride processing.
               </p>
             </div>
 
@@ -290,9 +329,9 @@ export default function Home() {
                 </div>
               </div>
               <div className="text-xs sm:text-sm text-secondary font-medium mb-2">STEP 3</div>
-              <h4 className="text-lg sm:text-xl font-medium mb-2 sm:mb-3">Analyze Your Riding</h4>
+              <h4 className="text-lg sm:text-xl font-medium mb-2 sm:mb-3">In depth Analysis</h4>
               <p className="text-sm sm:text-base text-secondary leading-relaxed">
-                View cornering forces, braking smoothness, road surface quality, and body position stability. Test equipment changes with objective data.
+                Review comfort metrics, stability scores, traction circle, and braking technique. Compare equipment changes with objective data.
               </p>
             </div>
           </div>
@@ -303,7 +342,33 @@ export default function Home() {
           <div className="container mx-auto px-4 sm:px-6 py-12 sm:py-16 md:py-20">
             <h3 className="text-2xl sm:text-3xl font-light mb-10 sm:mb-12 md:mb-16 text-center">What You Can Measure</h3>
             <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 md:gap-8 max-w-6xl mx-auto">
-              {/* Feature 1 */}
+              {/* Feature 1 - Comfort */}
+              <div className="bg-card p-4 sm:p-5 md:p-6 rounded-lg border border-border">
+                <div className="bg-muted rounded-lg aspect-square mb-3 sm:mb-4 flex items-center justify-center">
+                  <svg className="w-12 sm:w-14 md:w-16 h-12 sm:h-14 md:h-16 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                  </svg>
+                </div>
+                <h4 className="text-base sm:text-lg font-medium mb-1.5 sm:mb-2">Comfort & Vibration</h4>
+                <p className="text-secondary text-xs sm:text-sm leading-relaxed">
+                  Quantify road vibration objectively. Test if tire pressure, suspension, frames, or other equipment changes actually improve comfort.
+                </p>
+              </div>
+
+              {/* Feature 2 - Stability */}
+              <div className="bg-card p-4 sm:p-5 md:p-6 rounded-lg border border-border">
+                <div className="bg-muted rounded-lg aspect-square mb-3 sm:mb-4 flex items-center justify-center">
+                  <svg className="w-12 sm:w-14 md:w-16 h-12 sm:h-14 md:h-16 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
+                  </svg>
+                </div>
+                <h4 className="text-base sm:text-lg font-medium mb-1.5 sm:mb-2">Body Position Stability</h4>
+                <p className="text-secondary text-xs sm:text-sm leading-relaxed">
+                  Track how stable your body position is through corners. Measure improvements in bike control and technique.
+                </p>
+              </div>
+
+              {/* Feature 3 - Traction */}
               <div className="bg-card p-4 sm:p-5 md:p-6 rounded-lg border border-border">
                 <div className="bg-muted rounded-lg aspect-square mb-3 sm:mb-4 flex items-center justify-center">
                   <div className="text-center">
@@ -314,48 +379,22 @@ export default function Home() {
                     </svg>
                   </div>
                 </div>
-                <h4 className="text-base sm:text-lg font-medium mb-1.5 sm:mb-2">Traction Circle</h4>
+                <h4 className="text-base sm:text-lg font-medium mb-1.5 sm:mb-2">Traction & Cornering</h4>
                 <p className="text-secondary text-xs sm:text-sm leading-relaxed">
-                  See exact lateral and longitudinal G-forces plotted in real-time. Understand your bike&apos;s grip limits.
+                  See exact G-forces in the traction circle. Understand your grip limits and cornering confidence.
                 </p>
               </div>
 
-              {/* Feature 2 */}
-              <div className="bg-card p-4 sm:p-5 md:p-6 rounded-lg border border-border">
-                <div className="bg-muted rounded-lg aspect-square mb-3 sm:mb-4 flex items-center justify-center">
-                  <svg className="w-12 sm:w-14 md:w-16 h-12 sm:h-14 md:h-16 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z" />
-                  </svg>
-                </div>
-                <h4 className="text-base sm:text-lg font-medium mb-1.5 sm:mb-2">Lean Angle Timeline</h4>
-                <p className="text-secondary text-xs sm:text-sm leading-relaxed">
-                  Track your maximum lean angle by corner. Identify which turns you&apos;re pushing hard vs. riding conservatively.
-                </p>
-              </div>
-
-              {/* Feature 3 */}
+              {/* Feature 4 - Technique */}
               <div className="bg-card p-4 sm:p-5 md:p-6 rounded-lg border border-border">
                 <div className="bg-muted rounded-lg aspect-square mb-3 sm:mb-4 flex items-center justify-center">
                   <svg className="w-12 sm:w-14 md:w-16 h-12 sm:h-14 md:h-16 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                   </svg>
                 </div>
-                <h4 className="text-base sm:text-lg font-medium mb-1.5 sm:mb-2">Braking Analysis</h4>
+                <h4 className="text-base sm:text-lg font-medium mb-1.5 sm:mb-2">Braking Technique</h4>
                 <p className="text-secondary text-xs sm:text-sm leading-relaxed">
-                  Identify heavy vs. smooth braking patterns. See deceleration events and optimize your brake points.
-                </p>
-              </div>
-
-              {/* Feature 4 */}
-              <div className="bg-card p-4 sm:p-5 md:p-6 rounded-lg border border-border">
-                <div className="bg-muted rounded-lg aspect-square mb-3 sm:mb-4 flex items-center justify-center">
-                  <svg className="w-12 sm:w-14 md:w-16 h-12 sm:h-14 md:h-16 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                  </svg>
-                </div>
-                <h4 className="text-base sm:text-lg font-medium mb-1.5 sm:mb-2">Road Surface & Equipment</h4>
-                <p className="text-secondary text-xs sm:text-sm leading-relaxed">
-                  Measure road vibration objectively. Test if tire pressure, handlebar, or saddle changes actually improve comfort.
+                  Analyze braking smoothness and deceleration patterns. Refine your technique for safer, faster riding.
                 </p>
               </div>
             </div>
@@ -420,15 +459,15 @@ export default function Home() {
                     <div className="flex items-start gap-2 sm:gap-3">
                       <div className="text-secondary mt-1 text-sm sm:text-base">•</div>
                       <div>
-                        <span className="font-medium text-sm sm:text-base">SD card data storage</span>
-                        <p className="text-xs sm:text-sm text-secondary">Hours of ride data on a single card</p>
+                        <span className="font-medium text-sm sm:text-base">Bluetooth Low Energy streaming</span>
+                        <p className="text-xs sm:text-sm text-secondary">Real-time data transfer to your phone—no SD cards</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-2 sm:gap-3">
                       <div className="text-secondary mt-1 text-sm sm:text-base">•</div>
                       <div>
-                        <span className="font-medium text-sm sm:text-base">Garmin mount compatible</span>
-                        <p className="text-xs sm:text-sm text-secondary">Mounts to any bike via standard seatpost adapter</p>
+                        <span className="font-medium text-sm sm:text-base">Mobile app integration</span>
+                        <p className="text-xs sm:text-sm text-secondary">Basic analysis on-device, cloud upload for deep processing</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-2 sm:gap-3">
@@ -509,22 +548,32 @@ export default function Home() {
               </p>
               
               {!subscribed ? (
-                <form onSubmit={handleWaitlistSignup} className="flex flex-col sm:flex-row gap-2.5 sm:gap-3 max-w-md mx-auto">
-                  <input
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder="your@email.com"
-                    required
-                    className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 rounded-md bg-card text-primary placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring text-sm sm:text-base"
-                  />
-                  <button
-                    type="submit"
-                    className="px-5 sm:px-6 py-2.5 sm:py-3 bg-card text-primary hover:bg-muted transition-colors rounded-md font-medium text-sm sm:text-base"
-                  >
-                    Join Waitlist
-                  </button>
-                </form>
+                <>
+                  <form onSubmit={handleWaitlistSignup} className="flex flex-col sm:flex-row gap-2.5 sm:gap-3 max-w-md mx-auto">
+                    <input
+                      type="email"
+                      value={email}
+                      onChange={(e) => {
+                        setEmail(e.target.value)
+                        setError(null)
+                      }}
+                      placeholder="your@email.com"
+                      required
+                      disabled={submitting}
+                      className="flex-1 px-3 sm:px-4 py-2.5 sm:py-3 rounded-md bg-card text-primary placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring text-sm sm:text-base disabled:opacity-50"
+                    />
+                    <button
+                      type="submit"
+                      disabled={submitting}
+                      className="px-5 sm:px-6 py-2.5 sm:py-3 bg-card text-primary hover:bg-muted transition-colors rounded-md font-medium text-sm sm:text-base disabled:opacity-50"
+                    >
+                      {submitting ? 'Joining...' : 'Join Waitlist'}
+                    </button>
+                  </form>
+                  {error && (
+                    <p className="text-sm text-destructive mt-3 text-center">{error}</p>
+                  )}
+                </>
               ) : (
                 <div className="bg-primary border border-primary rounded-lg p-5 sm:p-6 max-w-md mx-auto">
                   <svg className="w-10 sm:w-12 h-10 sm:h-12 mx-auto mb-2 sm:mb-3 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">

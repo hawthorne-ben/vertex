@@ -286,7 +286,7 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
                     </div>
                   </div>
                   <a
-                    href={`/data/${vtx.id}`}
+                    href={`/recordings/${vtx.id}`}
                     className="px-3 py-1 text-sm bg-white border border-gray-300 rounded hover:bg-gray-50"
                   >
                     View

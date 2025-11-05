@@ -1,10 +1,99 @@
 import Link from 'next/link'
+import { redirect } from 'next/navigation'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import mockData from '@/lib/mock-data.json'
+import { createClient } from '@/lib/supabase/server'
 
-export default function DashboardPage() {
-  const { stats, rides } = mockData
-  const recentRides = rides.slice(0, 3) // Show 3 most recent
+export default async function DashboardPage() {
+  const supabase = await createClient()
+
+  const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+  if (authError || !user) {
+    redirect('/login')
+  }
+
+  // Fetch rides data
+  const { data: rides, error: ridesError } = await supabase
+    .from('rides')
+    .select('*')
+    .eq('user_id', user.id)
+    .order('start_time', { ascending: false })
+
+  if (ridesError) {
+    console.error('Error fetching rides:', ridesError)
+  }
+
+  // Fetch recordings data (VTX only)
+  const { data: recordings, error: recordingsError } = await supabase
+    .from('recordings')
+    .select('*')
+    .eq('user_id', user.id)
+    .eq('file_type', 'vtx')
+    .order('start_time', { ascending: false })
+
+  if (recordingsError) {
+    console.error('Error fetching recordings:', recordingsError)
+  }
+
+  // Calculate statistics
+  const totalRides = rides?.length || 0
+
+  // Total hours from rides (duration_seconds in rides table)
+  const totalSeconds = rides?.reduce((sum, ride) => sum + (ride.duration_seconds || 0), 0) || 0
+  const totalHours = (totalSeconds / 3600).toFixed(1)
+
+  // Total storage used (sum of all recordings file sizes)
+  const totalBytes = recordings?.reduce((sum, rec) => sum + (rec.file_size_bytes || 0), 0) || 0
+  const storageGB = (totalBytes / (1024 * 1024 * 1024)).toFixed(2)
+
+  // Total recordings length (duration in hours, duration_ms in recordings table)
+  const totalRecordingMs = recordings?.reduce((sum, rec) => sum + (rec.duration_ms || 0), 0) || 0
+  const totalRecordingHours = (totalRecordingMs / (1000 * 60 * 60)).toFixed(1)
+
+  // Recent rides (up to 3)
+  const recentRides = rides?.slice(0, 3) || []
+
+  // Recent recordings (up to 3)
+  const recentRecordings = recordings?.slice(0, 3) || []
+
+  // Helper functions
+  const formatDate = (dateString: string) => {
+    return new Date(dateString).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric'
+    })
+  }
+
+  const formatDurationFromTimestamps = (startTime: string, endTime: string) => {
+    const start = new Date(startTime).getTime()
+    const end = new Date(endTime).getTime()
+    const durationSeconds = (end - start) / 1000
+
+    if (durationSeconds < 60) {
+      return `${durationSeconds.toFixed(0)}s`
+    } else if (durationSeconds < 3600) {
+      const minutes = Math.floor(durationSeconds / 60)
+      const seconds = Math.floor(durationSeconds % 60)
+      return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`
+    } else {
+      const hours = Math.floor(durationSeconds / 3600)
+      const minutes = Math.floor((durationSeconds % 3600) / 60)
+      return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`
+    }
+  }
+
+  const formatDurationSeconds = (seconds: number) => {
+    const totalMinutes = Math.floor(seconds / 60)
+    if (totalMinutes < 60) return `${totalMinutes}m`
+    const hours = Math.floor(totalMinutes / 60)
+    const mins = totalMinutes % 60
+    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`
+  }
+
+  const formatDistance = (meters: number) => {
+    const miles = (meters / 1609.34).toFixed(1)
+    return `${miles} mi`
+  }
 
   return (
     <div className="container mx-auto p-4 md:p-6">
@@ -17,7 +106,7 @@ export default function DashboardPage() {
             <CardTitle className="text-sm font-medium text-secondary">Total Rides</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-primary">{stats.totalRides}</div>
+            <div className="text-2xl font-bold text-primary">{totalRides}</div>
           </CardContent>
         </Card>
         <Card>
@@ -25,15 +114,15 @@ export default function DashboardPage() {
             <CardTitle className="text-sm font-medium text-secondary">Total Hours</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-primary">{stats.totalHours}h</div>
+            <div className="text-2xl font-bold text-primary">{totalHours}h</div>
           </CardContent>
         </Card>
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm font-medium text-secondary">Max Lean Angle</CardTitle>
+            <CardTitle className="text-sm font-medium text-secondary">Total Recordings</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-primary">{stats.maxLeanAngle}°</div>
+            <div className="text-2xl font-bold text-primary">{totalRecordingHours}h</div>
           </CardContent>
         </Card>
         <Card>
@@ -41,7 +130,7 @@ export default function DashboardPage() {
             <CardTitle className="text-sm font-medium text-secondary">Storage Used</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-primary">{stats.storageUsed} {stats.storageUnit}</div>
+            <div className="text-2xl font-bold text-primary">{storageGB} GB</div>
           </CardContent>
         </Card>
       </div>
@@ -54,101 +143,87 @@ export default function DashboardPage() {
             <CardTitle className="text-xl font-serif">Recent Rides</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              {recentRides.map((ride) => (
-                <Link 
-                  key={ride.id}
-                  href={`/rides/${ride.id}`}
-                  className="card-interactive block p-3 rounded-md"
-                >
-                  <div className="flex justify-between gap-4 mb-2">
-                    <h3 className="font-medium text-base text-primary">{ride.name}</h3>
-                    <span className="text-sm text-secondary flex-shrink-0">
-                      {new Date(ride.date).toLocaleDateString('en-US', { 
-                        month: 'short', 
-                        day: 'numeric'
-                      })}
-                    </span>
-                  </div>
-                  <p className="text-sm text-secondary mb-2">{ride.location}</p>
-                  
-                  <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-secondary">Distance</span>
-                      <span className="font-medium text-primary">{ride.distance} mi</span>
+            {recentRides.length === 0 ? (
+              <div className="text-center py-8 text-secondary">
+                <p>No rides yet. Upload a FIT file to get started!</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {recentRides.map((ride) => (
+                  <Link
+                    key={ride.id}
+                    href={`/rides/${ride.id}`}
+                    className="card-interactive block p-3 rounded-md"
+                  >
+                    <div className="flex justify-between gap-4 mb-2">
+                      <h3 className="font-medium text-base text-primary">
+                        {ride.name || 'Unnamed Ride'}
+                      </h3>
+                      <span className="text-sm text-secondary flex-shrink-0">
+                        {formatDate(ride.start_time)}
+                      </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-secondary">Duration</span>
-                      <span className="font-medium text-primary">{Math.round(ride.duration / 60)} min</span>
+
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                      {ride.distance_meters && (
+                        <div className="flex justify-between">
+                          <span className="text-secondary">Distance</span>
+                          <span className="font-medium text-primary">{formatDistance(ride.distance_meters)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between">
+                        <span className="text-secondary">Duration</span>
+                        <span className="font-medium text-primary">{formatDurationSeconds(ride.duration_seconds)}</span>
+                      </div>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-secondary">Max Speed</span>
-                      <span className="font-medium text-primary">{ride.stats.maxSpeed} mph</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-secondary">Max Lean</span>
-                      <span className="font-medium text-primary">{ride.stats.maxLeanAngle}°</span>
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
+                  </Link>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
 
-        {/* Activity Calendar - Right Column */}
+        {/* Recent Recordings - Right Column */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-xl font-serif">Activity Overview</CardTitle>
+            <CardTitle className="text-xl font-serif">Recent Recordings</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-6">
-              {/* Calendar Heatmap Placeholder */}
-              <div>
-                <h3 className="text-sm font-medium mb-3 text-primary">This Month</h3>
-                <div className="h-32 bg-muted rounded-md flex items-center justify-center">
-                  <p className="text-secondary text-sm">Calendar heatmap</p>
-                </div>
+            {recentRecordings.length === 0 ? (
+              <div className="text-center py-8 text-secondary">
+                <p>No recordings yet. Upload VTX data to get started!</p>
               </div>
+            ) : (
+              <div className="space-y-3">
+                {recentRecordings.map((recording) => (
+                  <Link
+                    key={recording.id}
+                    href={`/recordings/${recording.id}`}
+                    className="card-interactive block p-3 rounded-md"
+                  >
+                    <div className="flex justify-between gap-4 mb-2">
+                      <h3 className="font-medium text-base text-primary">
+                        {recording.filename}
+                      </h3>
+                      <span className="text-sm text-secondary flex-shrink-0">
+                        {formatDate(recording.start_time)}
+                      </span>
+                    </div>
 
-              {/* Quick Stats */}
-              <div>
-                <h3 className="text-sm font-medium mb-3 text-primary">Last 30 Days</h3>
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-secondary">Rides</span>
-                    <span className="font-medium text-primary">12</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-secondary">Total Distance</span>
-                    <span className="font-medium text-primary">284 mi</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-secondary">Total Time</span>
-                    <span className="font-medium text-primary">18.5 h</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-secondary">Avg Lean Angle</span>
-                    <span className="font-medium text-primary">32.4°</span>
-                  </div>
-                </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-secondary">Duration</span>
+                        <span className="font-medium text-primary">{formatDurationFromTimestamps(recording.start_time, recording.end_time)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-secondary">Samples</span>
+                        <span className="font-medium text-primary">{recording.sample_count?.toLocaleString() || 'N/A'}</span>
+                      </div>
+                    </div>
+                  </Link>
+                ))}
               </div>
-
-              {/* Milestones */}
-              <div>
-                <h3 className="text-sm font-medium mb-3 text-primary">Recent Milestones</h3>
-                <div className="space-y-2 text-sm">
-                  <div className="flex items-center gap-2 text-secondary">
-                    <span className="text-lg">🏆</span>
-                    <span>First track day completed</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-secondary">
-                    <span className="text-lg">📊</span>
-                    <span>20+ rides logged</span>
-                  </div>
-                </div>
-              </div>
-            </div>
+            )}
           </CardContent>
         </Card>
       </div>

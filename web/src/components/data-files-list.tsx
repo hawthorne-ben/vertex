@@ -348,7 +348,7 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
         {files.map((file) => (
         <a
           key={file.id}
-          href={`/data/${file.id}`}
+          href={`/recordings/${file.id}`}
           className="card-interactive block p-6 rounded-lg"
         >
           <div className="flex items-start gap-4">

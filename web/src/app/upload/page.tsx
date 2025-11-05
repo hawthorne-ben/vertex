@@ -236,8 +236,8 @@ export default function UploadPage() {
 
       // Use setTimeout to ensure state updates are flushed before navigation
       setTimeout(() => {
-        // Redirect to data page to view recordings
-        router.push('/data')
+        // Redirect to recordings page to view recordings
+        router.push('/recordings')
       }, 0)
 
     } catch (err) {
