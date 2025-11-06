@@ -5,6 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Loader2, Plus, CheckCircle } from 'lucide-react'
 import { useToast } from '@/components/ui/toast-context'
+import { formatDurationFromMilliseconds } from '@/lib/utils/format-duration'
 
 interface VtxRecording {
   id: string
@@ -109,12 +110,7 @@ export function AddVtxDataButton({ rideId }: AddVtxDataButtonProps) {
     })
   }
 
-  const formatDuration = (ms: number) => {
-    const seconds = Math.floor(ms / 1000)
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins}m ${secs}s`
-  }
+  const formatDuration = formatDurationFromMilliseconds
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`

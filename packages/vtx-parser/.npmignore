@@ -1,0 +1,32 @@
+# Source files
+src/
+__tests__/
+
+# Python artifacts
+python/__pycache__/
+python/**/__pycache__/
+python/*.pyc
+python/**/*.pyc
+python/.pytest_cache/
+python/tests/__pycache__/
+python/vtx_parser/__pycache__/
+python/build/
+python/dist/
+python/*.egg-info/
+python/htmlcov/
+python/.coverage
+python/test_real_file.py
+
+# Test files
+*.test.ts
+test-*.vtx
+
+# Build artifacts
+tsconfig.json
+.tsbuildinfo
+
+# Development
+.git
+.gitignore
+node_modules/
+*.log

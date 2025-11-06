@@ -1,16 +1,29 @@
 # @vertex/vtx-parser
 
-TypeScript encoder and decoder for the VTX binary format. Provides efficient parsing and generation of `.vtx` files for IMU sensor data.
+TypeScript and Python encoder/decoder for the VTX binary format. Provides efficient parsing and generation of `.vtx` files for IMU sensor data.
 
 ## Installation
 
+### TypeScript / JavaScript
 ```bash
 npm install @vertex/vtx-parser
 ```
 
+### Python
+```bash
+pip install vtx-parser
+```
+
+Or from the npm package:
+```bash
+cd python && pip install -e .
+```
+
 ## Usage
 
-### Encoding (Creating VTX Files)
+### TypeScript
+
+#### Encoding (Creating VTX Files)
 
 ```typescript
 import { VTXEncoder, IMURecord } from '@vertex/vtx-parser';
@@ -70,7 +83,7 @@ const base64 = Buffer.from(buffer).toString('base64');
 await RNFS.writeFile(filePath, base64, 'base64');
 ```
 
-### Decoding (Reading VTX Files)
+#### Decoding (Reading VTX Files)
 
 ```typescript
 import { VTXDecoder, decodeVTX } from '@vertex/vtx-parser';
@@ -107,7 +120,7 @@ const sampleRate = decoder.getSampleRate(); // Hz
 const recordCount = decoder.getRecordCount();
 ```
 
-### Partial Decoding (For Large Files)
+#### Partial Decoding (For Large Files)
 
 ```typescript
 import { decodeVTX } from '@vertex/vtx-parser';
@@ -123,7 +136,88 @@ const { header, metadata } = decodeVTX(buffer, { skipMetadata: false, maxRecords
 const { records } = decodeVTX(buffer, { maxRecords: 1000 });
 ```
 
+### Python
+
+#### Decoding VTX Files
+
+```python
+from vtx_parser import decode_vtx
+
+# Read VTX file
+with open('recording.vtx', 'rb') as f:
+    data = f.read()
+
+# Decode the file
+vtx_file = decode_vtx(data)
+
+# Access header information
+print(f"Sample rate: {vtx_file.header.sample_rate} Hz")
+print(f"Record count: {vtx_file.header.record_count}")
+duration_sec = (vtx_file.header.end_timestamp - vtx_file.header.start_timestamp) / 1000.0
+print(f"Duration: {duration_sec:.2f} seconds")
+
+# Access IMU data
+for record in vtx_file.records:
+    print(f"Time: {record.timestamp}, Accel: ({record.accel_x}, {record.accel_y}, {record.accel_z})")
+```
+
+#### Efficient Reading for Large Files
+
+```python
+from vtx_parser import VTXDecoder
+
+with open('recording.vtx', 'rb') as f:
+    data = f.read()
+
+decoder = VTXDecoder(data)
+
+# Read header first (fast)
+header = decoder.read_header()
+print(f"File has {header.record_count} records")
+
+# Read records in chunks
+chunk_size = 1000
+for i in range(0, header.record_count, chunk_size):
+    records = decoder.read_records(i, chunk_size)
+    # Process records...
+```
+
+#### Integration with Pandas
+
+```python
+import pandas as pd
+from vtx_parser import decode_vtx
+
+with open('recording.vtx', 'rb') as f:
+    vtx_file = decode_vtx(f.read())
+
+# Convert to DataFrame
+data = []
+for record in vtx_file.records:
+    data.append({
+        'timestamp': record.timestamp,
+        'time_sec': (record.timestamp - vtx_file.records[0].timestamp) / 1000.0,
+        'accel_x': record.accel_x,
+        'accel_y': record.accel_y,
+        'accel_z': record.accel_z,
+        'gyro_x': record.gyro_x,
+        'gyro_y': record.gyro_y,
+        'gyro_z': record.gyro_z,
+    })
+
+df = pd.DataFrame(data)
+
+# Compute sample rate
+time_diffs = df['time_sec'].diff().dropna()
+sample_rate = 1.0 / time_diffs.mean()
+print(f"Sample rate: {sample_rate:.2f} Hz")
+```
+
+For complete Python documentation, see [`python/README.md`](./python/README.md).
+
 ## API Reference
+
+### TypeScript API
 
 ### VTXEncoder
 

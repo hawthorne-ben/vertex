@@ -50,7 +50,7 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
     const host = headersList.get('host') || 'localhost:3000'
     const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http'
     const apiUrl = `${protocol}://${host}`
-    const samplesUrl = `${apiUrl}/api/recordings/${id}/samples?resolution=2000&downsample=lttb`
+      const samplesUrl = `${apiUrl}/api/recordings/${id}/samples?resolution=1000&downsample=lttb`
 
     const response = await fetch(samplesUrl, {
       headers: {

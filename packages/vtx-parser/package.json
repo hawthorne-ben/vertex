@@ -1,12 +1,15 @@
 {
   "name": "@vertex-pkg/vtx-parser",
-  "version": "0.2.0",
-  "description": "TypeScript encoder and decoder for VTX binary format",
+  "version": "0.3.1",
+  "description": "TypeScript and Python encoder/decoder for VTX binary format",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
     "build": "tsc",
-    "test": "jest",
+    "test": "npm run test:ts && npm run test:py",
+    "test:ts": "jest",
+    "test:py": "cd python && python -m pytest",
+    "test:py:coverage": "cd python && python -m pytest --cov=vtx_parser --cov-report=html",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -16,7 +19,9 @@
     "binary-format",
     "parser",
     "encoder",
-    "decoder"
+    "decoder",
+    "python",
+    "typescript"
   ],
   "author": "Vertex Team",
   "license": "MIT",
@@ -31,6 +36,12 @@
   "files": [
     "dist/",
     "src/",
+    "python/vtx_parser/",
+    "python/tests/",
+    "python/setup.py",
+    "python/pytest.ini",
+    "python/README.md",
+    "python/.gitignore",
     "README.md",
     "CHANGELOG.md"
   ],

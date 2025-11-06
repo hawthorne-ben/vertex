@@ -3,6 +3,7 @@ import { notFound, redirect } from 'next/navigation'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Bike, Clock, MapPin, TrendingUp, Zap, Heart, Activity } from 'lucide-react'
 import { AddVtxDataButton } from '@/components/add-vtx-data-button'
+import { formatDurationFromSeconds } from '@/lib/utils/format-duration'
 
 export default async function RideDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -66,14 +67,7 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
     })
   }
 
-  const formatDuration = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600)
-    const mins = Math.floor((seconds % 3600) / 60)
-    const secs = seconds % 60
-    if (hours > 0) return `${hours}h ${mins}m`
-    if (mins > 0) return `${mins}m ${secs}s`
-    return `${secs}s`
-  }
+  const formatDuration = formatDurationFromSeconds
 
   const formatDistance = (meters: number | null) => {
     if (!meters) return 'N/A'

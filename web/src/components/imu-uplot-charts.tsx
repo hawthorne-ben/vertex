@@ -111,8 +111,16 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
     if (!chartRef.current || samples.length === 0) return
 
     // Detect gaps in timestamps and insert null markers
-    // A gap is defined as a jump >500ms between consecutive samples
-    const GAP_THRESHOLD_MS = 500
+    // Only mark gaps that are significantly larger than expected sample spacing
+    // For downsampled data, we need a much larger threshold to avoid false positives
+    // Calculate expected sample spacing based on data span
+    const firstTime = new Date(samples[0].timestamp).getTime()
+    const lastTime = new Date(samples[samples.length - 1].timestamp).getTime()
+    const totalDuration = lastTime - firstTime
+    const expectedSampleSpacing = totalDuration / samples.length
+    // Use 10x the expected spacing as threshold - only mark real gaps
+    const GAP_THRESHOLD_MS = Math.max(5000, expectedSampleSpacing * 10)
+    
     const samplesWithGaps: (IMUSample | null)[] = []
 
     for (let i = 0; i < samples.length; i++) {
@@ -124,16 +132,34 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
         const gap = nextTime - currentTime
 
         if (gap > GAP_THRESHOLD_MS) {
-          // Insert null marker to break the line
+          // Insert null marker to break the line only for real gaps
           samplesWithGaps.push(null)
         }
       }
     }
 
     // Convert samples to uPlot format
-    const timestamps = samplesWithGaps.map(s =>
-      s ? new Date(s.timestamp).getTime() / 1000 : null
-    ) // Unix seconds or null
+    // uPlot requires timestamps to be numbers (Unix seconds)
+    // For gaps, we create aligned arrays where null samples get a timestamp
+    // slightly after the previous one to maintain visual continuity
+    const finalSamplesWithGaps: (IMUSample | null)[] = []
+    const finalTimestamps: number[] = []
+    
+    for (let i = 0; i < samplesWithGaps.length; i++) {
+      if (samplesWithGaps[i]) {
+        const ts = new Date(samplesWithGaps[i]!.timestamp).getTime() / 1000
+        finalTimestamps.push(ts)
+        finalSamplesWithGaps.push(samplesWithGaps[i])
+      } else {
+        // For gap markers, add a timestamp just after the last one
+        // This ensures arrays stay aligned and creates a visual break in the line
+        if (finalTimestamps.length > 0) {
+          finalTimestamps.push(finalTimestamps[finalTimestamps.length - 1] + 0.001)
+          finalSamplesWithGaps.push(null)
+        }
+        // Skip gap markers at the start (shouldn't happen in practice)
+      }
+    }
 
     let series: uPlot.Series[]
     let data: uPlot.AlignedData
@@ -142,50 +168,59 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
     switch (dataType) {
       case 'accel':
         data = [
-          timestamps as number[],
-          samplesWithGaps.map(s => s ? s.accel_x : null) as (number | null)[],
-          samplesWithGaps.map(s => s ? s.accel_y : null) as (number | null)[],
-          samplesWithGaps.map(s => s ? s.accel_z : null) as (number | null)[]
+          finalTimestamps,
+          finalSamplesWithGaps.map(s => s ? s.accel_x : null) as (number | null)[],
+          finalSamplesWithGaps.map(s => s ? s.accel_y : null) as (number | null)[],
+          finalSamplesWithGaps.map(s => s ? s.accel_z : null) as (number | null)[]
         ]
         series = [
           {}, // Timestamp series (no label, no stroke - won't show in legend)
-          { label: 'X', stroke: 'hsl(0, 70%, 50%)', width: 2, spanGaps: false },
-          { label: 'Y', stroke: 'hsl(120, 70%, 40%)', width: 2, spanGaps: false },
-          { label: 'Z', stroke: 'hsl(210, 70%, 50%)', width: 2, spanGaps: false }
+          { label: 'X', stroke: 'hsl(10, 49.20%, 52.90%)', width: 2, spanGaps: false, points: { show: false, size: 0 } },
+          { label: 'Y', stroke: 'hsl(145, 49.60%, 54.10%)', width: 2, spanGaps: false, points: { show: false, size: 0 } },
+          { label: 'Z', stroke: 'hsl(205, 59.70%, 70.80%)', width: 2, spanGaps: false, points: { show: false, size: 0 } }
         ]
         yAxisLabel = 'Acceleration (m/s²)'
         break
       case 'gyro':
         data = [
-          timestamps as number[],
-          samplesWithGaps.map(s => s ? s.gyro_x : null) as (number | null)[],
-          samplesWithGaps.map(s => s ? s.gyro_y : null) as (number | null)[],
-          samplesWithGaps.map(s => s ? s.gyro_z : null) as (number | null)[]
+          finalTimestamps,
+          finalSamplesWithGaps.map(s => s ? s.gyro_x : null) as (number | null)[],
+          finalSamplesWithGaps.map(s => s ? s.gyro_y : null) as (number | null)[],
+          finalSamplesWithGaps.map(s => s ? s.gyro_z : null) as (number | null)[]
         ]
         series = [
           {}, // Timestamp series (no label, no stroke - won't show in legend)
-          { label: 'X', stroke: 'hsl(0, 70%, 50%)', width: 2, spanGaps: false },
-          { label: 'Y', stroke: 'hsl(120, 70%, 40%)', width: 2, spanGaps: false },
-          { label: 'Z', stroke: 'hsl(210, 70%, 50%)', width: 2, spanGaps: false }
+          { label: 'X', stroke: 'hsl(10, 49.20%, 52.90%)', width: 2, spanGaps: false, points: { show: false, size: 0 } },
+          { label: 'Y', stroke: 'hsl(145, 49.60%, 54.10%)', width: 2, spanGaps: false, points: { show: false, size: 0 } },
+          { label: 'Z', stroke: 'hsl(205, 59.70%, 70.80%)', width: 2, spanGaps: false, points: { show: false, size: 0 } }
         ]
         yAxisLabel = 'Angular Velocity (rad/s)'
         break
       case 'mag':
         data = [
-          timestamps as number[],
-          samplesWithGaps.map(s => s ? (s.mag_x ?? null) : null) as (number | null)[],
-          samplesWithGaps.map(s => s ? (s.mag_y ?? null) : null) as (number | null)[],
-          samplesWithGaps.map(s => s ? (s.mag_z ?? null) : null) as (number | null)[]
+          finalTimestamps,
+          finalSamplesWithGaps.map(s => s ? (s.mag_x ?? null) : null) as (number | null)[],
+          finalSamplesWithGaps.map(s => s ? (s.mag_y ?? null) : null) as (number | null)[],
+          finalSamplesWithGaps.map(s => s ? (s.mag_z ?? null) : null) as (number | null)[]
         ]
         series = [
           {}, // Timestamp series (no label, no stroke - won't show in legend)
-          { label: 'X', stroke: 'hsl(0, 70%, 50%)', width: 2, spanGaps: false },
-          { label: 'Y', stroke: 'hsl(120, 70%, 40%)', width: 2, spanGaps: false },
-          { label: 'Z', stroke: 'hsl(210, 70%, 50%)', width: 2, spanGaps: false }
+          { label: 'X', stroke: 'hsl(10, 49.20%, 52.90%)', width: 2, spanGaps: false, points: { show: false, size: 0 } },
+          { label: 'Y', stroke: 'hsl(145, 49.60%, 54.10%)', width: 2, spanGaps: false, points: { show: false, size: 0 } },
+          { label: 'Z', stroke: 'hsl(205, 59.70%, 70.80%)', width: 2, spanGaps: false, points: { show: false, size: 0 } }
         ]
         yAxisLabel = 'Magnetic Field (µT)'
         break
     }
+
+    // Debug: log data structure
+    console.log('Chart data:', {
+      timestampCount: finalTimestamps.length,
+      dataLengths: data.map(d => d.length),
+      firstTimestamp: finalTimestamps[0],
+      lastTimestamp: finalTimestamps[finalTimestamps.length - 1],
+      sampleCount: finalSamplesWithGaps.length
+    })
 
     // Get computed colors for theme support
     const foregroundColor = getComputedStyle(chartRef.current).getPropertyValue('--foreground').trim()
@@ -253,7 +288,12 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
       ],
       scales: {
         x: {
-          time: true // Use absolute time
+          time: true, // Use absolute time
+          // Explicitly set range if we have data
+          ...(finalTimestamps.length > 0 && {
+            min: Math.min(...finalTimestamps),
+            max: Math.max(...finalTimestamps)
+          })
         }
       },
       cursor: {
@@ -329,10 +369,26 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
       // After setData, scale to show all the new data
       if (zoomRange) {
         uplotRef.current.setScale('x', { min: data[0][0], max: data[0][data[0].length - 1] })
+      } else {
+        // For default view, ensure scales are set correctly
+        if (finalTimestamps.length > 0) {
+          uplotRef.current.setScale('x', { 
+            min: Math.min(...finalTimestamps), 
+            max: Math.max(...finalTimestamps) 
+          })
+        }
       }
     } else {
       // First time or after dataType change - create the chart
       uplotRef.current = new uPlot(opts, data, chartRef.current)
+      
+      // Ensure scales are set after creation
+      if (finalTimestamps.length > 0 && !zoomRange) {
+        uplotRef.current.setScale('x', { 
+          min: Math.min(...finalTimestamps), 
+          max: Math.max(...finalTimestamps) 
+        })
+      }
     }
 
     // Manually set legend marker background colors (uPlot doesn't use fill for legend markers)

@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Bike, Clock, MapPin, TrendingUp } from 'lucide-react'
 import Link from 'next/link'
+import { formatDurationFromSeconds } from '@/lib/utils/format-duration'
 
 interface Ride {
   id: string
@@ -65,11 +66,7 @@ export default async function RidesPage() {
     }
   })
 
-  const formatDuration = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600)
-    const mins = Math.floor((seconds % 3600) / 60)
-    return hours > 0 ? `${hours}h ${mins}m` : `${mins}m`
-  }
+  const formatDuration = formatDurationFromSeconds
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {

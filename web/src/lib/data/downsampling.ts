@@ -3,7 +3,9 @@
  * Preserves visual features while reducing data points
  */
 
-import lttb from 'downsample-lttb'
+// Use require for CommonJS compatibility in Next.js server-side code
+const lttbModule = require('downsample-lttb')
+const lttb = lttbModule.processData
 
 interface Sample {
   timestamp: number
@@ -45,12 +47,12 @@ export function downsampleLTTB(samples: Sample[], targetSize: number): Sample[] 
 
   // Merge indices from all axes (each axis may select different points)
   const indexSet = new Set<number>()
-  downsampledAccelX.forEach(([idx]) => indexSet.add(Math.round(idx)))
-  downsampledAccelY.forEach(([idx]) => indexSet.add(Math.round(idx)))
-  downsampledAccelZ.forEach(([idx]) => indexSet.add(Math.round(idx)))
-  downsampledGyroX.forEach(([idx]) => indexSet.add(Math.round(idx)))
-  downsampledGyroY.forEach(([idx]) => indexSet.add(Math.round(idx)))
-  downsampledGyroZ.forEach(([idx]) => indexSet.add(Math.round(idx)))
+  downsampledAccelX.forEach(([idx]: [number, number]) => indexSet.add(Math.round(idx)))
+  downsampledAccelY.forEach(([idx]: [number, number]) => indexSet.add(Math.round(idx)))
+  downsampledAccelZ.forEach(([idx]: [number, number]) => indexSet.add(Math.round(idx)))
+  downsampledGyroX.forEach(([idx]: [number, number]) => indexSet.add(Math.round(idx)))
+  downsampledGyroY.forEach(([idx]: [number, number]) => indexSet.add(Math.round(idx)))
+  downsampledGyroZ.forEach(([idx]: [number, number]) => indexSet.add(Math.round(idx)))
 
   // Convert to sorted array and extract samples
   const selectedIndices = Array.from(indexSet).sort((a, b) => a - b)
@@ -60,7 +62,7 @@ export function downsampleLTTB(samples: Sample[], targetSize: number): Sample[] 
   if (selectedIndices.length > targetSize) {
     const mergedData = selectedIndices.map(idx => [idx, samples[idx].accel.x] as [number, number])
     const finalDownsampled = lttb(mergedData, targetSize)
-    finalIndices = finalDownsampled.map(([idx]) => Math.round(idx))
+    finalIndices = finalDownsampled.map(([idx]: [number, number]) => Math.round(idx))
   }
 
   return finalIndices.map(idx => samples[idx])
@@ -79,7 +81,7 @@ export function downsampleAxis(data: number[], timestamps: number[], targetSize:
   const downsampled = lttb(points, targetSize)
 
   return {
-    data: downsampled.map(([, value]) => value),
-    timestamps: downsampled.map(([timestamp]) => timestamp)
+    data: downsampled.map(([, value]: [number, number]) => value),
+    timestamps: downsampled.map(([timestamp]: [number, number]) => timestamp)
   }
 }

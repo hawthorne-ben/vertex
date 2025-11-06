@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { createClient } from '@/lib/supabase/server'
+import { formatDurationFromTimestamps as formatDurationFromTimestampsUtil, formatDurationFromSeconds } from '@/lib/utils/format-duration'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -64,31 +65,8 @@ export default async function DashboardPage() {
     })
   }
 
-  const formatDurationFromTimestamps = (startTime: string, endTime: string) => {
-    const start = new Date(startTime).getTime()
-    const end = new Date(endTime).getTime()
-    const durationSeconds = (end - start) / 1000
-
-    if (durationSeconds < 60) {
-      return `${durationSeconds.toFixed(0)}s`
-    } else if (durationSeconds < 3600) {
-      const minutes = Math.floor(durationSeconds / 60)
-      const seconds = Math.floor(durationSeconds % 60)
-      return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`
-    } else {
-      const hours = Math.floor(durationSeconds / 3600)
-      const minutes = Math.floor((durationSeconds % 3600) / 60)
-      return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`
-    }
-  }
-
-  const formatDurationSeconds = (seconds: number) => {
-    const totalMinutes = Math.floor(seconds / 60)
-    if (totalMinutes < 60) return `${totalMinutes}m`
-    const hours = Math.floor(totalMinutes / 60)
-    const mins = totalMinutes % 60
-    return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`
-  }
+  const formatDurationFromTimestamps = formatDurationFromTimestampsUtil
+  const formatDurationSeconds = formatDurationFromSeconds
 
   const formatDistance = (meters: number) => {
     const miles = (meters / 1609.34).toFixed(1)

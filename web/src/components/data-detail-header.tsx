@@ -1,5 +1,7 @@
 'use client'
 
+import { formatDurationFromTimestamps } from '@/lib/utils/format-duration'
+
 interface DataDetailHeaderProps {
   startTime: string
   endTime: string
@@ -17,7 +19,7 @@ export function DataDetailHeader({
   status,
   filename
 }: DataDetailHeaderProps) {
-  const duration = ((new Date(endTime).getTime() - new Date(startTime).getTime()) / 1000).toFixed(1)
+  const duration = formatDurationFromTimestamps(startTime, endTime)
 
   return (
     <div className="mb-8">
@@ -45,7 +47,7 @@ export function DataDetailHeader({
         {sampleRate && (
           <span>{sampleRate} Hz</span>
         )}
-        <span>{duration}s</span>
+        <span>{duration}</span>
         <span className={`
           px-2 py-1 rounded-full text-xs
           ${status === 'ready' ? 'status-badge-success' : ''}

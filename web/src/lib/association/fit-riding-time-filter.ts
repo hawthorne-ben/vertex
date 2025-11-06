@@ -3,6 +3,8 @@
  * Separates riding periods from stationary periods based on speed thresholds
  */
 
+import { formatDurationFromSeconds } from '@/lib/utils/format-duration'
+
 export interface FitDataPoint {
   timestamp: string
   speed_ms?: number | null
@@ -210,19 +212,7 @@ export class FitRidingTimeFilter {
     averageRidingSpeed?: number
     maxRidingSpeed?: number
   } {
-    const formatDuration = (seconds: number): string => {
-      const hours = Math.floor(seconds / 3600)
-      const minutes = Math.floor((seconds % 3600) / 60)
-      const secs = Math.floor(seconds % 60)
-      
-      if (hours > 0) {
-        return `${hours}h ${minutes}m ${secs}s`
-      } else if (minutes > 0) {
-        return `${minutes}m ${secs}s`
-      } else {
-        return `${secs}s`
-      }
-    }
+    const formatDuration = formatDurationFromSeconds
 
     // Calculate average and max riding speeds
     let averageRidingSpeed: number | undefined

@@ -1,5 +1,5 @@
 declare module 'downsample-lttb' {
-  export default function lttb(
+  export function processData(
     data: Array<[number, number]>,
     threshold: number
   ): Array<[number, number]>

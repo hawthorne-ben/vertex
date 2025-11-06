@@ -6,6 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useToast } from '@/components/ui/toast-context'
 import { ConfirmationModal } from '@/components/ui/confirmation-modal'
 import { Tooltip } from '@/components/ui/tooltip'
+import { formatDurationFromTimestamps } from '@/lib/utils/format-duration'
 
 // Client-side component for dynamic time display to prevent hydration issues
 function ProcessingTimeDisplay({ uploadedAt }: { uploadedAt: string }) {
@@ -302,23 +303,7 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
     })
   }
 
-  const formatDuration = (startTime: string, endTime: string) => {
-    const start = new Date(startTime).getTime()
-    const end = new Date(endTime).getTime()
-    const durationSeconds = (end - start) / 1000
-    
-    if (durationSeconds < 60) {
-      return `${durationSeconds.toFixed(1)}s`
-    } else if (durationSeconds < 3600) {
-      const minutes = Math.floor(durationSeconds / 60)
-      const seconds = Math.floor(durationSeconds % 60)
-      return `${minutes}m ${seconds}s`
-    } else {
-      const hours = Math.floor(durationSeconds / 3600)
-      const minutes = Math.floor((durationSeconds % 3600) / 60)
-      return `${hours}h ${minutes}m`
-    }
-  }
+  const formatDuration = formatDurationFromTimestamps
 
   const formatFileSize = (bytes: number) => {
     if (bytes < 1024) return `${bytes} B`
