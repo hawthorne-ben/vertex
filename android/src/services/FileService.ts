@@ -25,6 +25,9 @@ export interface IMUSensorData {
   quat_x?: number;
   quat_y?: number;
   quat_z?: number;
+  roll?: number;
+  pitch?: number;
+  yaw?: number;
 }
 
 export interface RecordingMetadata {

@@ -126,6 +126,7 @@ class RecordingService {
           sampleRate,
           includeMag: true,
           includeQuat: false,
+          includeEuler: true,  // Enable Euler angles (roll, pitch, yaw)
           metadata: vtxMetadata,
           writeCallback,
         });
@@ -403,7 +404,11 @@ class RecordingService {
         gyro_z: processedData.gyroZ ?? 0,
         mag_x: processedData.magX,
         mag_y: processedData.magY,
-        mag_z: processedData.magZ
+        mag_z: processedData.magZ,
+        // Add Euler angles from BLE data (fused orientation from BNO055)
+        roll: processedData.roll,
+        pitch: processedData.pitch,
+        yaw: processedData.yaw
       };
 
       // Add to buffer
@@ -499,6 +504,9 @@ class RecordingService {
               quatX: data.quat_x,
               quatY: data.quat_y,
               quatZ: data.quat_z,
+              roll: data.roll,
+              pitch: data.pitch,
+              yaw: data.yaw,
             };
             await encoder.addRecord(imuRecord);
           }

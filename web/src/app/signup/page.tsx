@@ -21,6 +21,15 @@ export default function SignUpPage() {
     setLoading(true)
 
     try {
+      // Check if email is in the allowlist
+      const allowedEmails = process.env.NEXT_PUBLIC_ALLOWED_SIGNUP_EMAILS
+      if (allowedEmails) {
+        const allowedList = allowedEmails.split(',').map(e => e.trim().toLowerCase())
+        if (!allowedList.includes(email.toLowerCase())) {
+          throw new Error('Sign up is currently restricted to invited users only. We\'re in private beta and will open to the public soon!')
+        }
+      }
+
       const supabase = createClient()
       const { data, error } = await supabase.auth.signUp({
         email,

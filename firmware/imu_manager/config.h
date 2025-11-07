@@ -7,7 +7,7 @@
 #define CONFIG_H
 
 // ===== Firmware Version =====
-#define FIRMWARE_VERSION "0.2.0"
+#define FIRMWARE_VERSION "0.3.0"
 #define VTX_FORMAT_MAJOR 1
 #define VTX_FORMAT_MINOR 0
 
@@ -48,6 +48,11 @@
 #define I2C_CLOCK_SPEED_LOW 100000   // 100kHz - low power mode
 #define I2C_CLOCK_SPEED_NORMAL 400000 // 400kHz - normal/high mode
 #define I2C_TIMEOUT_MS 1000
+
+// ===== BNO055 Sensor Configuration =====
+// Operation mode: NDOF (9-axis sensor fusion with accel + gyro + mag)
+// Acceleration output: VECTOR_LINEARACCEL (gravity-compensated, filtered by sensor fusion)
+// Note: BNO055's internal sensor fusion provides filtered acceleration output
 
 // ===== Conversion Constants =====
 #define RAD_TO_DEG 57.29577951308232  // 180/PI for radians to degrees

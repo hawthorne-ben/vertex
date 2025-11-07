@@ -223,6 +223,10 @@ export class VTXDecoder {
       size += 16; // quat (4 * float32)
     }
 
+    if (recordFormat & RecordFormatFlags.HAS_EULER) {
+      size += 12; // euler (3 * float32: roll, pitch, yaw)
+    }
+
     return size;
   }
 
@@ -361,6 +365,16 @@ export class VTXDecoder {
       record.quatY = this.view.getFloat32(offset, true);
       offset += 4;
       record.quatZ = this.view.getFloat32(offset, true);
+      offset += 4;
+    }
+
+    // Read Euler angles (3 * float32) - optional
+    if (this.header.recordFormat & RecordFormatFlags.HAS_EULER) {
+      record.roll = this.view.getFloat32(offset, true);
+      offset += 4;
+      record.pitch = this.view.getFloat32(offset, true);
+      offset += 4;
+      record.yaw = this.view.getFloat32(offset, true);
       offset += 4;
     }
 

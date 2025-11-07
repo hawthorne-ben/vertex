@@ -195,10 +195,13 @@ export default function Home() {
                 <h2 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-light tracking-tight leading-tight mb-3 sm:mb-4 text-card-foreground">
                   Measure how <em>well</em> you ride
                 </h2>
-                <p className="text-sm sm:text-base md:text-lg text-muted-foreground leading-relaxed mb-5 sm:mb-6">
+                <p className="text-sm sm:text-base md:text-lg text-muted-foreground leading-relaxed mb-3 sm:mb-4">
                   Cycling is a technical sport, but standard cycling computers can only measure how <em>hard</em> you&apos;re riding.
                   Vertex measures stability, braking smoothness, cornering technique, traction limits,
                   and comfort with precision, high frequency, 9 axis motion analysis.
+                </p>
+                <p className="text-xs sm:text-sm bg-primary/10 text-primary px-3 py-2 rounded-md mb-5 sm:mb-6 border border-primary/20">
+                  Currently in private beta • Invite-only access
                 </p>
                 <div className="flex flex-col sm:flex-row gap-2.5 sm:gap-3">
                   {user ? (
@@ -209,11 +212,11 @@ export default function Home() {
                       Go to Dashboard
                     </Link>
                   ) : (
-                    <a 
+                    <a
                       href="#waitlist"
                       className="px-5 sm:px-6 py-2.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors rounded-md text-center text-xs sm:text-sm font-medium"
                     >
-                      Join Beta Waitlist
+                      Request Invite
                     </a>
                   )}
                   <a 
@@ -493,15 +496,15 @@ export default function Home() {
                     </div>
                   </div>
 
-                  <a 
+                  <a
                     href="#waitlist"
                     className="inline-block px-5 sm:px-6 py-2.5 sm:py-3 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors rounded-md text-xs sm:text-sm font-medium"
                   >
-                    Join Hardware Waitlist
+                    Request Early Access
                   </a>
 
                   <p className="text-xs sm:text-sm text-secondary mt-3 sm:mt-4">
-                    Already have IMU data? Upload any CSV format with accelerometer and gyroscope data.
+                    Interested in the platform now? Request invite-only access to test with your own IMU data.
                   </p>
                 </div>
               </div>
@@ -542,9 +545,9 @@ export default function Home() {
         <section id="waitlist" className="bg-primary text-primary-foreground">
           <div className="container mx-auto px-4 sm:px-6 py-12 sm:py-16 md:py-20">
             <div className="max-w-2xl mx-auto text-center">
-              <h3 className="text-2xl sm:text-3xl font-light mb-3 sm:mb-4">Join the Beta Waitlist</h3>
+              <h3 className="text-2xl sm:text-3xl font-light mb-3 sm:mb-4">Request Invite-Only Access</h3>
               <p className="text-sm sm:text-base text-primary-foreground mb-6 sm:mb-8 leading-relaxed px-4">
-                Get early access to Vertex when we launch. Be the first to know when hardware pre-orders open.
+                Vertex is currently in private beta. Join the waitlist to request an invite and be notified when hardware pre-orders open.
               </p>
               
               {!subscribed ? (
@@ -567,7 +570,7 @@ export default function Home() {
                       disabled={submitting}
                       className="px-5 sm:px-6 py-2.5 sm:py-3 bg-card text-primary hover:bg-muted transition-colors rounded-md font-medium text-sm sm:text-base disabled:opacity-50"
                     >
-                      {submitting ? 'Joining...' : 'Join Waitlist'}
+                      {submitting ? 'Requesting...' : 'Request Invite'}
                     </button>
                   </form>
                   {error && (
@@ -579,15 +582,15 @@ export default function Home() {
                   <svg className="w-10 sm:w-12 h-10 sm:h-12 mx-auto mb-2 sm:mb-3 text-success" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  <p className="text-base sm:text-lg font-medium mb-1.5 sm:mb-2">You&apos;re on the list!</p>
+                  <p className="text-base sm:text-lg font-medium mb-1.5 sm:mb-2">Invite request received!</p>
                   <p className="text-secondary text-xs sm:text-sm">
-                    We&apos;ll email you when Vertex launches and when hardware pre-orders open.
+                    You&apos;re on the waitlist. We&apos;ll review your request and notify you about beta access and hardware pre-orders.
                   </p>
                 </div>
               )}
-              
+
               <p className="text-xs text-secondary mt-5 sm:mt-6 px-4">
-                We&apos;ll only email you about Vertex updates. No spam, unsubscribe anytime.
+                Limited beta slots available • We&apos;ll only email you about Vertex updates • No spam, unsubscribe anytime
               </p>
             </div>
           </div>

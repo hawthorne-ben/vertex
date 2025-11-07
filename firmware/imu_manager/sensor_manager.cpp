@@ -39,7 +39,15 @@ bool SensorManager::init() {
   }
 
   bno.setExtCrystalUse(true);
+
+  // Configure BNO055 operation mode
+  // NDOF mode: 9-axis sensor fusion (accel + gyro + mag)
+  // This mode enables the sensor fusion that produces filtered linear acceleration
+  bno.setMode(OPERATION_MODE_NDOF);
+  delay(20);  // Allow mode switch to complete
+
   Serial.println(" OK");
+  Serial.println("[INFO] BNO055 configured: NDOF mode with sensor fusion enabled");
   delay(500);
 
   return true;
@@ -62,7 +70,9 @@ bool SensorManager::update() {
   imu::Vector<3> euler = quat.toEuler();
 
   // Read other sensor data
-  imu::Vector<3> accel = bno.getVector(Adafruit_BNO055::VECTOR_ACCELEROMETER);
+  // Use VECTOR_LINEARACCEL: gravity-compensated acceleration from sensor fusion
+  // This provides filtered, clean acceleration data without gravity component
+  imu::Vector<3> accel = bno.getVector(Adafruit_BNO055::VECTOR_LINEARACCEL);
   imu::Vector<3> gyro = bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
   imu::Vector<3> mag = bno.getVector(Adafruit_BNO055::VECTOR_MAGNETOMETER);
 

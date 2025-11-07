@@ -43,6 +43,8 @@ export enum RecordFormatFlags {
   HAS_MAG = 1 << 2,
   /** Has quaternion data */
   HAS_QUAT = 1 << 3,
+  /** Has Euler angle data (roll, pitch, yaw) */
+  HAS_EULER = 1 << 4,
 }
 
 /**
@@ -151,6 +153,12 @@ export interface IMURecord {
   quatY?: number;
   /** Quaternion Z - optional */
   quatZ?: number;
+  /** Euler angle: Roll (degrees) - optional */
+  roll?: number;
+  /** Euler angle: Pitch (degrees) - optional */
+  pitch?: number;
+  /** Euler angle: Yaw (degrees) - optional */
+  yaw?: number;
 }
 
 /**
@@ -175,6 +183,8 @@ export interface VTXEncoderOptions {
   includeMag?: boolean;
   /** Include quaternion data */
   includeQuat?: boolean;
+  /** Include Euler angle data (roll, pitch, yaw) */
+  includeEuler?: boolean;
   /** Metadata to include in file */
   metadata?: VTXMetadata;
 }

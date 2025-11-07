@@ -73,7 +73,7 @@ arduino-cli lib install "Adafruit Unified Sensor"
 # Compile & Upload
 cd sensor_notify
 arduino-cli compile --fqbn esp32:esp32:adafruit_feather_esp32_v2 sensor_notify.ino
-arduino-cli upload --fqbn esp32:esp32:adafruit_feather_esp32_v2 --port /dev/cu.usbserial-XXXXXXXX --upload-property upload.speed=115200 sensor_notify.ino
+arduino-cli upload --fqbn esp32:esp32:adafruit_feather_esp32_v2 --port /dev/cu.usbserial-59690499371 --upload-property upload.speed=115200 imu_manager.ino
 ```
 
 ### Serial Monitor

@@ -182,6 +182,9 @@ class VTXDecoder:
         if record_format & RecordFormatFlags.HAS_QUAT:
             size += 16  # quat (4 * float32)
 
+        if record_format & RecordFormatFlags.HAS_EULER:
+            size += 12  # euler (3 * float32: roll, pitch, yaw)
+
         return size
 
     def read_metadata(self) -> VTXMetadata:
@@ -327,6 +330,15 @@ class VTXDecoder:
             record.quat_y = struct.unpack("<f", self.data[offset : offset + 4])[0]
             offset += 4
             record.quat_z = struct.unpack("<f", self.data[offset : offset + 4])[0]
+            offset += 4
+
+        # Read Euler angles (3 * float32) - optional
+        if self.header.record_format & RecordFormatFlags.HAS_EULER:
+            record.roll = struct.unpack("<f", self.data[offset : offset + 4])[0]
+            offset += 4
+            record.pitch = struct.unpack("<f", self.data[offset : offset + 4])[0]
+            offset += 4
+            record.yaw = struct.unpack("<f", self.data[offset : offset + 4])[0]
             offset += 4
 
         return record

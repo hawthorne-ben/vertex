@@ -42,6 +42,8 @@ export const VTX_RECORD_FORMAT = {
   HAS_MAG: 1 << 2,
   /** Bit 3: Quaternion data present (optional) */
   HAS_QUAT: 1 << 3,
+  /** Bit 4: Euler angle data present (optional) */
+  HAS_EULER: 1 << 4,
 } as const;
 
 /**
@@ -108,6 +110,11 @@ export function getRecordSize(recordFormat: number): number {
   // Quat (optional)
   if (recordFormat & VTX_RECORD_FORMAT.HAS_QUAT) {
     size += VTX_RECORD_SIZE.FLOAT32 * 4; // w, x, y, z
+  }
+
+  // Euler (optional)
+  if (recordFormat & VTX_RECORD_FORMAT.HAS_EULER) {
+    size += VTX_RECORD_SIZE.FLOAT32 * 3; // roll, pitch, yaw
   }
 
   return size;

@@ -21,6 +21,7 @@ class RecordFormatFlags:
     HAS_GYRO = 1 << 1   # 0x02 - Has gyroscope data (always 1 in v1.0)
     HAS_MAG = 1 << 2    # 0x04 - Has magnetometer data
     HAS_QUAT = 1 << 3   # 0x08 - Has quaternion data
+    HAS_EULER = 1 << 4  # 0x10 - Has Euler angle data (roll, pitch, yaw)
 
 
 @dataclass
@@ -56,6 +57,9 @@ class IMURecord:
     quat_x: Optional[float] = None
     quat_y: Optional[float] = None
     quat_z: Optional[float] = None
+    roll: Optional[float] = None  # Euler angle: roll (degrees)
+    pitch: Optional[float] = None  # Euler angle: pitch (degrees)
+    yaw: Optional[float] = None  # Euler angle: yaw (degrees)
 
 
 VTXMetadata = Dict[str, Any]

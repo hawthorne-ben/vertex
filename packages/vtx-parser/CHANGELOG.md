@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2025-11-06
+
+### Added
+- **Euler Angle Support**: Added HAS_EULER flag (bit 4) to record format
+- New optional fields in IMURecord: `roll`, `pitch`, `yaw` (in degrees)
+- `includeEuler` option in VTXEncoderOptions for enabling Euler angle recording
+- Full support for Euler angles in TypeScript encoder, decoder, and stream encoder
+- Python decoder support for reading Euler angle data
+- Python IMURecord dataclass now includes `roll`, `pitch`, `yaw` fields
+
+### Changed
+- Record size calculation now includes Euler angles (12 bytes: 3 × float32) when enabled
+- VTXStreamEncoder updated to write Euler angle data when `includeEuler: true`
+- Python decoder updated to read Euler angles based on HAS_EULER flag
+
+### Technical Details
+- Euler angles are stored as 3 float32 values (roll, pitch, yaw) in degrees
+- Data comes from BNO055's built-in sensor fusion (quaternion → Euler conversion)
+- Record format flag: `HAS_EULER = 1 << 4` (0x10)
+- Record size with Euler: 40 bytes (timestamp + accel + gyro) + optional fields
+
 ## [0.2.0] - 2025-10-31
 
 ### Added
