@@ -42,7 +42,7 @@
 // ===== Sample Rate Constraints =====
 #define MIN_SAMPLE_INTERVAL_MS 20   // 50Hz max sampling rate
 #define MAX_SAMPLE_INTERVAL_MS 1000 // 1Hz min sampling rate
-#define DEFAULT_SAMPLE_INTERVAL_MS 20  // 50Hz default
+#define DEFAULT_SAMPLE_INTERVAL_MS 40  // 25Hz default (40ms) - optimized to avoid road vibration aliasing
 
 // ===== I2C Configuration =====
 #define I2C_CLOCK_SPEED_LOW 100000   // 100kHz - low power mode

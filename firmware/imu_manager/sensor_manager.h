@@ -61,6 +61,9 @@ private:
   unsigned long lastSampleTime;
   unsigned long sampleIntervalMs;
   unsigned long lastReadTime;
+
+  // Helper function to normalize angles to [-180, 180] range
+  static float normalizeAngle(float angle);
 };
 
 #endif // SENSOR_MANAGER_H

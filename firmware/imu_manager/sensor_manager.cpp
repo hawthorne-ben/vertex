@@ -85,11 +85,14 @@ bool SensorManager::update() {
   // Update sensor data structure
   sensorData.timestamp = now;
 
-  // Euler angles from quaternion (convert radians to degrees)
+  // Euler angles from quaternion (convert radians to degrees and normalize)
   // toEuler() returns radians: x=heading/yaw, y=roll, z=pitch
-  sensorData.yaw = euler.x() * RAD_TO_DEG;
-  sensorData.roll = euler.y() * RAD_TO_DEG;
-  sensorData.pitch = euler.z() * RAD_TO_DEG;
+  // Note: Using quaternion->euler conversion instead of BNO055 native euler angles
+  // because BNO055 has a known bug with native euler at >20° (problematic for cycling)
+  // Safety: normalizeAngle() will return 0 if input is NaN/infinite
+  sensorData.yaw = normalizeAngle(euler.x() * RAD_TO_DEG);
+  sensorData.roll = normalizeAngle(euler.y() * RAD_TO_DEG);
+  sensorData.pitch = normalizeAngle(euler.z() * RAD_TO_DEG);
 
   // Linear acceleration (m/s²)
   sensorData.accel_x = accel.x();
@@ -114,6 +117,20 @@ bool SensorManager::update() {
 
   lastSampleTime = now;
   return true;
+}
+
+float SensorManager::normalizeAngle(float angle) {
+  // Safety check for NaN or infinity
+  if (!isfinite(angle)) {
+    return 0.0f;
+  }
+
+  // Normalize angle to [-180, 180] range using efficient modulo
+  angle = fmodf(angle + 180.0f, 360.0f);
+  if (angle < 0.0f) {
+    angle += 360.0f;
+  }
+  return angle - 180.0f;
 }
 
 const SensorData& SensorManager::getData() const {
