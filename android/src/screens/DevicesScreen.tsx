@@ -340,7 +340,7 @@ const DevicesScreen: React.FC = () => {
       {/* Fixed Header */}
       <View style={[styles.header, { paddingTop: insets.top, backgroundColor: theme.colors.background, borderBottomColor: theme.colors.border }]}>
         <Text style={[styles.headerTitle, { color: theme.colors.textPrimary }]}>
-          Devices
+          My Devices
         </Text>
       </View>
 
