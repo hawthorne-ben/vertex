@@ -58,7 +58,7 @@
 #define RAD_TO_DEG 57.29577951308232  // 180/PI for radians to degrees
 
 // ===== BLE Packet Size =====
-#define SENSOR_DATA_PACKET_SIZE 60  // Total bytes in BLE notification
+#define SENSOR_DATA_PACKET_SIZE 47  // Total bytes in BLE notification (6DoF, no mag)
 
 // ===== ADC Configuration =====
 #define ADC_RESOLUTION 12  // 12-bit ADC (0-4095)

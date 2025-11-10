@@ -14,13 +14,14 @@
 #include "config.h"
 
 // Sensor data structure
+// NOTE: Magnetometer removed - using 6DoF mode (accel + gyro only)
+// Yaw drift will be corrected using GPS velocity in post-processing
 struct SensorData {
   unsigned long timestamp;
   float roll, pitch, yaw;
   float accel_x, accel_y, accel_z;
   float gyro_x, gyro_y, gyro_z;
-  float mag_x, mag_y, mag_z;
-  uint8_t cal_sys, cal_gyro, cal_accel, cal_mag;
+  uint8_t cal_sys, cal_gyro, cal_accel;  // Removed cal_mag
   float battery_voltage;
 };
 

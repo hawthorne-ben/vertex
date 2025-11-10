@@ -15,6 +15,8 @@ import BleService from './BleService';
 import { IMURecord, VTXMetadata, VTXStreamEncoder } from '@vertex-pkg/vtx-parser';
 import { useDeviceStore } from '../stores/deviceStore';
 import RNFS from 'react-native-fs';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import WakeLockService from './WakeLockService';
 
 export type RecordingFormat = 'csv' | 'vtx';
 
@@ -35,6 +37,8 @@ export interface RecordingSession {
   format: RecordingFormat;
   sampleRate: number;
 }
+
+const ACTIVE_SESSION_KEY = '@vertex_active_recording_session';
 
 class RecordingService {
   private currentSession: RecordingSession | null = null;
@@ -69,6 +73,66 @@ class RecordingService {
   initialize(): void {
     console.log('[RecordingService] Initializing');
     this.cleanup();
+  }
+
+  /**
+   * Check for interrupted recording session on app startup
+   * Returns session if found, null otherwise
+   */
+  async checkForInterruptedSession(): Promise<RecordingSession | null> {
+    try {
+      const sessionJson = await AsyncStorage.getItem(ACTIVE_SESSION_KEY);
+      if (!sessionJson) {
+        return null;
+      }
+
+      const session: RecordingSession = JSON.parse(sessionJson);
+
+      // Convert date strings back to Date objects
+      session.startTime = new Date(session.startTime);
+      if (session.endTime) {
+        session.endTime = new Date(session.endTime);
+      }
+      if (session.lastSampleTime) {
+        session.lastSampleTime = new Date(session.lastSampleTime);
+      }
+      if (session.connectionLostTime) {
+        session.connectionLostTime = new Date(session.connectionLostTime);
+      }
+
+      console.log('[RecordingService] Found interrupted session:', session.id);
+      return session;
+    } catch (error) {
+      console.error('[RecordingService] Error checking for interrupted session:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Persist current session to storage (survives app crash)
+   */
+  private async persistSession(): Promise<void> {
+    if (!this.currentSession) {
+      return;
+    }
+
+    try {
+      const sessionJson = JSON.stringify(this.currentSession);
+      await AsyncStorage.setItem(ACTIVE_SESSION_KEY, sessionJson);
+    } catch (error) {
+      console.error('[RecordingService] Failed to persist session:', error);
+    }
+  }
+
+  /**
+   * Clear persisted session from storage (public for recovery flow)
+   */
+  async clearPersistedSession(): Promise<void> {
+    try {
+      await AsyncStorage.removeItem(ACTIVE_SESSION_KEY);
+    } catch (error) {
+      console.error('[RecordingService] Failed to clear persisted session:', error);
+    }
   }
 
   /**
@@ -124,7 +188,7 @@ class RecordingService {
 
         this.vtxStreamEncoder = new VTXStreamEncoder({
           sampleRate,
-          includeMag: true,
+          includeMag: false,  // Magnetometer removed - using 6DoF mode
           includeQuat: false,
           includeEuler: true,  // Enable Euler angles (roll, pitch, yaw)
           metadata: vtxMetadata,
@@ -166,6 +230,12 @@ class RecordingService {
 
       // Subscribe to BLE data stream
       await this.subscribeToData();
+
+      // Acquire wake lock to prevent CPU sleep
+      await WakeLockService.acquire();
+
+      // Persist session to survive crashes
+      await this.persistSession();
 
       console.log(`[RecordingService] Recording started: ${fileName}`);
 
@@ -233,6 +303,12 @@ class RecordingService {
       }
 
       console.log(`[RecordingService] Recording stopped: ${session.sampleCount} samples recorded`);
+
+      // Release wake lock
+      await WakeLockService.release();
+
+      // Clear persisted session (recording complete)
+      await this.clearPersistedSession();
 
       this.cleanup();
 
@@ -387,9 +463,7 @@ class RecordingService {
           gyroX: (data.gyroX ?? 0) - (this.zeroPoint.gyroX || 0),
           gyroY: (data.gyroY ?? 0) - (this.zeroPoint.gyroY || 0),
           gyroZ: (data.gyroZ ?? 0) - (this.zeroPoint.gyroZ || 0),
-          magX: data.magX !== undefined ? (data.magX - (this.zeroPoint.magX || 0)) : undefined,
-          magY: data.magY !== undefined ? (data.magY - (this.zeroPoint.magY || 0)) : undefined,
-          magZ: data.magZ !== undefined ? (data.magZ - (this.zeroPoint.magZ || 0)) : undefined,
+          // Magnetometer removed - using 6DoF mode
         };
       }
 
@@ -402,9 +476,7 @@ class RecordingService {
         gyro_x: processedData.gyroX ?? 0,
         gyro_y: processedData.gyroY ?? 0,
         gyro_z: processedData.gyroZ ?? 0,
-        mag_x: processedData.magX,
-        mag_y: processedData.magY,
-        mag_z: processedData.magZ,
+        // Magnetometer removed - using 6DoF mode
         // Add Euler angles from BLE data (fused orientation from BNO055)
         roll: processedData.roll,
         pitch: processedData.pitch,
@@ -434,6 +506,13 @@ class RecordingService {
               console.error('[RecordingService] Buffer flush error:', err);
             });
           }
+        });
+      }
+
+      // Periodically persist session state (every 1000 samples = ~10 seconds at 100Hz)
+      if (this.currentSession.sampleCount % 1000 === 0) {
+        this.persistSession().catch(err => {
+          console.error('[RecordingService] Failed to persist session:', err);
         });
       }
     } catch (error: any) {

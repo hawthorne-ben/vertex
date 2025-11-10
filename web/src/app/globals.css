@@ -236,3 +236,30 @@
   }
 }
 
+
+/* Minimal Leaflet customization - blend with theme */
+.leaflet-container {
+  background: transparent !important;
+}
+
+.leaflet-control-attribution {
+  font-size: 10px;
+  opacity: 0.3;
+}
+
+/* Hide attribution for minimal look */
+.leaflet-bottom.leaflet-right {
+  display: none;
+}
+
+/* Theme-aware popups */
+.leaflet-popup-content-wrapper {
+  background: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+}
+
+.leaflet-popup-tip {
+  background: hsl(var(--card));
+}

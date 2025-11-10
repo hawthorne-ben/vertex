@@ -41,13 +41,15 @@ bool SensorManager::init() {
   bno.setExtCrystalUse(true);
 
   // Configure BNO055 operation mode
-  // NDOF mode: 9-axis sensor fusion (accel + gyro + mag)
-  // This mode enables the sensor fusion that produces filtered linear acceleration
-  bno.setMode(OPERATION_MODE_NDOF);
+  // IMU mode: 6-axis sensor fusion (accel + gyro only, NO magnetometer)
+  // Magnetometer removed due to interference from bike frame, passing vehicles, infrastructure
+  // Yaw drift will be corrected using GPS velocity heading in post-processing
+  // This mode still provides filtered linear acceleration and orientation (with yaw drift)
+  bno.setMode(OPERATION_MODE_IMUPLUS);
   delay(20);  // Allow mode switch to complete
 
   Serial.println(" OK");
-  Serial.println("[INFO] BNO055 configured: NDOF mode with sensor fusion enabled");
+  Serial.println("[INFO] BNO055 configured: IMU mode (6DoF - accel+gyro, no mag)");
   delay(500);
 
   return true;
@@ -74,9 +76,9 @@ bool SensorManager::update() {
   // This provides filtered, clean acceleration data without gravity component
   imu::Vector<3> accel = bno.getVector(Adafruit_BNO055::VECTOR_LINEARACCEL);
   imu::Vector<3> gyro = bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
-  imu::Vector<3> mag = bno.getVector(Adafruit_BNO055::VECTOR_MAGNETOMETER);
+  // Magnetometer removed - using 6DoF IMU mode (no mag interference)
 
-  // Read calibration
+  // Read calibration (no mag calibration in IMU mode)
   uint8_t sys, gyro_cal, accel_cal, mag_cal;
   bno.getCalibration(&sys, &gyro_cal, &accel_cal, &mag_cal);
 
@@ -104,16 +106,12 @@ bool SensorManager::update() {
   sensorData.gyro_y = gyro.y();
   sensorData.gyro_z = gyro.z();
 
-  // Magnetic field (uT)
-  sensorData.mag_x = mag.x();
-  sensorData.mag_y = mag.y();
-  sensorData.mag_z = mag.z();
+  // Magnetometer removed - using 6DoF mode for cleaner data
 
-  // Calibration status
+  // Calibration status (no mag calibration in IMU mode)
   sensorData.cal_sys = sys;
   sensorData.cal_gyro = gyro_cal;
   sensorData.cal_accel = accel_cal;
-  sensorData.cal_mag = mag_cal;
 
   lastSampleTime = now;
   return true;

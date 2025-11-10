@@ -293,6 +293,161 @@ class VTXFileService {
   }
 
   /**
+   * Recover corrupted VTX file by scanning actual records and rebuilding header
+   * Use this when header says 0 samples but file has data
+   */
+  async recoverCorruptedVTXFile(filePath: string): Promise<{
+    success: boolean;
+    recoveredSampleCount: number;
+    error?: string;
+  }> {
+    try {
+      console.log('[VTXFileService] Attempting to recover:', filePath);
+
+      // Read entire file
+      const base64 = await RNFS.readFile(filePath, 'base64');
+      const buffer = this.base64ToArrayBuffer(base64);
+      const uint8Array = new Uint8Array(buffer);
+
+      // Parse the entire file in RECOVERY MODE (ignores header recordCount)
+      const decoder = new VTXDecoder(buffer);
+      const vtxFile = decoder.decode({ recoveryMode: true });
+
+      console.log('[VTXFileService] Header says:', vtxFile.header.recordCount, 'records');
+      console.log('[VTXFileService] Decoder found:', vtxFile.records.length, 'records');
+
+      // Check if recovery needed
+      if (vtxFile.records.length <= Number(vtxFile.header.recordCount)) {
+        console.log('[VTXFileService] File header is correct, no recovery needed');
+        return {
+          success: true,
+          recoveredSampleCount: Number(vtxFile.header.recordCount),
+        };
+      }
+
+      // File has more records than header says - need recovery!
+      console.log('[VTXFileService] File corrupted! Header says', vtxFile.header.recordCount, 'but found', vtxFile.records.length);
+      console.log('[VTXFileService] Recovering...');
+
+      const records = vtxFile.records;
+
+      if (records.length === 0) {
+        console.warn('[VTXFileService] No records found in file');
+        return {
+          success: false,
+          recoveredSampleCount: 0,
+          error: 'No records found in file',
+        };
+      }
+
+      console.log('[VTXFileService] Successfully read', records.length, 'records');
+
+      // Create new encoder with corrected header using metadata from file
+      const encoder = new VTXEncoder({
+        sampleRate: vtxFile.header.sampleRate,
+        includeMag: !!(vtxFile.header.recordFormat & 0x04),
+        includeQuat: !!(vtxFile.header.recordFormat & 0x08),
+        includeEuler: !!(vtxFile.header.recordFormat & 0x10),
+        metadata: vtxFile.metadata,
+      });
+
+      // Add all recovered records
+      encoder.addRecords(records);
+
+      // Encode with correct header
+      const recoveredBuffer = encoder.encode();
+      const recoveredUint8 = new Uint8Array(recoveredBuffer);
+      const recoveredBase64 = this.arrayBufferToBase64(recoveredUint8);
+
+      // Save to temporary file first (don't overwrite original)
+      const recoveredPath = filePath.replace('.vtx', '_recovered.vtx');
+      await RNFS.writeFile(recoveredPath, recoveredBase64, 'base64');
+
+      console.log('[VTXFileService] Recovered file saved to:', recoveredPath);
+
+      // Rename recovered file to replace original
+      await RNFS.unlink(filePath);
+      await RNFS.moveFile(recoveredPath, filePath);
+
+      console.log('[VTXFileService] Recovery complete:', records.length, 'samples recovered');
+
+      return {
+        success: true,
+        recoveredSampleCount: records.length,
+      };
+    } catch (error: any) {
+      console.error('[VTXFileService] Recovery failed:', error);
+      return {
+        success: false,
+        recoveredSampleCount: 0,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Check if VTX file is potentially corrupted (header mismatch)
+   */
+  async isVTXFileCorrupted(filePath: string): Promise<boolean> {
+    try {
+      console.log('[VTXFileService] Checking corruption for:', filePath);
+
+      const stat = await RNFS.stat(filePath);
+      const fileSize = parseInt(stat.size);
+      console.log('[VTXFileService] File size:', fileSize, 'bytes');
+
+      // Read header only
+      const headerBase64 = await RNFS.read(filePath, 64, 0, 'base64');
+      const headerBuffer = this.base64ToArrayBuffer(headerBase64);
+      const decoder = new VTXDecoder(headerBuffer);
+      const header = decoder.readHeader();
+
+      console.log('[VTXFileService] Header record count:', header.recordCount, 'type:', typeof header.recordCount);
+      console.log('[VTXFileService] Header data offset:', header.dataOffset);
+      console.log('[VTXFileService] Header record format:', header.recordFormat);
+
+      // Convert BigInt to Number if needed
+      const recordCount = typeof header.recordCount === 'bigint'
+        ? Number(header.recordCount)
+        : Number(header.recordCount);
+      const dataOffset = typeof header.dataOffset === 'bigint'
+        ? Number(header.dataOffset)
+        : Number(header.dataOffset);
+
+      console.log('[VTXFileService] Converted record count:', recordCount);
+      console.log('[VTXFileService] Converted data offset:', dataOffset);
+
+      // Calculate expected record size
+      let recordSize = 4 + 12 + 12; // base (timestamp + accel + gyro)
+      if (header.recordFormat & 0x04) recordSize += 12; // mag
+      if (header.recordFormat & 0x08) recordSize += 16; // quat
+      if (header.recordFormat & 0x10) recordSize += 12; // euler
+
+      console.log('[VTXFileService] Calculated record size:', recordSize, 'bytes');
+
+      // Calculate expected vs actual
+      const expectedDataSize = recordCount * recordSize;
+      const actualDataSize = fileSize - dataOffset;
+
+      console.log('[VTXFileService] Expected data size:', expectedDataSize, 'bytes (from header)');
+      console.log('[VTXFileService] Actual data size:', actualDataSize, 'bytes (in file)');
+
+      // If actual data size is larger than expected (even by 1 record), file is corrupted
+      const sizeMismatch = actualDataSize > expectedDataSize;
+
+      console.log('[VTXFileService] Size mismatch:', sizeMismatch);
+      console.log('[VTXFileService] Corrupted:', sizeMismatch);
+
+      return sizeMismatch;
+    } catch (error) {
+      console.error('[VTXFileService] Error checking corruption:', error);
+      // If we can't even read the header, the file is likely corrupted
+      // Return true so we attempt recovery
+      return true;
+    }
+  }
+
+  /**
    * Helper: Convert ArrayBuffer to base64 string
    */
   private arrayBufferToBase64(buffer: Uint8Array): string {

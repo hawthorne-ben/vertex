@@ -14,6 +14,9 @@ interface IMUSample {
   gyro_x: number
   gyro_y: number
   gyro_z: number
+  roll?: number | null
+  pitch?: number | null
+  yaw?: number | null
   mag_x?: number | null
   mag_y?: number | null
   mag_z?: number | null
@@ -25,11 +28,15 @@ interface IMUUPlotChartsProps {
   originalCount: number
 }
 
-type DataType = 'accel' | 'gyro' | 'mag'
+type DataType = 'orientation' | 'accel' | 'gyro'  // Added orientation (roll/pitch/yaw)
 
 export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPlotChartsProps) {
-  const [dataType, setDataType] = useState<DataType>('accel')
   const [samples, setSamples] = useState<IMUSample[]>(initialSamples)
+
+  // Check if orientation data exists
+  const hasOrientationData = samples.some(s => s.roll !== null && s.pitch !== null && s.yaw !== null)
+
+  const [dataType, setDataType] = useState<DataType>(hasOrientationData ? 'orientation' : 'accel')
   const [loading, setLoading] = useState(false)
   const [zoomRange, setZoomRange] = useState<{ start: string; end: string } | null>(null)
   
@@ -39,8 +46,8 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
   const prevDataTypeForChartRef = useRef<DataType>(dataType)
 
 
-  // Check if magnetometer data exists
-  const hasMagData = samples.some(s => s.mag_x !== null && s.mag_y !== null && s.mag_z !== null)
+  // Magnetometer removed - using 6DoF mode
+  const hasMagData = false
 
   // Fetch high-resolution data when zoomed
   useEffect(() => {
@@ -166,6 +173,21 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
     let yAxisLabel: string
 
     switch (dataType) {
+      case 'orientation':
+        data = [
+          finalTimestamps,
+          finalSamplesWithGaps.map(s => s ? (s.roll ?? null) : null) as (number | null)[],
+          finalSamplesWithGaps.map(s => s ? (s.pitch ?? null) : null) as (number | null)[],
+          finalSamplesWithGaps.map(s => s ? (s.yaw ?? null) : null) as (number | null)[]
+        ]
+        series = [
+          {}, // Timestamp series
+          { label: 'Roll', stroke: 'hsl(220, 70%, 50%)', width: 2, spanGaps: false, points: { show: false, size: 0 } },
+          { label: 'Pitch', stroke: 'hsl(145, 60%, 45%)', width: 2, spanGaps: false, points: { show: false, size: 0 } },
+          { label: 'Yaw', stroke: 'hsl(10, 70%, 50%)', width: 2, spanGaps: false, points: { show: false, size: 0 } }
+        ]
+        yAxisLabel = 'Angle (degrees)'
+        break
       case 'accel':
         data = [
           finalTimestamps,
@@ -196,21 +218,7 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
         ]
         yAxisLabel = 'Angular Velocity (rad/s)'
         break
-      case 'mag':
-        data = [
-          finalTimestamps,
-          finalSamplesWithGaps.map(s => s ? (s.mag_x ?? null) : null) as (number | null)[],
-          finalSamplesWithGaps.map(s => s ? (s.mag_y ?? null) : null) as (number | null)[],
-          finalSamplesWithGaps.map(s => s ? (s.mag_z ?? null) : null) as (number | null)[]
-        ]
-        series = [
-          {}, // Timestamp series (no label, no stroke - won't show in legend)
-          { label: 'X', stroke: 'hsl(10, 49.20%, 52.90%)', width: 2, spanGaps: false, points: { show: false, size: 0 } },
-          { label: 'Y', stroke: 'hsl(145, 49.60%, 54.10%)', width: 2, spanGaps: false, points: { show: false, size: 0 } },
-          { label: 'Z', stroke: 'hsl(205, 59.70%, 70.80%)', width: 2, spanGaps: false, points: { show: false, size: 0 } }
-        ]
-        yAxisLabel = 'Magnetic Field (µT)'
-        break
+      // Magnetometer case removed - using 6DoF mode
     }
 
     // Debug: log data structure
@@ -442,6 +450,13 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
     let values: { [key: string]: number[] } = {}
     
     switch (dataType) {
+      case 'orientation':
+        values = {
+          'Roll': samples.map(s => s.roll ?? 0),
+          'Pitch': samples.map(s => s.pitch ?? 0),
+          'Yaw': samples.map(s => s.yaw ?? 0)
+        }
+        break
       case 'accel':
         values = {
           'X': samples.map(s => s.accel_x),
@@ -456,13 +471,7 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
           'Z': samples.map(s => s.gyro_z)
         }
         break
-      case 'mag':
-        values = {
-          'X': samples.map(s => s.mag_x).filter(v => v !== null) as number[],
-          'Y': samples.map(s => s.mag_y).filter(v => v !== null) as number[],
-          'Z': samples.map(s => s.mag_z).filter(v => v !== null) as number[]
-        }
-        break
+      // Magnetometer case removed - using 6DoF mode
     }
 
     return Object.entries(values).map(([axis, vals]) => {
@@ -480,17 +489,19 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
 
   const getUnit = () => {
     switch (dataType) {
+      case 'orientation': return '°'
       case 'accel': return 'm/s²'
       case 'gyro': return 'rad/s'
-      case 'mag': return 'µT'
+      // Magnetometer removed
     }
   }
 
   const getTitle = () => {
     switch (dataType) {
+      case 'orientation': return 'Orientation'
       case 'accel': return 'Accelerometer'
       case 'gyro': return 'Gyroscope'
-      case 'mag': return 'Magnetometer'
+      // Magnetometer removed
     }
   }
 
@@ -498,6 +509,18 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
     <div className="space-y-6">
       {/* Selector */}
       <div className="flex gap-2 items-center">
+        {hasOrientationData && (
+          <button
+            onClick={() => setDataType('orientation')}
+            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+              dataType === 'orientation'
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-muted text-muted-foreground hover:bg-muted/80'
+            }`}
+          >
+            Orientation
+          </button>
+        )}
         <button
           onClick={() => setDataType('accel')}
           className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
@@ -518,18 +541,7 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
         >
           Gyroscope
         </button>
-        {hasMagData && (
-          <button
-            onClick={() => setDataType('mag')}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              dataType === 'mag'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-muted text-muted-foreground hover:bg-muted/80'
-            }`}
-          >
-            Magnetometer
-          </button>
-        )}
+        {/* Magnetometer button removed - using 6DoF mode */}
         
         {loading && (
           <span className="text-xs text-secondary ml-2">Loading detail...</span>

@@ -94,3 +94,4 @@ firmware/**/credentials.h
 *.bak
 *.old
 *.tmp
+.aider*

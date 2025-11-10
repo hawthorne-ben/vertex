@@ -774,13 +774,16 @@ class BleService {
   /**
    * Parse IMU sensor data
    *
-   * FIRMWARE FORMAT (56 bytes):
+   * FIRMWARE FORMAT (47 bytes - 6DoF, no magnetometer):
    * - Timestamp (4 bytes) - uint32_t milliseconds since boot
    * - Euler Angles (12 bytes) - 3x float (roll, pitch, yaw in degrees)
    * - Acceleration (12 bytes) - 3x float (x, y, z in m/s²)
    * - Gyroscope (12 bytes) - 3x float (x, y, z in rad/s)
-   * - Magnetometer (12 bytes) - 3x float (x, y, z in µT)
-   * - Calibration (4 bytes) - 4x uint8_t (sys, gyro, accel, mag: 0-3)
+   * - Calibration (3 bytes) - 3x uint8_t (sys, gyro, accel: 0-3)
+   * - Battery Voltage (4 bytes) - float (volts)
+   *
+   * NOTE: Magnetometer removed - using 6DoF mode for cleaner orientation
+   * Yaw drift will be corrected using GPS velocity in post-processing
    */
   // Performance tracking for 10Hz validation
   private lastNotificationTime: number = 0;
@@ -788,8 +791,8 @@ class BleService {
   private notificationRates: number[] = [];
 
   private parseIMU(data: Uint8Array): any {
-    if (data.length < 60) {
-      throw new Error(`Invalid IMU data length: ${data.length} bytes (expected 60)`);
+    if (data.length < 47) {
+      throw new Error(`Invalid IMU data length: ${data.length} bytes (expected 47)`);
     }
 
     // Track notification rate for 10Hz validation
@@ -839,19 +842,12 @@ class BleService {
     const gyroZ = view.getFloat32(offset, true);
     offset += 4;
 
-    // Magnetometer (12 bytes)
-    const magX = view.getFloat32(offset, true);
-    offset += 4;
-    const magY = view.getFloat32(offset, true);
-    offset += 4;
-    const magZ = view.getFloat32(offset, true);
-    offset += 4;
+    // Magnetometer removed - using 6DoF mode
 
-    // Calibration (4 bytes)
+    // Calibration (3 bytes - no mag calibration)
     const calSys = data[offset++];
     const calGyro = data[offset++];
     const calAccel = data[offset++];
-    const calMag = data[offset++];
 
     // Battery voltage (4 bytes)
     const batteryVoltage = view.getFloat32(offset, true);
@@ -868,8 +864,7 @@ class BleService {
         `Euler: R=${roll.toFixed(1)}° P=${pitch.toFixed(1)}° Y=${yaw.toFixed(1)}° | ` +
         `Accel: ${accelX.toFixed(2)},${accelY.toFixed(2)},${accelZ.toFixed(2)} | ` +
         `Gyro: ${gyroX.toFixed(2)},${gyroY.toFixed(2)},${gyroZ.toFixed(2)} | ` +
-        `Mag: ${magX.toFixed(1)},${magY.toFixed(1)},${magZ.toFixed(1)} | ` +
-        `Cal: S=${calSys} G=${calGyro} A=${calAccel} M=${calMag} | ` +
+        `Cal: S=${calSys} G=${calGyro} A=${calAccel} | ` +
         `Batt: ${batteryVoltage.toFixed(2)}V`
       );
     }
@@ -885,14 +880,12 @@ class BleService {
       gyroX,
       gyroY,
       gyroZ,
-      magX,
-      magY,
-      magZ,
+      // Magnetometer removed - using 6DoF mode
       calibration: {
         system: calSys,
         gyro: calGyro,
         accel: calAccel,
-        mag: calMag,
+        // mag removed
       },
       batteryVoltage,
       raw: Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' '),

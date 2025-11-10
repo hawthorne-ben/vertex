@@ -3,6 +3,7 @@ import { notFound, redirect } from 'next/navigation'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Bike, Clock, MapPin, TrendingUp, Zap, Heart, Activity } from 'lucide-react'
 import { AddVtxDataButton } from '@/components/add-vtx-data-button'
+import { RideMapClient } from '@/components/ride-map-client'
 import { formatDurationFromSeconds } from '@/lib/utils/format-duration'
 
 export default async function RideDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -108,6 +109,16 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
           )}
         </div>
       </div>
+
+      {/* GPS Map */}
+      {fitRecording && analysis.has_gps_data && (
+        <div className="mb-8">
+          <RideMapClient
+            rideId={id}
+            fitRecordingId={fitRecording.id}
+          />
+        </div>
+      )}
 
       {/* Quick Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 md:gap-4 mb-8">

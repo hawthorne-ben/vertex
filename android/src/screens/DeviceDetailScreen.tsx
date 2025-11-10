@@ -317,9 +317,7 @@ const DeviceDetailScreenContent: React.FC = () => {
         gyroX: last5.reduce((sum, r) => sum + (r.gyroX || 0), 0) / 5,
         gyroY: last5.reduce((sum, r) => sum + (r.gyroY || 0), 0) / 5,
         gyroZ: last5.reduce((sum, r) => sum + (r.gyroZ || 0), 0) / 5,
-        magX: last5.reduce((sum, r) => sum + (r.magX || 0), 0) / 5,
-        magY: last5.reduce((sum, r) => sum + (r.magY || 0), 0) / 5,
-        magZ: last5.reduce((sum, r) => sum + (r.magZ || 0), 0) / 5,
+        // Magnetometer removed - using 6DoF mode
       };
 
       await saveZeroPoint(avgReading);
@@ -415,9 +413,7 @@ const DeviceDetailScreenContent: React.FC = () => {
               gyroX: (data.gyroX || 0) - (currentZeroPoint.gyroX || 0),
               gyroY: (data.gyroY || 0) - (currentZeroPoint.gyroY || 0),
               gyroZ: (data.gyroZ || 0) - (currentZeroPoint.gyroZ || 0),
-              magX: (data.magX || 0) - (currentZeroPoint.magX || 0),
-              magY: (data.magY || 0) - (currentZeroPoint.magY || 0),
-              magZ: (data.magZ || 0) - (currentZeroPoint.magZ || 0),
+              // Magnetometer removed - using 6DoF mode
             };
           }
 
@@ -855,27 +851,7 @@ const DeviceDetailScreenContent: React.FC = () => {
               </>
             )}
 
-            {/* Magnetometer */}
-            {(latestReading.magX !== undefined || latestReading.magY !== undefined || latestReading.magZ !== undefined) && (
-              <>
-                <View style={[styles.divider, { backgroundColor: theme.colors.border }]} />
-                <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Magnetic Field (µT)</Text>
-                <View style={styles.sensorGrid}>
-                  <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
-                    <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>X</Text>
-                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.magX?.toFixed(1) ?? '0.0'}</Text>
-                  </View>
-                  <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
-                    <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Y</Text>
-                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.magY?.toFixed(1) ?? '0.0'}</Text>
-                  </View>
-                  <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
-                    <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Z</Text>
-                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.magZ?.toFixed(1) ?? '0.0'}</Text>
-                  </View>
-                </View>
-              </>
-            )}
+            {/* Magnetometer removed - using 6DoF mode */}
 
             {/* Sensor Calibration Status */}
             {latestReading.calibration && (
@@ -891,10 +867,7 @@ const DeviceDetailScreenContent: React.FC = () => {
                     <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Accel</Text>
                     <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.calibration.accel}</Text>
                   </View>
-                  <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
-                    <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>Mag</Text>
-                    <Text style={[styles.sensorNumber, { color: theme.colors.textPrimary }]}>{latestReading.calibration.mag}</Text>
-                  </View>
+                  {/* Mag calibration removed - using 6DoF mode */}
                 </View>
               </>
             )}

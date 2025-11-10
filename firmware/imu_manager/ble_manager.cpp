@@ -253,7 +253,8 @@ unsigned long BLEManager::getLastNotifyTime() const {
 void BLEManager::sendSensorData(const SensorData& data) {
   unsigned long start = micros();
 
-  // Pack data into binary format (60 bytes total)
+  // Pack data into binary format (47 bytes total - magnetometer removed)
+  // Old: 60 bytes (9DoF with mag), New: 47 bytes (6DoF, no mag)
   uint8_t buffer[SENSOR_DATA_PACKET_SIZE];
   int offset = 0;
 
@@ -285,23 +286,18 @@ void BLEManager::sendSensorData(const SensorData& data) {
   memcpy(buffer + offset, &data.gyro_z, 4);
   offset += 4;
 
-  // Magnetometer (12 bytes)
-  memcpy(buffer + offset, &data.mag_x, 4);
-  offset += 4;
-  memcpy(buffer + offset, &data.mag_y, 4);
-  offset += 4;
-  memcpy(buffer + offset, &data.mag_z, 4);
-  offset += 4;
+  // Magnetometer removed - using 6DoF mode (saves 12 bytes)
 
-  // Calibration (4 bytes)
+  // Calibration (3 bytes - removed cal_mag)
   buffer[offset++] = data.cal_sys;
   buffer[offset++] = data.cal_gyro;
   buffer[offset++] = data.cal_accel;
-  buffer[offset++] = data.cal_mag;
 
   // Battery voltage (4 bytes)
   memcpy(buffer + offset, &data.battery_voltage, 4);
   offset += 4;
+
+  // Total: 4 + 12 + 12 + 12 + 3 + 4 = 47 bytes
 
   // Send notification
   pCharacteristic->setValue(buffer, SENSOR_DATA_PACKET_SIZE);

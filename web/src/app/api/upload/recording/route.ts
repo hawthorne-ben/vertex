@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { VTXDecoder } from '@/lib/vtx-parser'
+import { VTXDecoder } from '@vertex-pkg/vtx-parser'
 import { detectDataRanges, extractVTXMetadata, rangesToPgArray } from '@/lib/vtx/gap-detection'
 
 export const dynamic = 'force-dynamic'

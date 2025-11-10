@@ -5,17 +5,20 @@
  * @format
  */
 
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { StatusBar, useColorScheme } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthProvider } from './src/contexts/AuthContext';
-import { ThemeProvider } from './src/contexts/ThemeContext';
+import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
 import { ToastProvider } from './src/contexts/ToastContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import BleService from './src/services/BleService';
 import RecordingService from './src/services/RecordingService';
+import VTXFileService from './src/services/VTXFileService';
+import { ConfirmDialog } from './src/components/ui';
+import { AlertCircle } from 'lucide-react-native';
 import notifee, { EventType } from '@notifee/react-native';
 
 // Global error handlers to prevent crashes
@@ -98,9 +101,142 @@ const autoConnectToDevice = async () => {
   }
 };
 
+// Recovery check component that uses themed dialogs
+const RecoveryCheck: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
+  const { theme } = useTheme();
+  const [showRecoveryDialog, setShowRecoveryDialog] = useState(false);
+  const [showSuccessDialog, setShowSuccessDialog] = useState(false);
+  const [showErrorDialog, setShowErrorDialog] = useState(false);
+  const [recoveryMessage, setRecoveryMessage] = useState('');
+  const [interruptedSession, setInterruptedSession] = useState<any>(null);
+
+  useEffect(() => {
+    console.log('[RecoveryCheck] Component mounted, checking for interrupted session...');
+
+    const checkForRecovery = async () => {
+      try {
+        console.log('[RecoveryCheck] Calling checkForInterruptedSession...');
+        const session = await RecordingService.checkForInterruptedSession();
+        console.log('[RecoveryCheck] Result:', session ? 'Session found' : 'No session');
+
+        if (session) {
+          console.log('[RecoveryCheck] Found interrupted session:', session.id);
+          console.log('[RecoveryCheck] File path:', session.filePath);
+          console.log('[RecoveryCheck] Checking if file is corrupted...');
+
+          const isCorrupted = await VTXFileService.isVTXFileCorrupted(session.filePath);
+          console.log('[RecoveryCheck] Is corrupted:', isCorrupted);
+
+          if (isCorrupted) {
+            console.log('[RecoveryCheck] File is corrupted, showing recovery dialog');
+            setInterruptedSession(session);
+            setShowRecoveryDialog(true);
+          } else {
+            console.log('[RecoveryCheck] Session interrupted but file is fine, clearing session');
+            await RecordingService.clearPersistedSession();
+            onComplete();
+          }
+        } else {
+          console.log('[RecoveryCheck] No interrupted session found, completing');
+          onComplete();
+        }
+      } catch (error) {
+        console.error('[RecoveryCheck] Recovery check failed:', error);
+        onComplete();
+      }
+    };
+
+    checkForRecovery();
+  }, []);
+
+  const handleRecover = async () => {
+    try {
+      const result = await VTXFileService.recoverCorruptedVTXFile(interruptedSession.filePath);
+
+      if (result.success) {
+        setRecoveryMessage(`Recovered ${result.recoveredSampleCount.toLocaleString()} samples`);
+        setShowSuccessDialog(true);
+      } else {
+        setRecoveryMessage(result.error || 'Unknown error');
+        setShowErrorDialog(true);
+      }
+
+      await RecordingService.clearPersistedSession();
+    } catch (err: any) {
+      setRecoveryMessage(err.message);
+      setShowErrorDialog(true);
+    }
+  };
+
+  const handleDiscard = async () => {
+    try {
+      await VTXFileService.deleteRecording(interruptedSession.filePath);
+      await RecordingService.clearPersistedSession();
+    } catch (err) {
+      console.error('[App] Failed to discard:', err);
+    }
+    onComplete();
+  };
+
+  return (
+    <>
+      <ConfirmDialog
+        visible={showRecoveryDialog}
+        onDismiss={() => {}}
+        backdropDismiss={false}
+        title="Interrupted Recording Found"
+        message={`Found an incomplete recording from ${interruptedSession?.deviceName}. Would you like to recover the data?`}
+        icon={<AlertCircle size={48} color={theme.colors.warning} />}
+        actions={[
+          {
+            label: 'Discard',
+            onPress: handleDiscard,
+            variant: 'danger',
+          },
+          {
+            label: 'Recover',
+            onPress: handleRecover,
+            variant: 'primary',
+          },
+        ]}
+      />
+
+      <ConfirmDialog
+        visible={showSuccessDialog}
+        onDismiss={onComplete}
+        title="Recovery Successful"
+        message={recoveryMessage}
+        actions={[
+          {
+            label: 'OK',
+            onPress: onComplete,
+            variant: 'primary',
+          },
+        ]}
+      />
+
+      <ConfirmDialog
+        visible={showErrorDialog}
+        onDismiss={onComplete}
+        title="Recovery Failed"
+        message={recoveryMessage}
+        icon={<AlertCircle size={48} color={theme.colors.error} />}
+        actions={[
+          {
+            label: 'OK',
+            onPress: onComplete,
+            variant: 'default',
+          },
+        ]}
+      />
+    </>
+  );
+};
+
 function App() {
   const isDarkMode = useColorScheme() === 'dark';
   const navigationRef = React.useRef<NavigationContainerRef<any>>(null);
+  const [isCheckingRecovery, setIsCheckingRecovery] = useState(true);
 
   useEffect(() => {
     setupGlobalErrorHandlers();
@@ -158,6 +294,11 @@ function App() {
               <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
               <AppNavigator />
             </NavigationContainer>
+
+            {/* Recovery check on app startup */}
+            {isCheckingRecovery && (
+              <RecoveryCheck onComplete={() => setIsCheckingRecovery(false)} />
+            )}
           </AuthProvider>
         </ToastProvider>
       </ThemeProvider>

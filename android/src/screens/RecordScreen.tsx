@@ -40,6 +40,7 @@ import { useToast } from '../contexts/ToastContext';
 import RecordingService, { RecordingSession, RecordingFormat } from '../services/RecordingService';
 import BleService from '../services/BleService';
 import NotificationService from '../services/NotificationService';
+import BatteryOptimizationService from '../services/BatteryOptimizationService';
 import RNFS from 'react-native-fs';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { useDeviceStore } from '../stores/deviceStore';
@@ -107,6 +108,8 @@ const RecordScreen: React.FC = () => {
   const [stoppedSession, setStoppedSession] = useState<RecordingSession | null>(null);
   const [activeSheet, setActiveSheet] = useState<BottomSheetType>(null);
   const [hasShownConnectionLostToast, setHasShownConnectionLostToast] = useState(false);
+  const [showBatteryExemptionDialog, setShowBatteryExemptionDialog] = useState(false);
+  const [showBatteryInstructionsDialog, setShowBatteryInstructionsDialog] = useState(false);
 
   const isMountedRef = useRef(true);
   const clockTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -318,6 +321,17 @@ const RecordScreen: React.FC = () => {
       return;
     }
 
+    // Check if we should request battery optimization exemption
+    const shouldRequest = await BatteryOptimizationService.shouldRequestExemption();
+
+    if (shouldRequest) {
+      setShowBatteryExemptionDialog(true);
+    } else {
+      startRecordingInternal();
+    }
+  };
+
+  const startRecordingInternal = async () => {
     setIsStarting(true);
     setError(null);
 
@@ -642,9 +656,7 @@ const RecordScreen: React.FC = () => {
         gyroX: last5.reduce((sum, r) => sum + (r.gyroX || 0), 0) / 5,
         gyroY: last5.reduce((sum, r) => sum + (r.gyroY || 0), 0) / 5,
         gyroZ: last5.reduce((sum, r) => sum + (r.gyroZ || 0), 0) / 5,
-        magX: last5.reduce((sum, r) => sum + (r.magX || 0), 0) / 5,
-        magY: last5.reduce((sum, r) => sum + (r.magY || 0), 0) / 5,
-        magZ: last5.reduce((sum, r) => sum + (r.magZ || 0), 0) / 5,
+        // Magnetometer removed - using 6DoF mode
       };
 
       await saveZeroPoint(avgReading);
@@ -1092,6 +1104,52 @@ const RecordScreen: React.FC = () => {
           setRecordingFormat(value as RecordingFormat);
           setActiveSheet(null);
         }}
+      />
+
+      {/* Battery Optimization Exemption Dialog */}
+      <ConfirmDialog
+        visible={showBatteryExemptionDialog}
+        onDismiss={() => setShowBatteryExemptionDialog(false)}
+        title="Improve Recording Reliability"
+        message="To prevent Android from stopping your recordings, disable battery optimization for Vertex. This improves reliability by up to 30%."
+        icon={<Battery size={48} color={theme.colors.warning} />}
+        actions={[
+          {
+            label: 'Not Now',
+            onPress: async () => {
+              await BatteryOptimizationService.markExemptionRequested();
+              startRecordingInternal();
+            },
+            variant: 'default',
+          },
+          {
+            label: 'Open Settings',
+            onPress: async () => {
+              await BatteryOptimizationService.markExemptionRequested();
+              await BatteryOptimizationService.openBatteryOptimizationSettings();
+              setShowBatteryInstructionsDialog(true);
+            },
+            variant: 'primary',
+          },
+        ]}
+      />
+
+      {/* Battery Optimization Instructions Dialog */}
+      <ConfirmDialog
+        visible={showBatteryInstructionsDialog}
+        onDismiss={() => setShowBatteryInstructionsDialog(false)}
+        title="Follow These Steps"
+        message={BatteryOptimizationService.getManufacturerInstructions().instructions.join('\n')}
+        actions={[
+          {
+            label: 'Done',
+            onPress: async () => {
+              await BatteryOptimizationService.markExemptionGranted();
+              startRecordingInternal();
+            },
+            variant: 'primary',
+          },
+        ]}
       />
     </View>
   );

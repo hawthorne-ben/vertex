@@ -32,7 +32,7 @@ import { useSyncStore } from '../stores/syncStore';
 
 type DataDetailRouteProp = RouteProp<RootStackParamList, 'DataDetail'>;
 
-type DataType = 'accelerometer' | 'gyroscope' | 'magnetometer';
+type DataType = 'orientation' | 'accelerometer' | 'gyroscope';  // Added orientation
 
 interface AxisStats {
   min: number;
@@ -59,12 +59,23 @@ const DataDetailScreen: React.FC = () => {
 
   const [isLoading, setIsLoading] = useState(true);
   const [data, setData] = useState<IMUSensorData[]>([]);
+  // Check if orientation data exists in first sample
+  const hasOrientationData = data.length > 0 && data[0].roll !== undefined;
+
   const [selectedDataType, setSelectedDataType] = useState<DataType>('accelerometer');
   const [statistics, setStatistics] = useState<Record<DataType, Statistics>>({
+    orientation: { x: { min: 0, max: 0, mean: 0 }, y: { min: 0, max: 0, mean: 0 }, z: { min: 0, max: 0, mean: 0 } },
     accelerometer: { x: { min: 0, max: 0, mean: 0 }, y: { min: 0, max: 0, mean: 0 }, z: { min: 0, max: 0, mean: 0 } },
     gyroscope: { x: { min: 0, max: 0, mean: 0 }, y: { min: 0, max: 0, mean: 0 }, z: { min: 0, max: 0, mean: 0 } },
-    magnetometer: { x: { min: 0, max: 0, mean: 0 }, y: { min: 0, max: 0, mean: 0 }, z: { min: 0, max: 0, mean: 0 } },
+    // Magnetometer removed - using 6DoF mode
   });
+
+  // Set default view to orientation if available
+  useEffect(() => {
+    if (hasOrientationData && selectedDataType === 'accelerometer') {
+      setSelectedDataType('orientation');
+    }
+  }, [hasOrientationData]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -99,9 +110,7 @@ const DataDetailScreen: React.FC = () => {
           gyro_x: record.gyroX,
           gyro_y: record.gyroY,
           gyro_z: record.gyroZ,
-          mag_x: record.magX,
-          mag_y: record.magY,
-          mag_z: record.magZ,
+          // Magnetometer removed - using 6DoF mode
           quat_w: record.quatW,
           quat_x: record.quatX,
           quat_y: record.quatY,
@@ -164,18 +173,18 @@ const DataDetailScreen: React.FC = () => {
       z: calculateAxisStats(recordingData.map(d => d.gyro_z)),
     };
 
-    // Magnetometer stats (if available)
-    const magData = recordingData.filter(d => d.mag_x !== undefined && d.mag_y !== undefined && d.mag_z !== undefined);
-    const magStats: Statistics = magData.length > 0 ? {
-      x: calculateAxisStats(magData.map(d => d.mag_x!)),
-      y: calculateAxisStats(magData.map(d => d.mag_y!)),
-      z: calculateAxisStats(magData.map(d => d.mag_z!)),
+    // Orientation stats (if available)
+    const orientationData = recordingData.filter(d => d.roll !== undefined);
+    const orientationStats: Statistics = orientationData.length > 0 ? {
+      x: calculateAxisStats(orientationData.map(d => d.roll!)),
+      y: calculateAxisStats(orientationData.map(d => d.pitch!)),
+      z: calculateAxisStats(orientationData.map(d => d.yaw!)),
     } : { x: { min: 0, max: 0, mean: 0 }, y: { min: 0, max: 0, mean: 0 }, z: { min: 0, max: 0, mean: 0 } };
 
     setStatistics({
+      orientation: orientationStats,
       accelerometer: accelStats,
       gyroscope: gyroStats,
-      magnetometer: magStats,
     });
   };
 
@@ -416,9 +425,7 @@ const DataDetailScreen: React.FC = () => {
             gyro_x: 0,
             gyro_y: 0,
             gyro_z: 0,
-            mag_x: 0,
-            mag_y: 0,
-            mag_z: 0,
+            // Magnetometer removed - using 6DoF mode
             batteryVoltage: null,
             isGap: true, // Mark as synthetic
           });
@@ -438,9 +445,18 @@ const DataDetailScreen: React.FC = () => {
     const startTime = data[0].timestamp.getTime();
 
     // Build data arrays (synthetic gap data is now included in sampledData)
-    const xData = sampledData.map(d => (selectedDataType === 'accelerometer' ? d.accel_x : selectedDataType === 'gyroscope' ? d.gyro_x : d.mag_x ?? 0));
-    const yData = sampledData.map(d => (selectedDataType === 'accelerometer' ? d.accel_y : selectedDataType === 'gyroscope' ? d.gyro_y : d.mag_y ?? 0));
-    const zData = sampledData.map(d => (selectedDataType === 'accelerometer' ? d.accel_z : selectedDataType === 'gyroscope' ? d.gyro_z : d.mag_z ?? 0));
+    const xData = sampledData.map(d =>
+      selectedDataType === 'orientation' ? (d.roll ?? 0) :
+      selectedDataType === 'accelerometer' ? d.accel_x : d.gyro_x
+    );
+    const yData = sampledData.map(d =>
+      selectedDataType === 'orientation' ? (d.pitch ?? 0) :
+      selectedDataType === 'accelerometer' ? d.accel_y : d.gyro_y
+    );
+    const zData = sampledData.map(d =>
+      selectedDataType === 'orientation' ? (d.yaw ?? 0) :
+      selectedDataType === 'accelerometer' ? d.accel_z : d.gyro_z
+    );
     const times = sampledData.map(d => (d.timestamp.getTime() - startTime) / 1000);
 
     // For magnetometer, normalize each axis independently to make all data visible
@@ -448,7 +464,7 @@ const DataDetailScreen: React.FC = () => {
     let normalizedYData = yData;
     let normalizedZData = zData;
 
-    if (selectedDataType === 'magnetometer') {
+    if (false) { // Magnetometer removed
       // Calculate range for each axis
       const xMin = Math.min(...xData);
       const xMax = Math.max(...xData);
@@ -483,15 +499,16 @@ const DataDetailScreen: React.FC = () => {
         dataPointText: '',
       })),
       timeGaps: [],
-      isNormalized: selectedDataType === 'magnetometer',
+      isNormalized: false,  // Magnetometer removed
     };
   };
 
   const getDataTypeLabel = (type: DataType): string => {
     switch (type) {
+      case 'orientation': return 'Orientation (degrees)';
       case 'accelerometer': return 'Accelerometer (m/s²)';
       case 'gyroscope': return 'Gyroscope (rad/s)';
-      case 'magnetometer': return 'Magnetometer (µT)';
+      // Magnetometer removed
     }
   };
 
@@ -629,6 +646,19 @@ const DataDetailScreen: React.FC = () => {
 
         {/* Data Type Selector */}
         <View style={[styles.selectorContainer, { backgroundColor: theme.colors.muted }]}>
+          {hasOrientationData && (
+            <TouchableOpacity
+              style={[styles.selectorButton, selectedDataType === 'orientation' && { backgroundColor: theme.colors.card }]}
+              onPress={() => setSelectedDataType('orientation')}>
+              <Text style={[
+                styles.selectorText,
+                { color: theme.colors.textSecondary },
+                selectedDataType === 'orientation' && { color: theme.colors.primary, fontWeight: staticTheme.typography.fontWeight.semibold }
+              ]}>
+                Orientation
+              </Text>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             style={[styles.selectorButton, selectedDataType === 'accelerometer' && { backgroundColor: theme.colors.card }]}
             onPress={() => setSelectedDataType('accelerometer')}>
@@ -651,17 +681,7 @@ const DataDetailScreen: React.FC = () => {
               Gyro
             </Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.selectorButton, selectedDataType === 'magnetometer' && { backgroundColor: theme.colors.card }]}
-            onPress={() => setSelectedDataType('magnetometer')}>
-            <Text style={[
-              styles.selectorText,
-              { color: theme.colors.textSecondary },
-              selectedDataType === 'magnetometer' && { color: theme.colors.primary, fontWeight: staticTheme.typography.fontWeight.semibold }
-            ]}>
-              Mag
-            </Text>
-          </TouchableOpacity>
+          {/* Magnetometer button removed - using 6DoF mode */}
         </View>
 
         {/* Statistics Cards */}
@@ -671,9 +691,12 @@ const DataDetailScreen: React.FC = () => {
             {['x', 'y', 'z'].map((axis) => {
               const axisKey = axis as 'x' | 'y' | 'z';
               const axisStats = currentStats[axisKey];
+              const axisLabel = selectedDataType === 'orientation'
+                ? (axis === 'x' ? 'Roll' : axis === 'y' ? 'Pitch' : 'Yaw')
+                : axis.toUpperCase() + ' Axis';
               return (
                 <View key={axis} style={[styles.statCard, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}>
-                  <Text style={[styles.statAxisLabel, { color: theme.colors.textPrimary }]}>{axis.toUpperCase()} Axis</Text>
+                  <Text style={[styles.statAxisLabel, { color: theme.colors.textPrimary }]}>{axisLabel}</Text>
                   <View style={styles.statRow}>
                     <Text style={[styles.statLabel, { color: theme.colors.textSecondary }]}>Min</Text>
                     <Text style={[styles.statValue, { color: theme.colors.textPrimary }]}>{formatStatValue(axisStats.min)}</Text>
@@ -695,11 +718,7 @@ const DataDetailScreen: React.FC = () => {
         {/* Chart */}
         <View style={styles.chartContainer}>
           <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>{getDataTypeLabel(selectedDataType)}</Text>
-          {selectedDataType === 'magnetometer' && (
-            <Text style={[styles.chartNote, { color: theme.colors.textSecondary }]}>
-              Each axis normalized independently for visibility
-            </Text>
-          )}
+          {/* Magnetometer chart note removed - using 6DoF mode */}
 
           {/* Legend */}
           <View style={styles.legend}>
@@ -725,7 +744,7 @@ const DataDetailScreen: React.FC = () => {
                 let padding: number;
 
                 if (chartData.isNormalized) {
-                  // For normalized data (magnetometer), use fixed 0-100 range
+                  // Magnetometer removed - no normalized data
                   dataMin = 0;
                   dataMax = 100;
                   padding = 0;

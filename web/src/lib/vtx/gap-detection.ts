@@ -5,7 +5,7 @@
  * Uses O(n) single-pass algorithm with configurable gap threshold.
  */
 
-import { VTXDecoder, VTXHeader, IMURecord } from '@/lib/vtx-parser';
+import { VTXDecoder, VTXHeader, IMURecord } from '@vertex-pkg/vtx-parser';
 
 /**
  * Represents a continuous range of data

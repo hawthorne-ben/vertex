@@ -199,6 +199,8 @@ export interface VTXDecoderOptions {
   skipMetadata?: boolean;
   /** Maximum number of records to read (for preview) */
   maxRecords?: number;
+  /** Recovery mode: scan file for actual records, ignore header recordCount */
+  recoveryMode?: boolean;
 }
 
 /**

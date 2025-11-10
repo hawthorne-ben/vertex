@@ -101,8 +101,29 @@ export class VTXDecoder {
     }
 
     // Parse data records
-    const maxRecords = options.maxRecords ?? Number(this.header.recordCount);
-    const recordCount = Math.min(maxRecords, Number(this.header.recordCount));
+    let recordCount: number;
+
+    if (options.recoveryMode) {
+      // Recovery mode: calculate actual record count from file size
+      // Don't trust header.recordCount (may be wrong in corrupted files)
+      this.recordSize = this.calculateRecordSize(this.header.recordFormat);
+      const dataSize = this.buffer.byteLength - Number(this.header.dataOffset);
+      const actualRecordCount = Math.floor(dataSize / this.recordSize);
+
+      console.log('[VTXDecoder] Recovery mode: scanning for actual records');
+      console.log('[VTXDecoder] Data size:', dataSize, 'bytes');
+      console.log('[VTXDecoder] Record size:', this.recordSize, 'bytes');
+      console.log('[VTXDecoder] Calculated record count:', actualRecordCount);
+
+      recordCount = options.maxRecords
+        ? Math.min(options.maxRecords, actualRecordCount)
+        : actualRecordCount;
+    } else {
+      // Normal mode: trust header
+      const maxRecords = options.maxRecords ?? Number(this.header.recordCount);
+      recordCount = Math.min(maxRecords, Number(this.header.recordCount));
+    }
+
     const records = this.readRecords(0, recordCount);
 
     return {
