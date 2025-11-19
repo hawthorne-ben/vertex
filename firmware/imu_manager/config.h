@@ -83,7 +83,7 @@ extern const char* LED_MODE_NAMES[];
 #define LED_BLINK_CONNECTED 100      // Fast blink when connected
 
 // ===== Brake Detection Configuration =====
-#define BRAKE_ACCEL_THRESHOLD 3.0    // 3g threshold for braking detection (m/s² * 9.81)
+#define BRAKE_ACCEL_THRESHOLD 3.0    // 3.0 m/s² threshold (~0.3g) for braking detection
 #define BRAKE_DEBOUNCE_MS 250        // 250ms debounce (6-7 samples at 25Hz)
 #define BRAKE_DISPLAY_DURATION_MS 2000  // Show brake light for 2 seconds
 
