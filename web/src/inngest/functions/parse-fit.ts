@@ -13,13 +13,9 @@ export const parseFitFile = inngest.createFunction(
   async ({ event, step }) => {
     const { fileId, userId } = event.data
 
-    console.log(`🚴‍♂️ Starting FIT file parsing for file ${fileId}`)
-
     try {
       // Step 1: Download FIT file from storage
       const fileData = await step.run('download-fit-file', async () => {
-        console.log(`📥 Downloading FIT recording ${fileId} from storage`)
-
         const { data: fileRecord, error: fileError } = await supabase
           .from('recordings')
           .select('*')
@@ -37,11 +33,9 @@ export const parseFitFile = inngest.createFunction(
 
         // Check if this is a chunked upload by looking if storage_path contains chunks
         const isChunkedUpload = fileRecord.storage_path.includes('chunks/')
-        
+
         if (isChunkedUpload) {
           // Chunked upload - download and combine chunks
-          console.log(`📦 Downloading chunked FIT file: ${fileRecord.filename}`)
-
           // List all chunks in the directory
           const { data: chunkFiles, error: listError } = await supabase.storage
             .from('uploads')
@@ -53,7 +47,6 @@ export const parseFitFile = inngest.createFunction(
 
           // Sort chunks by name to ensure correct order
           const sortedChunks = chunkFiles.sort((a, b) => a.name.localeCompare(b.name))
-          console.log(`📦 Found ${sortedChunks.length} chunks`)
 
           const chunks = []
           for (const chunkFile of sortedChunks) {
@@ -80,9 +73,6 @@ export const parseFitFile = inngest.createFunction(
           }
         } else {
           // Direct upload - download file directly
-          console.log(`📁 Downloading direct FIT file: ${fileRecord.filename}`)
-          console.log(`📁 Storage path: ${fileRecord.storage_path}`)
-
           // Try recordings bucket first (new unified upload flow)
           const { data: recData, error: recError } = await supabase.storage
             .from('recordings')
@@ -91,7 +81,6 @@ export const parseFitFile = inngest.createFunction(
           let fileData: Blob
 
           if (recError) {
-            console.log(`⚠️ Not found in recordings bucket, trying uploads bucket...`)
             // Fallback to uploads bucket (old flow)
             const { data: uploadData, error: uploadError } = await supabase.storage
               .from('uploads')
@@ -109,21 +98,13 @@ export const parseFitFile = inngest.createFunction(
             fileData = recData
           }
 
-          console.log(`📁 Downloaded file type: ${fileData.constructor.name}`)
-          console.log(`📁 Downloaded file size: ${fileData.size} bytes`)
-          
           const arrayBuffer = await fileData.arrayBuffer()
-          console.log(`📁 ArrayBuffer size: ${arrayBuffer.byteLength} bytes`)
-          
           fileBuffer = new Uint8Array(arrayBuffer)
-          console.log(`📁 Uint8Array size: ${fileBuffer.length} bytes`)
         }
 
         // Convert buffer to base64 for proper serialization between Inngest steps
         const bufferBase64 = Buffer.from(fileBuffer).toString('base64')
-        
-        console.log(`📁 Returning file data: ${fileRecord.filename}, ${fileBuffer.length} bytes, base64 length: ${bufferBase64.length}`)
-        
+
         return {
           buffer: bufferBase64, // Store as base64 string for serialization
           filename: fileRecord.filename,
@@ -134,35 +115,18 @@ export const parseFitFile = inngest.createFunction(
 
       // Step 2: Parse FIT file
       const parsedData = await step.run('parse-fit-data', async () => {
-        console.log(`🔍 Parsing FIT file: ${fileData.filename}`)
-        console.log(`📊 File buffer size: ${fileData.bufferLength} bytes`)
-        
         // Convert base64 back to buffer
         let buffer: Uint8Array
         try {
           const bufferFromBase64 = Buffer.from(fileData.buffer, 'base64')
           buffer = new Uint8Array(bufferFromBase64)
-          console.log(`📊 Converted buffer length: ${buffer.length} bytes`)
         } catch (error) {
           throw new Error(`Failed to convert base64 buffer: ${error}`)
         }
-        
+
         // Validate file buffer
         if (!buffer || buffer.length === 0) {
           throw new Error('File buffer is empty or invalid after base64 conversion')
-        }
-        
-        // Check if buffer length matches expected
-        if (buffer.length !== fileData.bufferLength) {
-          console.warn(`⚠️ Converted buffer size (${buffer.length}) doesn't match expected size (${fileData.bufferLength})`)
-        }
-        
-        console.log(`📊 Buffer type: ${buffer.constructor.name}`)
-        console.log(`📊 Expected file size: ${fileData.fileSize} bytes`)
-        
-        // Check if file size matches
-        if (buffer.length !== fileData.fileSize) {
-          console.warn(`⚠️ Buffer size (${buffer.length}) doesn't match expected size (${fileData.fileSize})`)
         }
         
         // Check if file is too small (FIT files should be at least a few KB)
@@ -170,36 +134,16 @@ export const parseFitFile = inngest.createFunction(
           throw new Error(`File too small to be a valid FIT file: ${buffer.length} bytes (minimum ~1KB expected)`)
         }
         
-        // Check if it looks like a FIT file (basic validation)
-        const firstBytes = buffer.slice(0, 4)
-        console.log(`📊 First 4 bytes: ${Array.from(firstBytes).map(b => b.toString(16).padStart(2, '0')).join(' ')}`)
-        
-        // Check for common FIT file signatures
-        const firstByte = firstBytes[0]
-        if (firstByte === 0x0E) {
-          console.log('✅ File starts with FIT header byte (0x0E)')
-        } else {
-          console.warn(`⚠️ File doesn't start with expected FIT header byte (0x0E), got: 0x${firstByte.toString(16)}`)
-        }
-        
         // Try parsing with different configurations
         const parseWithConfig = (config: any) => {
           return new Promise<any>((resolve, reject) => {
-            console.log(`🔍 Creating FIT parser with config:`, config)
             const fitParser = new FitParser(config)
-            
-            console.log(`🔍 Starting FIT parser.parse() for ${buffer.length} bytes`)
-            const startTime = Date.now()
-            
+
             fitParser.parse(buffer, (error: any, data: any) => {
-              const parseTime = Date.now() - startTime
-              console.log(`🔍 FIT parser completed in ${parseTime}ms`)
-              
               if (error) {
-                console.error(`❌ FIT parser error after ${parseTime}ms:`, error)
+                console.error('FIT parser error:', error)
                 reject(error)
               } else {
-                console.log(`✅ FIT parser success after ${parseTime}ms`)
                 resolve(data)
               }
             })
@@ -218,8 +162,6 @@ export const parseFitFile = inngest.createFunction(
 
         try {
           // First try with full configuration
-          console.log('🔍 Attempting FIT parsing with full configuration...')
-          
           const parsedData = await parseWithTimeout({
             force: true,
             speedUnit: 'km/h',
@@ -229,35 +171,27 @@ export const parseFitFile = inngest.createFunction(
             elapsedRecordField: true,
             mode: 'cascade',
           }, 30000) // 30 second timeout
-          
-          console.log('✅ FIT file parsed successfully with full configuration')
-          console.log('Parsed data keys:', Object.keys(parsedData || {}))
+
           return parsedData
-          
+
         } catch (firstError) {
-          console.warn('⚠️ Full configuration failed, trying minimal configuration...')
-          console.warn('First error:', firstError)
-          
           try {
             // Fallback to minimal configuration
-            console.log('🔍 Attempting FIT parsing with minimal configuration...')
             const parsedData = await parseWithTimeout({
               force: true,
               mode: 'cascade',
             }, 15000) // 15 second timeout for fallback
-            
-            console.log('✅ FIT file parsed successfully with minimal configuration')
-            console.log('Parsed data keys:', Object.keys(parsedData || {}))
+
             return parsedData
-            
+
           } catch (secondError) {
-            console.error('❌ Both parsing configurations failed')
-            console.error('First error:', firstError)
-            console.error('Second error:', secondError)
-            console.error('File size:', buffer.length)
-            console.error('File name:', fileData.filename)
-            
-            // Provide detailed error information
+            console.error('FIT parsing failed with all configurations:', {
+              firstError,
+              secondError,
+              fileSize: buffer.length,
+              fileName: fileData.filename
+            })
+
             const errorMessage = (secondError as any)?.message || secondError?.toString() || 'Unknown parsing error'
             throw new Error(`FIT parsing failed with all configurations: ${errorMessage}`)
           }
@@ -266,29 +200,21 @@ export const parseFitFile = inngest.createFunction(
 
       // Step 3: Extract metadata and data points
       const extractedData = await step.run('extract-fit-metadata', async () => {
-        console.log(`📊 Extracting metadata from parsed FIT data`)
-        console.log(`📊 Available data keys: ${Object.keys(parsedData).join(', ')}`)
-        
         const { sessions, records, laps, activity } = parsedData as any
         
         // Try different ways to get session data
         let session = sessions?.[0]
         if (!session && activity?.sessions?.[0]) {
           session = activity.sessions[0]
-          console.log('📊 Using session from activity.sessions')
         }
         if (!session && activity?.session) {
           session = activity.session
-          console.log('📊 Using session from activity.session')
         }
         if (!session && laps?.[0]) {
           session = laps[0]
-          console.log('📊 Using lap data as session')
         }
-        
+
         if (!session) {
-          console.warn('⚠️ No session data found, trying to extract from activity and records')
-          
           // Fallback: create session-like object from available data
           const records = parsedData.records || []
           const activity = parsedData.activity || {}
@@ -312,10 +238,6 @@ export const parseFitFile = inngest.createFunction(
             maxCadence: activity.maxCadence || 0,
             avgCadence: activity.avgCadence || 0,
           }
-          
-          console.log('📊 Created fallback session from activity/records data')
-        } else {
-          console.log('📊 Using session data from FIT file')
         }
 
         // Extract GPS and performance data from records
@@ -325,38 +247,22 @@ export const parseFitFile = inngest.createFunction(
 
         // Try to get records from different locations based on our investigation
         let recordsToProcess = records || []
-        
+
         // Check if records are in laps (as discovered in our investigation)
         if (session?.laps && session.laps.length > 0) {
-          console.log(`📊 Found ${session.laps.length} laps, checking for records in laps`)
           const lapRecords: any[] = []
           session.laps.forEach((lap: any, index: number) => {
             if (lap.records && lap.records.length > 0) {
-              console.log(`📊 Lap ${index + 1} has ${lap.records.length} records`)
               lapRecords.push(...lap.records)
             }
           })
-          
+
           if (lapRecords.length > 0) {
-            console.log(`📊 Using ${lapRecords.length} records from laps`)
             recordsToProcess = lapRecords
           }
         }
 
         if (recordsToProcess && recordsToProcess.length > 0) {
-          console.log(`📊 Processing ${recordsToProcess.length} data records`)
-
-          // Debug first record to see available altitude fields
-          if (recordsToProcess.length > 0) {
-            const firstRecord = recordsToProcess[0]
-            const altFields = Object.keys(firstRecord).filter(k =>
-              k.toLowerCase().includes('alt') || k.toLowerCase().includes('elev')
-            )
-            console.log(`📊 Altitude-related fields in records: ${altFields.join(', ')}`)
-            altFields.forEach(field => {
-              console.log(`   ${field}: ${firstRecord[field]}`)
-            })
-          }
 
           for (const record of recordsToProcess) {
             const dataPoint: any = {
@@ -382,17 +288,6 @@ export const parseFitFile = inngest.createFunction(
               }
             }
           }
-        } else {
-          console.log('⚠️ No records found in FIT file')
-          console.log(`📊 Available data structure:`, Object.keys(parsedData))
-          console.log(`📊 Session structure:`, session ? Object.keys(session) : 'No session')
-          if (session?.laps) {
-            console.log(`📊 Laps structure:`, session.laps.map((lap: any, i: number) => ({
-              lapIndex: i,
-              keys: Object.keys(lap),
-              hasRecords: !!(lap.records && lap.records.length > 0)
-            })))
-          }
         }
 
         // Calculate metadata (using imperial units)
@@ -405,82 +300,11 @@ export const parseFitFile = inngest.createFunction(
         const distanceMeters = session.total_distance ? Math.round(session.total_distance * 1000) : null
         const distanceFeet = distanceMeters ? Math.round(distanceMeters * 3.28084) : null
 
-        console.log(`📊 Distance: ${session.total_distance}km = ${distanceMeters}m`)
-        
-        // Debug elevation data - show ALL available fields
-        console.log('📊 Complete FIT data structure debug:')
-        console.log('📊 Session keys:', Object.keys(session))
-        console.log('📊 Session elevation fields:', {
-          total_ascent: session.total_ascent,
-          total_descent: session.total_descent,
-          elevation_gain: session.elevation_gain,
-          ascent: session.ascent,
-          total_elevation_gain: session.total_elevation_gain,
-          elevation_ascent: session.elevation_ascent,
-          gain_elevation: session.gain_elevation,
-          climb_elevation: session.climb_elevation,
-          // Check for any field containing 'elevation' or 'ascent'
-          ...Object.keys(session).filter(key => 
-            key.toLowerCase().includes('elevation') || 
-            key.toLowerCase().includes('ascent') ||
-            key.toLowerCase().includes('climb') ||
-            key.toLowerCase().includes('gain')
-          ).reduce((acc, key) => ({ ...acc, [key]: session[key] }), {})
-        })
-        
-        // Also check activity level elevation data
-        if (activity) {
-          console.log('📊 Activity elevation fields:', {
-            ...Object.keys(activity).filter(key => 
-              key.toLowerCase().includes('elevation') || 
-              key.toLowerCase().includes('ascent') ||
-              key.toLowerCase().includes('climb') ||
-              key.toLowerCase().includes('gain')
-            ).reduce((acc, key) => ({ ...acc, [key]: activity[key] }), {})
-          })
-        }
-        
-        // Check if elevation data is in records
-        if (recordsToProcess && recordsToProcess.length > 0) {
-          const sampleRecord = recordsToProcess[0]
-          console.log('📊 Sample record elevation fields:', {
-            ...Object.keys(sampleRecord).filter(key => 
-              key.toLowerCase().includes('elevation') || 
-              key.toLowerCase().includes('ascent') ||
-              key.toLowerCase().includes('climb') ||
-              key.toLowerCase().includes('gain') ||
-              key.toLowerCase().includes('altitude')
-            ).reduce((acc, key) => ({ ...acc, [key]: sampleRecord[key] }), {})
-          })
-        }
-        
-        // Calculate elevation gain from altitude data if available
-        let elevationGainMeters = 0
-        const altitudePoints = dataPoints
-          .map((p: any) => p.altitude)
-          .filter((alt: any) => alt !== null && alt !== undefined && !isNaN(alt))
-
-        console.log(`📊 Altitude data: ${altitudePoints.length} points, min=${Math.min(...altitudePoints)}, max=${Math.max(...altitudePoints)}, first=${altitudePoints[0]}, last=${altitudePoints[altitudePoints.length-1]}`)
-
-        if (altitudePoints.length > 10) {
-          // Calculate elevation gain by summing positive altitude changes (ignore small GPS noise)
-          for (let i = 1; i < altitudePoints.length; i++) {
-            const change = altitudePoints[i] - altitudePoints[i-1]
-            if (change > 0.5) { // Ignore tiny GPS fluctuations
-              elevationGainMeters += change
-            }
-          }
-          console.log(`📊 Calculated elevation gain from altitude: ${elevationGainMeters.toFixed(1)}m`)
-        }
-
-        // If calculation resulted in very low value, use session data as fallback
-        if (elevationGainMeters < 5) {
-          elevationGainMeters = session.total_ascent || session.elevation_gain || session.ascent || 0
-          console.log(`📊 Using session elevation (calculated was too low): ${elevationGainMeters}m`)
-        }
-
+        // Get elevation gain from session data
+        // Parser is configured with lengthUnit: 'km', so total_ascent is in kilometers
+        const elevationGainKm = session.total_ascent || 0
+        const elevationGainMeters = Math.round(elevationGainKm * 1000) // Convert km to meters
         const elevationGainFeet = Math.round(elevationGainMeters * 3.28084)
-        console.log(`📊 Final elevation gain: ${elevationGainMeters}m = ${elevationGainFeet}ft`)
 
         // Calculate averages and maximums from data points
         const validPowerPoints = dataPoints.filter(p => p.power_watts !== null)
@@ -513,8 +337,6 @@ export const parseFitFile = inngest.createFunction(
         const maxSpeedMs = maxSpeedKmh ? maxSpeedKmh / 3.6 : null // Convert km/h to m/s
         const avgSpeedMs = avgSpeedKmh ? avgSpeedKmh / 3.6 : null
 
-        console.log(`📊 Speed: avg ${avgSpeedKmh}km/h = ${avgSpeedMph}mph, max ${maxSpeedKmh}km/h = ${maxSpeedMph}mph`)
-
         return {
           metadata: {
             start_time: startTime,
@@ -544,27 +366,16 @@ export const parseFitFile = inngest.createFunction(
 
       // Step 3.5: Analyze riding time from data points
       const ridingTimeAnalysis = await step.run('analyze-riding-time', async () => {
-        console.log(`🚴‍♂️ Analyzing riding time from ${extractedData.dataPoints.length} data points`)
-        
         // Import the riding time filter
         const { FitRidingTimeFilter } = await import('@/lib/association/fit-riding-time-filter')
-        
+
         const analysis = FitRidingTimeFilter.filterRidingTime(extractedData.dataPoints)
-        
-        console.log(`📊 Riding analysis results:`)
-        console.log(`   - Riding time: ${(analysis.ridingTimeSeconds / 60).toFixed(1)} minutes`)
-        console.log(`   - Stationary time: ${(analysis.stationaryTimeSeconds / 60).toFixed(1)} minutes`)
-        console.log(`   - Riding data points: ${analysis.ridingDataPoints.length}`)
-        console.log(`   - Stationary periods: ${analysis.stationaryPeriods.length}`)
-        console.log(`   - Riding percentage: ${analysis.ridingPercentage.toFixed(1)}%`)
-        
+
         return analysis
       })
 
       // Step 4: Update FIT recording metadata
       await step.run('update-recording-metadata', async () => {
-        console.log(`💾 Updating FIT recording metadata`)
-
         // Calculate duration from start/end times
         const durationMs = extractedData.metadata.start_time && extractedData.metadata.end_time
           ? new Date(extractedData.metadata.end_time).getTime() - new Date(extractedData.metadata.start_time).getTime()
@@ -607,14 +418,10 @@ export const parseFitFile = inngest.createFunction(
         if (error) {
           throw new Error(`Failed to update recording metadata: ${error.message}`)
         }
-
-        console.log(`✅ FIT recording metadata updated`)
       })
 
       // Step 5: Automatically create ride entry
       const rideId = await step.run('create-ride-entry', async () => {
-        console.log(`🚴‍♂️ Creating ride entry for FIT recording ${fileId}`)
-
         // Generate ride name from filename and date
         const { data: recording } = await supabase
           .from('recordings')
@@ -648,7 +455,7 @@ export const parseFitFile = inngest.createFunction(
           throw new Error(`Failed to create ride entry: ${rideError.message}`)
         }
 
-        console.log(`✅ Ride created: ${ride.id}`)
+        console.log('Ride created:', ride.id)
 
         // Create ride_recordings association
         const { error: assocError } = await supabase
@@ -662,17 +469,14 @@ export const parseFitFile = inngest.createFunction(
           throw new Error(`Failed to create ride_recordings association: ${assocError.message}`)
         }
 
-        console.log(`✅ Associated recording ${fileId} with ride ${ride.id}`)
-
         return ride.id
       })
 
-      console.log(`🎉 FIT file parsing completed successfully for recording ${fileId}`)
-      console.log(`🚴‍♂️ Ride created: ${rideId}`)
+      console.log('FIT file parsing completed successfully')
       return { success: true, rideId, recordingId: fileId }
 
     } catch (error) {
-      console.error(`❌ FIT file parsing failed for recording ${fileId}:`, error)
+      console.error('FIT file parsing failed:', error)
 
       // Update recording status to failed
       await supabase
@@ -713,8 +517,6 @@ async function autoCreateRideForFitFile(fitFileId: string, userId: string) {
     }
 
     // Extract time range from FIT file with validation
-    console.log(`📊 FIT file timestamps: start_time=${fitFile.start_time}, end_time=${fitFile.end_time}`)
-    
     const fitStartTime = new Date(fitFile.start_time)
     const fitEndTime = new Date(fitFile.end_time)
     
@@ -741,8 +543,6 @@ async function autoCreateRideForFitFile(fitFileId: string, userId: string) {
     const bufferMinutes = 30 // 30 minute buffer for time drift
     const searchStart = new Date(fitTimeRange.start.getTime() - bufferMinutes * 60 * 1000)
     const searchEnd = new Date(fitTimeRange.end.getTime() + bufferMinutes * 60 * 1000)
-    
-    console.log(`🔍 Searching for IMU files between ${searchStart.toISOString()} and ${searchEnd.toISOString()}`)
 
     const { data: potentialImuFiles, error: imuQueryError } = await supabase
       .from('imu_data_files')

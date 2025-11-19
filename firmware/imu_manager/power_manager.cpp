@@ -4,8 +4,12 @@
  */
 
 #include "power_manager.h"
+#include "neopixel_manager.h"
 #include "esp_sleep.h"
 #include "driver/gpio.h"
+
+// External reference to neopixel manager for shutdown visual
+extern NeoPixelManager neopixelManager;
 
 PowerManager::PowerManager()
   : lastBatteryRead(0),
@@ -28,13 +32,13 @@ void PowerManager::init() {
 
   if (wakeup_reason != ESP_SLEEP_WAKEUP_UNDEFINED) {
     Serial.println("\n========================================");
-    Serial.println("  Vertex Sensor Notify - WOKE FROM SLEEP");
+    Serial.println("  Vertex IMU Manager - WOKE FROM SLEEP");
     Serial.println("========================================");
     Serial.println("[POWER] Stabilizing I2C after deep sleep...");
     delay(500);
   } else {
     Serial.println("\n========================================");
-    Serial.println("  Vertex Sensor Notify - v" FIRMWARE_VERSION);
+    Serial.println("  Vertex IMU Manager - v" FIRMWARE_VERSION);
     Serial.println("========================================");
   }
 
@@ -112,12 +116,17 @@ void PowerManager::shutdown(const char* reason) {
   Serial.println("[POWER] Entering deep sleep mode");
   Serial.println("[POWER] Press RESET button to wake\n");
 
+  // Show shutdown visual on NeoPixels (all LEDs red 10%)
+  neopixelManager.showShutdown();
+
   // Turn off LED
   digitalWrite(LED_PIN, LOW);
 
   // Flush serial to ensure message is sent
   Serial.flush();
-  delay(100);
+
+  // Display shutdown visual for 500ms before deep sleep
+  delay(500);
 
   // Enter deep sleep with NO wake source
   esp_deep_sleep_start();

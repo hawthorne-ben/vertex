@@ -2,13 +2,14 @@
  * Vertex IMU Manager - Main Firmware
  *
  * Modular architecture for BLE-based IMU sensor streaming
- * Version: 0.2.0
+ * Version: 0.3.0
  *
  * Architecture:
  * - config.h: All constants and configuration
  * - ble_manager: BLE communication and configuration
  * - sensor_manager: BNO055 sensor operations
  * - power_manager: Battery, button, LED management
+ * - neopixel_manager: NeoPixel tail light control
  * - performance: Performance metrics and monitoring
  */
 
@@ -17,6 +18,7 @@
 #include "ble_manager.h"
 #include "sensor_manager.h"
 #include "power_manager.h"
+#include "neopixel_manager.h"
 #include "performance.h"
 
 // Global constant definitions (declared extern in config.h)
@@ -27,6 +29,7 @@ const char* LED_MODE_NAMES[] = {"OFF", "STATUS", "ALWAYS-ON"};
 BLEManager bleManager;
 SensorManager sensorManager;
 PowerManager powerManager;
+NeoPixelManager neopixelManager;
 PerformanceTracker performance;
 
 void setup() {
@@ -37,16 +40,17 @@ void setup() {
   powerManager.init();
 
   // Initialize sensor
-  if (!sensorManager.init()) {
-    // Sensor failed - blink LED rapidly and halt
-    while (1) {
-      digitalWrite(LED_PIN, !digitalRead(LED_PIN));
-      delay(100);
-    }
+  bool sensorOk = sensorManager.init();
+  if (!sensorOk) {
+    Serial.println("⚠️  WARNING: Sensor init failed - continuing for NeoPixel testing");
+    Serial.println("⚠️  Connect BNO sensor for full functionality\n");
   }
 
   // Initialize BLE
   bleManager.init();
+
+  // Initialize NeoPixel tail light (gracefully continues if init fails)
+  neopixelManager.init();
 
   // Read initial battery voltage for performance tracking
   float initialBatteryVoltage = powerManager.getBatteryVoltage();
@@ -96,11 +100,12 @@ void loop() {
     }
   }
 
-  // Update LED status
-  powerManager.updateLED(
-    bleManager.isConnected(),
-    bleManager.getLedMode()
-  );
+  // Update NeoPixel state-based visual feedback
+  // streaming = true if connected AND past stabilization period
+  bool streaming = bleManager.isConnected() &&
+                   (millis() - bleManager.getConnectionTime() >= CONNECTION_STABILIZE_MS);
+  bool braking = sensorManager.isBraking();
+  neopixelManager.update(bleManager.isConnected(), streaming, braking, bleManager.getLedMode());
 
   performance.recordLoopEnd();
 

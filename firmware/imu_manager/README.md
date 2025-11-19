@@ -1,20 +1,22 @@
-# Vertex Sensor Notify Firmware
+# Vertex IMU Manager Firmware
 
-**BLE-only IMU sensor streaming for mobile app integration**
+**BLE-based IMU sensor streaming with NeoPixel tail light**
+
+Version: 0.3.0
 
 ## Quick Start
 
 ```bash
 # Compile
-cd firmware/sensor_notify
-arduino-cli compile --fqbn esp32:esp32:adafruit_feather_esp32_v2 sensor_notify.ino
+cd firmware/imu_manager
+arduino-cli compile --fqbn esp32:esp32:adafruit_feather_esp32_v2 imu_manager.ino
 
 # Upload (adjust port as needed)
 arduino-cli upload \
   --fqbn esp32:esp32:adafruit_feather_esp32_v2 \
   --port /dev/cu.usbserial-XXXXXXXX \
   --upload-property upload.speed=115200 \
-  sensor_notify.ino
+  imu_manager.ino
 
 # Monitor
 arduino-cli monitor --port /dev/cu.usbserial-XXXXXXXX --config baudrate=115200
@@ -22,23 +24,27 @@ arduino-cli monitor --port /dev/cu.usbserial-XXXXXXXX --config baudrate=115200
 
 ## Overview
 
-This firmware provides real-time sensor data streaming via Bluetooth Low Energy (BLE) notifications. It's designed for the Vertex Android app to receive IMU data from the BNO055 sensor at 50Hz.
+Modular firmware for BLE-based IMU sensor streaming with integrated NeoPixel tail light. Designed for the Vertex Android app to receive real-time motion data from the BNO055 sensor.
 
 ### Key Features
 
-- ✅ **BLE Notify Server** - Real-time sensor streaming
-- ✅ **No WiFi** - Battery-efficient, BLE-only operation
-- ✅ **No NTP** - Phone provides timestamps
-- ✅ **50Hz Sampling** - High-frequency motion tracking
-- ✅ **Extensive Logging** - Detailed serial debug output
-- ✅ **Battery Monitoring** - Voltage and percentage reporting
+- ✅ **BLE Notify Server** - Real-time sensor streaming (25Hz default)
+- ✅ **Configurable Sample Rate** - 1-50Hz via BLE commands
+- ✅ **NeoPixel Tail Light** - 7-LED visual status and tail light
+- ✅ **Automatic Brake Detection** - On-device braking detection with attention-grabbing strobe pattern
+- ✅ **Battery Monitoring** - Voltage reporting with auto-shutdown protection
+- ✅ **Power Management** - User button for shutdown
 - ✅ **Calibration Status** - Real-time sensor calibration feedback
+- ✅ **Dynamic Configuration** - Change settings via BLE without reflashing
 
 ## Hardware Requirements
 
 - **Microcontroller**: Adafruit Feather ESP32 V2
 - **Sensor**: BNO055 9-DOF Absolute Orientation IMU
-- **Battery**: 3.7V LiPo (500mAh recommended)
+- **Tail Light**: NeoPixel Jewel 7 (RGBW)
+- **Battery**: 3.7V LiPo (500-2500mAh)
+- **Antenna**: External 2.4GHz antenna (recommended for reliable BLE with NeoPixels)
+- **5V Boost**: Adafruit MiniBoost 5V @ 1A (for NeoPixel power)
 
 ### Wiring
 
@@ -49,102 +55,131 @@ VIN     →  3V (3.3V power)
 GND     →  GND
 SDA     →  GPIO 22 (SDA)
 SCL     →  GPIO 23 (SCL)
+
+NeoPixel Jewel 7  →  Connections
+----------------------------------
+5V      →  MiniBoost VOUT (5V from LiPo boost)
+GND     →  GND (common ground)
+DIN     →  GPIO 13 (data)
+
+MiniBoost  →  Connections
+--------------------------
+VIN     →  LiPo BAT+ (3.7V)
+GND     →  LiPo BAT- / common GND
+VOUT    →  NeoPixel 5V
+
+LiPo Battery  →  Connections
+-----------------------------
+BAT+    →  Feather BAT, MiniBoost VIN (parallel)
+BAT-    →  Common GND
+```
+
+**Note**: Use screw terminal blocks or perma-proto board to split battery connections cleanly.
+
+## NeoPixel Visual Feedback
+
+The 7-LED NeoPixel Jewel provides system status indication:
+
+### LED Layout
+- **Center LED (0)**: Status indicator
+- **Outer Ring (1-6)**: Animation/tail light pattern
+
+### State Behaviors
+
+| State | Center LED | Outer Ring | Description |
+|-------|-----------|------------|-------------|
+| **BOOTING** | Yellow pulse (0.5Hz, 15% brightness) | White spinner (60ms/LED) with fade trail (15%) | System initialization (0-2s) - smooth rotating animation |
+| **BROADCASTING** | Green pulse (0.5Hz, 15% brightness) | White spinner (60ms/LED) with fade trail (15%) | Waiting for BLE connection - smooth rotating animation |
+| **CONNECTED** | Blue solid (15% brightness) | Blue spinner (60ms/LED) with fade trail (15%) | Connected, waiting for data stream |
+| **OPERATING** | Red flash (synced) | Red flash (synced) | All 7 LEDs: 100ms bright → 100ms off → 20ms dim → 780ms off (1Hz cycle) |
+| **BRAKING** | Red strobe (synced) | Red strobe (synced) | All 7 LEDs: 500ms fast strobe (10Hz) → 1500ms solid red (full brightness) |
+| **ERROR** | Red fast blink (4Hz, 15% brightness) | Red slow pulse (breathe, 15%) | Sensor error or system fault |
+
+**Operating Mode Tail Light Pattern:**
+- Synchronized flash on all 7 LEDs for maximum visibility
+- 10% bright / 10% off / 2% dim / 78% off @ 1Hz
+- No rotation - all LEDs pulse together
+
+**LED Mode Control:**
+- 0 = OFF (all LEDs disabled, saves power)
+- 1 = STATUS (default, shows system state as above)
+- 2 = ALWAYS-ON (center LED solid blue, outer ring status pattern)
+
+Change LED mode via BLE config characteristic (command 0x05).
+
+## Automatic Brake Detection
+
+The firmware includes on-device brake detection using the BNO055's linear acceleration sensor (gravity-compensated).
+
+### Detection Parameters
+
+- **Threshold**: 3.0g (29.43 m/s²) on X-axis
+- **Debounce**: 250ms sustained acceleration (6-7 samples at 25Hz)
+- **Display Duration**: 2 seconds total
+- **Noise Immunity**: Uses gravity-compensated linear acceleration to filter vibrations
+
+### Brake Light Pattern
+
+When braking is detected:
+1. **First 500ms**: Fast 10Hz strobe (50ms on, 50ms off) for immediate attention
+2. **Remaining 1500ms**: Solid red at full brightness for sustained visibility
+
+### Priority
+
+The BRAKING state has high priority and overrides all normal tail light patterns except ERROR state. This ensures brake lights are always visible regardless of connection status.
+
+### Tuning
+
+To adjust sensitivity, modify these constants in `config.h`:
+```cpp
+#define BRAKE_ACCEL_THRESHOLD 3.0    // g-force threshold (increase to reduce sensitivity)
+#define BRAKE_DEBOUNCE_MS 250        // milliseconds of sustained braking
+#define BRAKE_DISPLAY_DURATION_MS 2000  // total brake light display time
 ```
 
 ## Software Requirements
 
 - **Arduino CLI** (recommended) or Arduino IDE 2.0+
-- **ESP32 Board Support**: v3.3.2
+- **ESP32 Board Support**: v3.0.0+
 - **Libraries**:
-  - Adafruit BNO055 v1.6.4
-  - Adafruit Unified Sensor v1.1.15
+  - Adafruit BNO055
+  - Adafruit Unified Sensor
+  - Adafruit NeoPixel
   - ESP32 BLE Arduino (included with ESP32 core)
 
-### Installation & Compilation
+### Installation
 
-#### Using Arduino CLI (Recommended)
-
-**1. Install Arduino CLI**:
 ```bash
-# macOS
-brew install arduino-cli
+# Install Arduino CLI
+brew install arduino-cli  # macOS
 
-# Linux/Windows - see: https://arduino.github.io/arduino-cli/
-```
-
-**2. Install ESP32 Board Support**:
-```bash
+# Install ESP32 board support
 arduino-cli core install esp32:esp32
-```
 
-**3. Install Required Libraries**:
-```bash
+# Install required libraries
 arduino-cli lib install "Adafruit BNO055"
 arduino-cli lib install "Adafruit Unified Sensor"
+arduino-cli lib install "Adafruit NeoPixel"
 ```
-
-**4. Compile Firmware**:
-```bash
-cd firmware/sensor_notify
-arduino-cli compile --fqbn esp32:esp32:adafruit_feather_esp32_v2 sensor_notify.ino
-```
-
-**5. Upload to Board**:
-```bash
-# Find your port
-arduino-cli board list
-
-# Upload (replace PORT with your actual port)
-arduino-cli upload \
-  --fqbn esp32:esp32:adafruit_feather_esp32_v2 \
-  --port /dev/cu.usbserial-XXXXXXXX \
-  --upload-property upload.speed=115200 \
-  sensor_notify.ino
-```
-
-**6. Monitor Serial Output**:
-```bash
-arduino-cli monitor --port /dev/cu.usbserial-XXXXXXXX --config baudrate=115200
-```
-
-#### Using Arduino IDE
-
-**1. Install ESP32 Board Support**:
-   - Arduino IDE → Preferences
-   - Add URL: `https://espressif.github.io/arduino-esp32/package_esp32_index.json`
-   - Tools → Board Manager → Install "esp32"
-
-**2. Install Required Libraries**:
-   - Sketch → Include Library → Manage Libraries
-   - Search and install:
-     - "Adafruit BNO055"
-     - "Adafruit Unified Sensor"
-
-**3. Upload Firmware**:
-   - Open `sensor_notify.ino`
-   - Tools → Board → ESP32 Arduino → "Adafruit Feather ESP32 V2"
-   - Tools → Port → Select your port
-   - Click Upload
 
 ## Configuration
 
 Edit `config.h` to customize:
 
 ```cpp
-// Device name (shows in BLE scan)
-#define DEVICE_NAME "Vertex-IMU"
+// BLE Device Name
+#define BLE_DEVICE_NAME "Vertex-IMU"
 
-// Sensor sampling rate
-#define SENSOR_SAMPLE_RATE_HZ 50  // 20ms interval
+// Sample Rate (adjustable 1-50Hz)
+#define DEFAULT_SAMPLE_INTERVAL_MS 40  // 25Hz default
 
-// Battery thresholds
-#define LOW_BATTERY_VOLTAGE 3.3    // Warning level
-#define CRITICAL_BATTERY_VOLTAGE 3.0  // Shutdown level
+// NeoPixel Settings
+#define NEOPIXEL_DATA_PIN 13
+#define NEOPIXEL_NUM_PIXELS 7
+#define NEOPIXEL_UPDATE_INTERVAL_MS 100
 
-// Debug logging
-#define DEBUG_SENSOR_ENABLED true
-#define DEBUG_BLE_ENABLED true
-#define DEBUG_BATTERY_ENABLED true
+// Battery Protection
+#define BATTERY_CUTOFF_VOLTAGE 3.2  // Auto-shutdown below 3.2V
 ```
 
 ## BLE Service Specification
@@ -156,280 +191,148 @@ Edit `config.h` to customize:
 
 ### Characteristics
 
-#### Sensor Data (NOTIFY + READ)
+#### 1. Sensor Data (NOTIFY + READ)
 **UUID**: `12345678-1234-5678-1234-56789abcdef1`
 
-Binary packet (60 bytes, little-endian):
-- **Timestamp** (4 bytes) - `uint32_t` milliseconds since boot
-- **Euler Angles** (12 bytes) - 3× `float` (roll, pitch, yaw in degrees)
-- **Acceleration** (12 bytes) - 3× `float` (x, y, z in m/s²)
-- **Gyroscope** (12 bytes) - 3× `float` (x, y, z in rad/s)
-- **Magnetometer** (12 bytes) - 3× `float` (x, y, z in µT)
-- **Calibration** (4 bytes) - 4× `uint8_t` (sys, gyro, accel, mag: 0-3)
-- **Battery Voltage** (4 bytes) - `float` (voltage in V)
+Binary packet (47 bytes, little-endian):
+- **Timestamp** (4 bytes) - uint32_t milliseconds since boot
+- **Euler Angles** (12 bytes) - 3× float (roll, pitch, yaw in degrees)
+- **Acceleration** (12 bytes) - 3× float (x, y, z in m/s²)
+- **Gyroscope** (12 bytes) - 3× float (x, y, z in rad/s)
+- **Calibration** (3 bytes) - 3× uint8_t (sys, gyro, accel: 0-3)
+- **Battery Voltage** (4 bytes) - float (voltage in V)
 
-**Sample Rate**: 10Hz (optimized for stability, 50-100Hz capable with further optimization)
+**Note**: 6-DOF mode (no magnetometer) for cleaner orientation. Yaw drift corrected in post-processing using GPS.
 
-**Notes**:
-- All floats use IEEE 754 single-precision format
-- Battery voltage read once per second to reduce overhead
-- Quaternions removed in v2.0 for efficiency (use Euler angles)
+#### 2. Configuration (WRITE)
+**UUID**: `12345678-1234-5678-1234-56789abcdef2`
 
-## Serial Monitor Output
+Commands:
+- `0x01 [uint32_t interval_ms]` - Set sample rate (20-1000ms)
+- `0x02` - Trigger calibration status report
+- `0x03 [uint8_t mode]` - Set power mode (0=low, 1=normal, 2=high)
+- `0x04` - Reset device
+- `0x05 [uint8_t mode]` - Set LED mode (0=off, 1=status, 2=always-on)
+- `0xFF` - Query current configuration
 
-Connect at **115200 baud** to see detailed logging:
+## Modular Architecture
 
 ```
-╔══════════════════════════════════════╗
-║   VERTEX SENSOR NOTIFY FIRMWARE     ║
-╚══════════════════════════════════════╝
-
-Firmware Version: 1.0.0
-Device Name: Vertex-IMU
-Sensor Rate: 50 Hz
-BLE MTU: 512 bytes
-
-========================================
-  BNO055 Sensor Initialization
-========================================
-[SENSOR] Initializing I2C on SDA=22, SCL=23 @ 100 kHz...
-[SENSOR] I2C scan complete. Found 1 device(s)
-[SENSOR] Found device at 0x28
-[OK] BNO055 initialized successfully!
-[SENSOR] Chip ID: 0xA0 (expected: 0xA0)
-[SENSOR] Software Rev: 3.11
-[SENSOR] Initial calibration status:
-[SENSOR]   System: 0/3
-[SENSOR]   Gyro:   0/3
-[SENSOR]   Accel:  0/3
-[SENSOR]   Mag:    0/3
-
-========================================
-  BLE Server Initialization
-========================================
-[BLE] Device address: 24:0a:c4:xx:xx:xx
-[BLE] Creating sensor service...
-[OK] BLE server initialized and advertising!
-
-========================================
-  System Ready!
-  Battery: 3.87V (72%)
-  Device: Vertex-IMU
-  Waiting for BLE connection...
-========================================
-
-[BLE] CLIENT CONNECTED
-[SENSOR] Read #50: Roll=2.1° Pitch=-0.5° Yaw=180.3° | Cal: S=0 G=0 A=0 M=0
-[BLE] Notification #50 sent (73 bytes): R=2.1° P=-0.5° Y=180.3°
+imu_manager/
+├── imu_manager.ino         # Main firmware loop
+├── config.h                # All constants and configuration
+├── ble_manager.h/.cpp      # BLE communication
+├── sensor_manager.h/.cpp   # BNO055 sensor operations
+├── power_manager.h/.cpp    # Battery, button, shutdown
+├── neopixel_manager.h/.cpp # NeoPixel control
+├── performance.h/.cpp      # Performance monitoring
+└── README.md               # This file
 ```
 
-## LED Indicators
+## Power Management
 
-The built-in LED (GPIO 13) indicates system status:
+- **Normal Operation**: ~60-100mA @ 3.7V (with NeoPixels)
+- **Battery Monitoring**: Every 1 second
+- **Critical Shutdown**: Automatic at 3.2V
+- **User Shutdown**: Hold button (GPIO 38) for 2+ seconds
 
-| Pattern | Status |
-|---------|--------|
-| Slow blink (1s) | Waiting for connection |
-| Fast blink (100ms) | Connected, streaming data |
-| Very fast blink (200ms) | Low battery warning |
-| Rapid flash (100ms) | Critical battery / error |
+### Battery Life Estimates
+
+| Capacity | Runtime (with NeoPixels) | Runtime (LEDs off) |
+|----------|-------------------------|-------------------|
+| 500mAh | ~5-8 hours | ~6-10 hours |
+| 1200mAh | ~12-19 hours | ~15-24 hours |
+| 2500mAh | ~25-40 hours | ~31-50 hours |
+
+## Performance
+
+- **Sample Rate**: 25Hz default (40ms interval)
+- **Adjustable Range**: 1-50Hz via BLE
+- **BLE MTU**: 185 bytes (negotiated automatically)
+- **Connection Stability**: External antenna required for reliable operation with NeoPixels
+
+## Troubleshooting
+
+### Sensor Not Found
+**Check**:
+- Wiring (SDA=22, SCL=23, 3.3V, GND)
+- I2C address (should be 0x28)
+
+### BLE Not Discoverable
+**Solutions**:
+1. Attach external antenna (NeoPixels cause RF interference)
+2. Check phone Bluetooth is enabled
+3. Restart device and phone
+4. Look for "Vertex-IMU" in scan results
+
+### NeoPixels Not Working
+**Check**:
+- 5V power connected (requires USB or 5V boost from LiPo)
+- Data line connected to GPIO 13
+- Common ground between all components
+
+### Low Battery Performance
+- Charge battery above 3.5V
+- Disable NeoPixels (LED mode 0) to extend runtime
+- Use larger capacity battery
 
 ## Calibration
 
 The BNO055 requires calibration for accurate measurements:
 
 1. **Gyroscope**: Keep still for 2-3 seconds
-2. **Accelerometer**: Move through all 6 positions (all faces up/down)
-3. **Magnetometer**: Move in figure-8 pattern in 3D space
-4. **System**: All sensors must reach level 3
+2. **Accelerometer**: Move through all 6 positions
+3. **System**: Gyro + Accel must reach level 3
 
-Watch Serial Monitor for calibration status:
+Watch Serial Monitor for status:
 ```
-[SENSOR] Initial calibration status:
-[SENSOR]   System: 3/3  ✅ Fully calibrated
-[SENSOR]   Gyro:   3/3  ✅
-[SENSOR]   Accel:  3/3  ✅
-[SENSOR]   Mag:    3/3  ✅
+Cal: S=3 G=3 A=3  ✅ Fully calibrated
 ```
 
-## Power Management
-
-- **Normal Operation**: ~50-80mA @ 3.7V
-- **Battery Monitoring**: Every 5 seconds
-- **Low Battery Warning**: 3.3V (LED blinks fast)
-- **Critical Shutdown**: 3.0V (protects battery)
-
-### Battery Life Estimates
-
-| Battery Capacity | Runtime |
-|-----------------|---------|
-| 500mAh | ~6-10 hours |
-| 1200mAh | ~15-24 hours |
-| 2500mAh | ~31-50 hours |
-
-*Actual runtime depends on BLE activity and sensor configuration*
-
-## Troubleshooting
-
-### Sensor Not Found
+## File Structure
 
 ```
-[ERROR] Failed to initialize BNO055!
+imu_manager/
+├── imu_manager.ino         # Main entry point
+├── config.h                # Configuration constants
+├── ble_manager.h           # BLE interface
+├── ble_manager.cpp         # BLE implementation
+├── sensor_manager.h        # Sensor interface
+├── sensor_manager.cpp      # Sensor implementation
+├── power_manager.h         # Power interface
+├── power_manager.cpp       # Power implementation
+├── neopixel_manager.h      # NeoPixel interface
+├── neopixel_manager.cpp    # NeoPixel implementation
+├── performance.h           # Performance tracking interface
+├── performance.cpp         # Performance tracking implementation
+└── README.md               # This documentation
 ```
-
-**Solutions**:
-- Check wiring (SDA, SCL, VCC, GND)
-- Verify I2C address (should be 0x28)
-- Try lowering I2C clock speed in `config.h`
-
-### No BLE Connection
-
-**Check**:
-- Phone Bluetooth is enabled
-- Device is in range (<10m)
-- Not already connected to another device
-- Try restarting both device and phone
-
-### Low Battery Performance
-
-If sensors become unreliable below 3.5V:
-- Charge battery immediately
-- Consider larger capacity battery
-- Reduce sample rate in `config.h`
 
 ## Development
 
 ### Adding Custom Features
 
-1. **Modify sensor data structure** in `sensor_manager.h`
-2. **Update BLE packet** in `ble_server.cpp::sendSensorData()`
-3. **Update Android app** BLE parsing to match
+1. Modify sensor data structure in `sensor_manager.h`
+2. Update BLE packet in `ble_manager.cpp`
+3. Update Android app BLE parsing to match
 
 ### Debug Logging
 
-Enable/disable logging in `config.h`:
-```cpp
-#define DEBUG_SENSOR_ENABLED true
-#define DEBUG_BLE_ENABLED true
-#define DEBUG_BATTERY_ENABLED true
-```
+Serial Monitor @ 115200 baud shows:
+- Boot sequence
+- BLE connection events
+- Sensor readings (every 10th sample)
+- Configuration changes
+- Performance metrics (every 5s)
 
-### Performance Monitoring (v2.0 - Added)
+## Known Issues
 
-Built-in benchmarking reports every 5 seconds via Serial:
+1. **RF Interference**: NeoPixels on GPIO 13 cause BLE interference
+   - **Solution**: Use external 2.4GHz antenna
 
-```
-=== PERFORMANCE METRICS ===
-Sample Rate: 10.0 Hz (target: 10 Hz)
-Sensor I2C Read: 15234 µs (15.2 ms)
-BLE Notify: 1234 µs (1.2 ms)
-Loop Time: 156 µs (0.2 ms)
-Max Loop: 16890 µs (16.9 ms)
-CPU Usage: 16.9%
-CPU Temp: 45.3°C
-Free Heap: 254332 bytes
-Total Overhead: 16468 µs (16.5 ms)
-Available Time @10Hz: 83.5 ms
-Max Theoretical Hz: 60.7 Hz
-==========================
-```
-
-**Key Metrics:**
-- **Sensor I2C Read**: Measures I2C communication bottleneck
-- **BLE Notify**: Time to pack and send notification
-- **CPU Temp**: ESP32 internal temperature (thermal monitoring)
-- **Max Theoretical Hz**: Calculated maximum achievable frequency
-- **Available Time**: Slack time at current sample rate
-
-**Overhead**: ~200-300µs per report (0.006% at 5s intervals - negligible)
-
-**Production Considerations**:
-- **Keep for Beta/Testing**: Critical for validating 50-100Hz optimizations and field diagnostics
-- **Add Compile Flag**: Wrap in `#ifdef ENABLE_PROFILING` for release builds
-- **Future**: Add BLE broadcast characteristic for app-visible diagnostics (optional)
-
-## Performance Optimizations (v2.0)
-
-### What Changed
-- **I2C Speed**: 100kHz → 400kHz (4x faster sensor reads)
-- **Logging Removed**: All runtime BLE event logging removed
-- **Battery Reads**: Reduced from 10Hz to 1Hz (battery changes slowly)
-- **Profiling Added**: Built-in benchmarking for optimization work
-
-### Measured Performance (Real-World Data)
-
-**Actual Metrics @ 10Hz (BLE streaming to phone):**
-```
-Sensor I2C Read: 2.5-3.9ms  (expected ~15ms - 5-10x better!)
-BLE Notify:      0.3-0.4ms   (essentially free)
-Loop Time:       2µs         (negligible)
-Max Loop Time:   7.3-7.4ms   (occasional peaks)
-Total Overhead:  2.9-5.2ms   (using only 3-5% of available time)
-CPU Usage:       0.0%        (loop so fast it barely registers)
-CPU Temp:        52-53°C     (normal ESP32 operating temperature)
-Free Heap:       126KB       (plenty of RAM for buffering)
-Available Time:  95-97ms     (95-97% headroom at 10Hz!)
-Max Theoretical: 192-346Hz   (based on pure overhead)
-```
-
-**Why I2C is SO Much Faster:**
-- The 400kHz I2C change delivered a **15-30x improvement** (not just 4x!)
-- Actual: 2.5-3.9ms vs predicted 15ms
-- This suggests Adafruit library overhead was minimal
-- Raw I2C speed was the primary bottleneck
-
-### Path to 50Hz
-✅✅✅ **TRIVIAL - Ready NOW**
-- Period: 20ms
-- Overhead: ~3-5ms
-- **Headroom: 15-17ms (75-85% slack!)**
-- CPU usage will remain negligible
-- Thermal: Expect 53-55°C (no concern)
-- **Action**: Change `SAMPLE_INTERVAL_MS` to 20 and test
-
-### Path to 100Hz
-✅✅ **VERY ACHIEVABLE**
-- Period: 10ms
-- Overhead: ~3-5ms
-- **Headroom: 5-7ms (50-70% slack)**
-- CPU will still be mostly idle
-- Thermal: Expect 55-60°C (acceptable)
-- **Action**: Test after 50Hz validation
-
-### Path to 200Hz
-⚠️ **THEORETICALLY POSSIBLE** (but BLE-limited)
-- Period: 5ms
-- Overhead: ~3-5ms
-- Headroom: 0-2ms (tight but technically possible)
-- **Bottleneck**: BLE connection interval (7.5-30ms typical)
-- Would require BLE connection interval optimization
-- May need packet buffering to handle BLE latency
-
-## File Structure
-
-```
-sensor_notify/
-├── sensor_notify.ino      # Complete firmware (single file)
-└── README.md              # This file
-```
-
-**Note**: v2.0 uses a single-file architecture for simplicity. Previous modular structure (config.h, sensor_manager, ble_server) was consolidated.
-
-## Next Steps
-
-1. **Test BLE connection** with Android app
-2. **Verify data streaming** at 50Hz
-3. **Calibrate sensor** for accurate readings
-4. **Monitor battery** during extended use
-5. **Optimize** for your use case
-
-## Support
-
-For issues or questions:
-- Check Serial Monitor output at 115200 baud
-- Review troubleshooting section above
-- Verify hardware connections
-- Check library versions
+2. **GPIO 13 Shared**: Status LED and NeoPixel data on same pin
+   - **Impact**: Simple digitalWrite() no longer works for status
+   - **Solution**: NeoPixel center LED now serves as status indicator
 
 ## License
 

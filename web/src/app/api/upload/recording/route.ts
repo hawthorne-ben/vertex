@@ -211,43 +211,96 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Create recording metadata record
-    const { data: recordingRecord, error: insertError } = await supabase
+    // Check if a recording with this filename already exists for this user
+    const { data: existingRecording } = await supabase
       .from('recordings')
-      .insert({
-        id: recordingId,
-        user_id: userId,
-        filename: fileName,
-        file_type: fileType,
-        storage_path: finalPath,
-        file_size_bytes: fileSize,
-        start_time: metadata.startTime,
-        end_time: metadata.endTime,
-        duration_ms: metadata.durationMs,
-        data_ranges: dataRanges,
-        gap_info: gapInfo,
-        sample_rate: metadata.sampleRate,
-        sample_count: metadata.sampleCount,
-        record_format: metadata.recordFormat,
-        device_info: metadata.deviceInfo,
-        session_metadata: metadata.sessionMetadata,
-        status: fileType === 'vtx' ? 'ready' : 'uploaded', // VTX is ready immediately, FIT needs parsing
-      })
-      .select()
+      .select('id, storage_path')
+      .eq('user_id', userId)
+      .eq('filename', fileName)
       .single()
 
-    if (insertError) {
-      console.error('Error creating recording record:', insertError)
+    let recordingRecord: any
 
-      // Clean up uploaded file
-      await supabase.storage
+    if (existingRecording) {
+      console.log(`📝 Overwriting existing recording: ${fileName}`)
+
+      // Delete old file from storage
+      if (existingRecording.storage_path) {
+        await supabase.storage
+          .from('recordings')
+          .remove([existingRecording.storage_path])
+      }
+
+      // Update existing record
+      const { data: updated, error: updateError } = await supabase
         .from('recordings')
-        .remove([finalPath])
+        .update({
+          storage_path: finalPath,
+          file_size_bytes: fileSize,
+          start_time: metadata.startTime,
+          end_time: metadata.endTime,
+          duration_ms: metadata.durationMs,
+          data_ranges: dataRanges,
+          gap_info: gapInfo,
+          sample_rate: metadata.sampleRate,
+          sample_count: metadata.sampleCount,
+          record_format: metadata.recordFormat,
+          device_info: metadata.deviceInfo,
+          session_metadata: metadata.sessionMetadata,
+          status: fileType === 'vtx' ? 'ready' : 'uploaded',
+          error_message: null,
+          uploaded_at: new Date().toISOString(),
+        })
+        .eq('id', existingRecording.id)
+        .select()
+        .single()
 
-      return NextResponse.json(
-        { error: 'Failed to create recording record' },
-        { status: 500 }
-      )
+      if (updateError) {
+        console.error('Error updating recording record:', updateError)
+        await supabase.storage.from('recordings').remove([finalPath])
+        return NextResponse.json(
+          { error: 'Failed to update recording record' },
+          { status: 500 }
+        )
+      }
+
+      recordingRecord = updated
+    } else {
+      // Create new recording record
+      const { data: inserted, error: insertError } = await supabase
+        .from('recordings')
+        .insert({
+          id: recordingId,
+          user_id: userId,
+          filename: fileName,
+          file_type: fileType,
+          storage_path: finalPath,
+          file_size_bytes: fileSize,
+          start_time: metadata.startTime,
+          end_time: metadata.endTime,
+          duration_ms: metadata.durationMs,
+          data_ranges: dataRanges,
+          gap_info: gapInfo,
+          sample_rate: metadata.sampleRate,
+          sample_count: metadata.sampleCount,
+          record_format: metadata.recordFormat,
+          device_info: metadata.deviceInfo,
+          session_metadata: metadata.sessionMetadata,
+          status: fileType === 'vtx' ? 'ready' : 'uploaded',
+        })
+        .select()
+        .single()
+
+      if (insertError) {
+        console.error('Error creating recording record:', insertError)
+        await supabase.storage.from('recordings').remove([finalPath])
+        return NextResponse.json(
+          { error: 'Failed to create recording record' },
+          { status: 500 }
+        )
+      }
+
+      recordingRecord = inserted
     }
 
     // For FIT files, trigger parsing via Inngest

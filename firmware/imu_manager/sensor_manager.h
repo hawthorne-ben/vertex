@@ -56,12 +56,20 @@ public:
   // Get reference to BNO055 (for calibration commands)
   Adafruit_BNO055& getBNO055();
 
+  // Brake detection
+  bool isBraking() const;
+
 private:
   Adafruit_BNO055 bno;
   SensorData sensorData;
   unsigned long lastSampleTime;
   unsigned long sampleIntervalMs;
   unsigned long lastReadTime;
+
+  // Brake detection state
+  unsigned long brakeDetectedTime;
+  unsigned long brakeStartTime;
+  bool brakingState;
 
   // Helper function to normalize angles to [-180, 180] range
   static float normalizeAngle(float angle);

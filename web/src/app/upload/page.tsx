@@ -143,7 +143,7 @@ export default function UploadPage() {
     setCurrentFileIndex(0)
 
     const supabase = createClient()
-    
+
     // Get current user
     const { data: { user }, error: authError } = await supabase.auth.getUser()
     if (authError || !user) {
@@ -153,6 +153,8 @@ export default function UploadPage() {
     }
 
     const uploadedFileIds: string[] = []
+    let hasFitFiles = false
+    let hasVtxFiles = false
 
     try {
       for (let i = 0; i < selectedFiles.length; i++) {
@@ -189,6 +191,14 @@ export default function UploadPage() {
             console.log(`⏭️ Skipping progress update: ${overallProgress.toFixed(1)}% <= ${lastProgress.toFixed(1)}%`)
           }
         })
+
+        // Track file type
+        const fileName = file?.name.toLowerCase() || ''
+        if (fileName.endsWith('.fit')) {
+          hasFitFiles = true
+        } else if (fileName.endsWith('.vtx')) {
+          hasVtxFiles = true
+        }
 
         // For chunked uploads, the fileId is returned directly
         // For direct uploads, call the recording API to process the file
@@ -236,8 +246,15 @@ export default function UploadPage() {
 
       // Use setTimeout to ensure state updates are flushed before navigation
       setTimeout(() => {
-        // Redirect to recordings page to view recordings
-        router.push('/recordings')
+        // Redirect based on file type
+        // If only FIT files, go to rides page
+        // If only VTX files, go to recordings page
+        // If mixed, prefer rides page (FIT files are more immediately useful)
+        if (hasFitFiles) {
+          router.push('/rides')
+        } else {
+          router.push('/recordings')
+        }
       }, 0)
 
     } catch (err) {

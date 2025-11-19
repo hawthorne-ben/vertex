@@ -212,8 +212,17 @@ void BLEManager::init() {
   pAdvertising->setScanResponse(true);
   pAdvertising->setMinPreferred(0x06);
   pAdvertising->setMinPreferred(0x12);
+
+  // Explicitly set the advertised name (critical for discovery!)
+  BLEAdvertisementData advertisementData;
+  advertisementData.setName(BLE_DEVICE_NAME);
+  advertisementData.setCompleteServices(BLEUUID(SERVICE_UUID));
+  pAdvertising->setAdvertisementData(advertisementData);
+
   BLEDevice::startAdvertising();
   Serial.println("[BLE] Advertising started");
+  Serial.print("[BLE] Device name: ");
+  Serial.println(BLE_DEVICE_NAME);
 
   String address = BLEDevice::getAddress().toString().c_str();
   Serial.print("[BLE] Device address: ");

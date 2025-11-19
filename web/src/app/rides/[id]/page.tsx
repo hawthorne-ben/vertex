@@ -4,6 +4,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Bike, Clock, MapPin, TrendingUp, Zap, Heart, Activity } from 'lucide-react'
 import { AddVtxDataButton } from '@/components/add-vtx-data-button'
 import { RideMapClient } from '@/components/ride-map-client'
+import { RideChartsClient } from '@/components/ride-charts-client'
 import { formatDurationFromSeconds } from '@/lib/utils/format-duration'
 
 export default async function RideDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -157,6 +158,16 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
           </Card>
         )}
       </div>
+
+      {/* Performance Charts & Elevation Profile */}
+      {fitRecording && (
+        <div className="mb-8">
+          <RideChartsClient
+            rideId={id}
+            fitRecordingId={fitRecording.id}
+          />
+        </div>
+      )}
 
       {/* FIT File Metadata */}
       {fitRecording && (

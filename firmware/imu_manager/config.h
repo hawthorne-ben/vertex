@@ -30,6 +30,14 @@
 #define USER_BUTTON_PIN 38
 #define BATTERY_PIN 35
 
+// ===== NeoPixel Configuration =====
+#define NEOPIXEL_DATA_PIN 13           // GPIO 13 (shares with status LED)
+#define NEOPIXEL_NUM_PIXELS 7          // NeoPixel Jewel 7
+#define NEOPIXEL_UPDATE_INTERVAL_MS 100  // 100ms per LED for rotating pattern
+#define NEOPIXEL_OUTER_LED_MIN 1       // Skip center LED (LED 0)
+#define NEOPIXEL_OUTER_LED_MAX 6       // Outer ring: LEDs 1-6
+#define NEOPIXEL_RED_BRIGHTNESS 255    // Full brightness for red tail light
+
 // ===== Battery Configuration =====
 #define BATTERY_VOLTAGE_DIVIDER 2.0  // Feather has 2:1 voltage divider
 #define BATTERY_READ_INTERVAL_MS 1000  // Read battery once per second
@@ -73,5 +81,10 @@ extern const char* LED_MODE_NAMES[];
 // ===== LED Blink Intervals =====
 #define LED_BLINK_DISCONNECTED 1000  // Slow blink when waiting for connection
 #define LED_BLINK_CONNECTED 100      // Fast blink when connected
+
+// ===== Brake Detection Configuration =====
+#define BRAKE_ACCEL_THRESHOLD 3.0    // 3g threshold for braking detection (m/s² * 9.81)
+#define BRAKE_DEBOUNCE_MS 250        // 250ms debounce (6-7 samples at 25Hz)
+#define BRAKE_DISPLAY_DURATION_MS 2000  // Show brake light for 2 seconds
 
 #endif // CONFIG_H

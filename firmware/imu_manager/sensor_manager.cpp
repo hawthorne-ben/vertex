@@ -10,7 +10,10 @@ SensorManager::SensorManager()
   : bno(Adafruit_BNO055(55)),
     lastSampleTime(0),
     sampleIntervalMs(DEFAULT_SAMPLE_INTERVAL_MS),
-    lastReadTime(0) {
+    lastReadTime(0),
+    brakeDetectedTime(0),
+    brakeStartTime(0),
+    brakingState(false) {
 
   // Initialize sensor data to zero
   memset(&sensorData, 0, sizeof(SensorData));
@@ -113,6 +116,33 @@ bool SensorManager::update() {
   sensorData.cal_gyro = gyro_cal;
   sensorData.cal_accel = accel_cal;
 
+  // Brake detection: check if X-axis acceleration exceeds threshold
+  // Note: VECTOR_LINEARACCEL is already gravity-compensated
+  float accel_magnitude_x = fabs(accel.x());
+
+  if (accel_magnitude_x > BRAKE_ACCEL_THRESHOLD) {
+    // High acceleration detected
+    if (brakeStartTime == 0) {
+      brakeStartTime = now;  // Start timing
+    } else if (now - brakeStartTime >= BRAKE_DEBOUNCE_MS) {
+      // Sustained for debounce period - trigger brake light
+      if (!brakingState) {
+        brakingState = true;
+        brakeDetectedTime = now;
+        Serial.printf("[BRAKE] Detected! Accel: %.2f g\n", accel_magnitude_x / 9.81);
+      }
+    }
+  } else {
+    // Below threshold - reset debounce timer
+    brakeStartTime = 0;
+  }
+
+  // Check if brake display duration expired
+  if (brakingState && (now - brakeDetectedTime >= BRAKE_DISPLAY_DURATION_MS)) {
+    brakingState = false;
+    Serial.println("[BRAKE] Display ended");
+  }
+
   lastSampleTime = now;
   return true;
 }
@@ -159,4 +189,8 @@ unsigned long SensorManager::getLastReadTime() const {
 
 Adafruit_BNO055& SensorManager::getBNO055() {
   return bno;
+}
+
+bool SensorManager::isBraking() const {
+  return brakingState;
 }

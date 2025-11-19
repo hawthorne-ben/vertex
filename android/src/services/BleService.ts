@@ -153,6 +153,8 @@ class BleService {
         }
 
         if (device) {
+          // Log EVERY device discovered for debugging
+          console.log('[BLE SCAN] Device found:', device.name || 'UNNAMED', 'ID:', device.id);
           onDeviceFound(device);
         }
       });
