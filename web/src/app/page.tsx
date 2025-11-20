@@ -193,12 +193,10 @@ export default function Home() {
             <div className="max-w-xl">
               <div className="bg-card/95 backdrop-blur-sm rounded-lg p-5 sm:p-6 md:p-8 shadow-2xl">
                 <h2 className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-light tracking-tight leading-tight mb-3 sm:mb-4 text-card-foreground">
-                  Measure how <em>well</em> you ride
+                  Modern telemetry for a modern rider
                 </h2>
                 <p className="text-sm sm:text-base md:text-lg text-muted-foreground leading-relaxed mb-3 sm:mb-4">
-                  Cycling is a technical sport, but standard cycling computers can only measure how <em>hard</em> you&apos;re riding.
-                  Vertex measures stability, braking smoothness, cornering technique, traction limits,
-                  and comfort with precision, high frequency, 9 axis motion analysis.
+                  Power meters tell you how hard you push. Vertex tells you how well you ride. The world's first specialized cycling dynamics processor.
                 </p>
                 <p className="text-xs sm:text-sm bg-primary/10 text-primary px-3 py-2 rounded-md mb-5 sm:mb-6 border border-primary/20">
                   Currently in private beta • Invite-only access
@@ -302,7 +300,7 @@ export default function Home() {
               <div className="text-xs sm:text-sm text-secondary font-medium mb-2">STEP 1</div>
               <h4 className="text-lg sm:text-xl font-medium mb-2 sm:mb-3">Ride & Record</h4>
               <p className="text-sm sm:text-base text-secondary leading-relaxed">
-                Mount the Vertex logger on your bike. Records and broadcasts 100Hz motion data during your ride—no cables, no SD cards to manage.
+                Mount the Vertex logger on your bike. Records and broadcasts high frequency motion data during your ride.
               </p>
             </div>
 
@@ -432,7 +430,7 @@ export default function Home() {
                     <svg className="w-16 sm:w-20 h-16 sm:h-20 mx-auto text-secondary mb-3 sm:mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
                     </svg>
-                    <p className="text-xs sm:text-sm text-secondary">IMU Logger on Bike</p>
+                    <p className="text-xs sm:text-sm text-secondary">Vertex Sensor on Bike</p>
                     <p className="text-xs text-secondary mt-1 sm:mt-2">Product photo placeholder</p>
                   </div>
                 </div>
@@ -441,43 +439,36 @@ export default function Home() {
                 <div>
                   <h3 className="text-2xl sm:text-3xl font-light mb-4 sm:mb-6">Custom IMU Data Logger</h3>
                   <p className="text-sm sm:text-base text-secondary mb-5 sm:mb-6 leading-relaxed">
-                    Vertex works with a custom IMU data logger designed specifically for cycling motion analysis.
+                    Vertex works with a custom IMU data logger designed specifically for cycling dynamics analysis.
                   </p>
                   
                   <div className="space-y-2.5 sm:space-y-3 mb-6 sm:mb-8">
                     <div className="flex items-start gap-2 sm:gap-3">
                       <div className="text-secondary mt-1 text-sm sm:text-base">•</div>
                       <div>
-                        <span className="font-medium text-sm sm:text-base">BNO055 9-axis IMU sensor</span>
+                        <span className="font-medium text-sm sm:text-base">High-Fidelity Motion Fusion</span>
                         <p className="text-xs sm:text-sm text-secondary">Accelerometer, gyroscope, and magnetometer</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-2 sm:gap-3">
                       <div className="text-secondary mt-1 text-sm sm:text-base">•</div>
                       <div>
-                        <span className="font-medium text-sm sm:text-base">100Hz sampling rate</span>
-                        <p className="text-xs sm:text-sm text-secondary">High-frequency capture for precise analysis</p>
+                        <span className="font-medium text-sm sm:text-base">25Hz sampling rate</span>
+                        <p className="text-xs sm:text-sm text-secondary">Industrial-grade capture rate for precise cornering analysis</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-2 sm:gap-3">
                       <div className="text-secondary mt-1 text-sm sm:text-base">•</div>
                       <div>
-                        <span className="font-medium text-sm sm:text-base">Bluetooth Low Energy streaming</span>
-                        <p className="text-xs sm:text-sm text-secondary">Real-time data transfer to your phone—no SD cards</p>
+                        <span className="font-medium text-sm sm:text-base">Zero-config wireless</span>
+                        <p className="text-xs sm:text-sm text-secondary">Auto-connects via BLE. No cables, no pairing headaches</p>
                       </div>
                     </div>
                     <div className="flex items-start gap-2 sm:gap-3">
                       <div className="text-secondary mt-1 text-sm sm:text-base">•</div>
                       <div>
-                        <span className="font-medium text-sm sm:text-base">Mobile app integration</span>
-                        <p className="text-xs sm:text-sm text-secondary">Basic analysis on-device, cloud upload for deep processing</p>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-2 sm:gap-3">
-                      <div className="text-secondary mt-1 text-sm sm:text-base">•</div>
-                      <div>
-                        <span className="font-medium text-sm sm:text-base">10-15 hour battery life</span>
-                        <p className="text-xs sm:text-sm text-secondary">USB-C rechargeable</p>
+                        <span className="font-medium text-sm sm:text-base">All-Day Endurance</span>
+                        <p className="text-xs sm:text-sm text-secondary">15+ hour battery life for the longest days in the saddle</p>
                       </div>
                     </div>
                   </div>
@@ -490,7 +481,7 @@ export default function Home() {
                       <div>
                         <p className="font-medium text-warning-foreground text-xs sm:text-sm mb-1">Hardware Status: In Development</p>
                         <p className="text-xs sm:text-sm text-warning-foreground">
-                          The IMU logger hardware is currently in development. Join the waitlist to be notified when pre-orders open.
+                          The Vertex Sensor hardware is currently in development. Join the waitlist to be notified when pre-orders open.
                         </p>
                       </div>
                     </div>
@@ -618,26 +609,15 @@ export default function Home() {
                     Supabase PostgreSQL, Supabase Auth, Inngest, AWS S3
                   </p>
                 </div>
-                <div className="sm:col-span-2 md:col-span-1">
-                  <h4 className="text-xs sm:text-sm font-medium text-secondary uppercase tracking-wide mb-2 sm:mb-3">
-                    Hardware
-                  </h4>
-                  <p className="text-xs sm:text-sm text-secondary">
-                    ESP32, BNO055 IMU, SD Storage, 3D Printed Enclosure
-                  </p>
-                </div>
               </div>
               <div className="mt-6 sm:mt-8 pt-6 sm:pt-8 border-t border-border text-center">
                 <a 
-                  href="https://github.com/hawthorne-ben/vertex" 
+                  href="https://lab.ridevertex.com" 
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-2 text-xs sm:text-sm text-secondary hover:text-primary transition-colors"
                 >
-                  <svg className="w-4 sm:w-5 h-4 sm:h-5" fill="currentColor" viewBox="0 0 24 24">
-                    <path fillRule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clipRule="evenodd" />
-                  </svg>
-                  View on GitHub
+                  Watch the process
                 </a>
               </div>
             </div>
@@ -652,9 +632,6 @@ export default function Home() {
             <p className="text-center md:text-left">© {new Date().getFullYear()} Vertex. Beta platform in development.</p>
             <div className="flex gap-4 sm:gap-6">
               <a href="#faq" className="hover:text-primary transition-colors">FAQ</a>
-              <a href="https://github.com/hawthorne-ben/vertex" target="_blank" rel="noopener noreferrer" className="hover:text-primary transition-colors">
-                GitHub
-              </a>
             </div>
           </div>
         </div>
