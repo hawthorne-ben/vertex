@@ -1,146 +1,179 @@
-# BNO055 Firmware
+# Vertex IMU Firmware
 
-This directory contains firmware for the Adafruit BNO055 IMU sensor running on the Adafruit Feather ESP32 V2.
-
-## Firmware Sketches
-
-### Testing/Development
-- **bno055_validation.ino** - Basic sensor validation sketch (Serial Monitor output)
-- **bno055_webserver.ino** - Web server with real-time dashboard UI (development version)
-
-### Production
-- **bno055_dual_mode/** - Complete dual-mode firmware (charging/logging modes)
-  - See `bno055_dual_mode/README.md` for full documentation
-
-## Documentation Files
-
-- **BNO055_CONNECTION_GUIDE.md** - Complete wiring and connection guide
-- **TROUBLESHOOTING.md** - STEMMA QT connection troubleshooting
-- **CALIBRATION_GUIDE.md** - Sensor calibration instructions
-- **SENSOR_EXPLAINED.md** - Understanding BNO055 data
-- **I2C_TROUBLESHOOTING.md** - I2C error handling and recovery
-- **DUAL_MODE_DESIGN.md** - Dual-mode architecture documentation
+ESP32-based BLE streaming firmware for cycling dynamics analysis.
 
 ## Quick Start
 
-### 1. Install Required Libraries
+```bash
+# Navigate to firmware directory
+cd firmware/imu_manager
 
-In Arduino IDE, install these libraries:
-- **Adafruit BNO055** (by Adafruit)
-- **Adafruit Unified Sensor** (by Adafruit)
+# Compile
+arduino-cli compile --fqbn esp32:esp32:adafruit_feather_esp32_v2 imu_manager.ino
 
-Via Sketch → Include Library → Manage Libraries
+# Upload (adjust port as needed)
+arduino-cli upload \
+  --fqbn esp32:esp32:adafruit_feather_esp32_v2 \
+  --port /dev/cu.usbserial-XXXXXXXX \
+  --upload-property upload.speed=115200 \
+  imu_manager.ino
 
-### 2. Hardware Setup
+# Monitor
+arduino-cli monitor --port /dev/cu.usbserial-XXXXXXXX --config baudrate=115200
+```
 
-Connect BNO055 to Feather ESP32 V2 using STEMMA QT cable:
-- Cable plugs directly into both devices
-- No additional wiring needed
-- Sensor has pull-up resistors built-in
+## What It Does
 
-See `BNO055_CONNECTION_GUIDE.md` for detailed wiring info.
+The Vertex IMU Manager streams high-frequency motion data from a BNO055 9-axis sensor over Bluetooth LE to the Vertex Android app. It includes:
 
-### 3. Upload Firmware
+- **25Hz IMU streaming** - Euler angles, acceleration, gyroscope data
+- **Integrated tail light** - 7-LED NeoPixel with automatic brake detection
+- **Battery management** - Voltage monitoring and auto-shutdown protection
+- **Wireless configuration** - Adjust sample rate and LED modes via BLE
 
-1. Open Arduino IDE
-2. Select Board: **Tools → Board → ESP32 Arduino → Adafruit Feather ESP32 V2**
-3. Select Port: **Tools → Port → [your COM port]**
-4. Open one of the sketches (`bno055_webserver.ino` recommended)
-5. Upload (Ctrl+U or Upload button)
+## Hardware
 
-## Testing the Web Server
+- **Microcontroller**: Adafruit Feather ESP32 V2
+- **Sensor**: BNO055 9-DOF IMU (via I2C STEMMA port)
+- **Tail Light**: NeoPixel Jewel 7
+- **Battery**: 3.7V LiPo (500-2500mAh)
+- **Power**: 3.7V to 5V boost converter for NeoPixels
 
-### Step-by-Step Instructions
+See [README_FIRMWARE.md](./README_FIRMWARE.md) for complete wiring diagrams.
 
-1. **Upload the sketch** (`bno055_webserver.ino`)
+## Development Setup
 
-2. **Open Serial Monitor** (115200 baud) to see startup messages:
-   ```
-   ========================================
-       BNO055 Web Server
-   ========================================
-   
-   [SETUP] Initializing sensor... OK
-   [SETUP] Starting WiFi access point... OK
-   [INFO] Access Point: IMU_Logger
-   [INFO] Password: vertex123
-   [INFO] IP Address: 192.168.4.1
-   [INFO] Web server started!
-   
-   ========================================
-   Ready! Connect to WiFi 'IMU_Logger'
-   and visit http://192.168.4.1
-   ========================================
-   ```
+### Install Arduino CLI
 
-3. **On your phone/laptop**, connect to WiFi network:
-   - Network: **IMU_Logger**
-   - Password: **vertex123**
+```bash
+brew install arduino-cli  # macOS
+```
 
-4. **Open a web browser** and navigate to:
-   - http://192.168.4.1
+### Install Dependencies
 
-5. **You should see** a beautiful real-time dashboard with:
-   - Live sensor data updating every 100ms
-   - Orientation (Roll, Pitch, Yaw)
-   - Acceleration data
-   - Gyroscope data
-   - Calibration status
-   - Quaternion values
-   - Connection status indicator
+```bash
+arduino-cli core install esp32:esp32
+arduino-cli lib install "Adafruit BNO055"
+arduino-cli lib install "Adafruit Unified Sensor"
+arduino-cli lib install "Adafruit NeoPixel"
+```
 
-6. **Test the sensor** by moving it around - all values should update in real-time
+## Documentation
 
-### What You'll See
+- **[README_FIRMWARE.md](./README_FIRMWARE.md)** - Complete firmware documentation
+- **[imu_manager/README.md](./imu_manager/README.md)** - Detailed module documentation
+- **[BNO055_CONNECTION_GUIDE.md](./BNO055_CONNECTION_GUIDE.md)** - Wiring guide
+- **[HOW_TO_CALIBRATE.md](./HOW_TO_CALIBRATE.md)** - Sensor calibration
+- **[I2C_TROUBLESHOOTING.md](./I2C_TROUBLESHOOTING.md)** - I2C debugging
+- **[SENSOR_EXPLAINED.md](./SENSOR_EXPLAINED.md)** - Understanding BNO055 data
+- **[TROUBLESHOOTING.md](./TROUBLESHOOTING.md)** - General troubleshooting
+- **[BATTERY_VOLTAGE_DIAGNOSIS.md](./BATTERY_VOLTAGE_DIAGNOSIS.md)** - Battery issues
 
-The dashboard displays:
+## Configuration
 
-- **📐 Orientation**: Roll, Pitch, Yaw angles in degrees
-- **⚡ Acceleration**: Linear acceleration (gravity removed) in m/s²
-- **🌀 Gyroscope**: Rotation rates in rad/s
-- **✅ Calibration**: Status (0-3) for System, Gyro, Accel, Magnetometer
-- **🔢 Quaternion**: Complete orientation representation
-- **ℹ️ Info**: Uptime and last update timestamp
+All settings are in `imu_manager/config.h`:
 
-### Troubleshooting
+```cpp
+#define BLE_DEVICE_NAME "Vertex-IMU"          // BLE device name
+#define DEFAULT_SAMPLE_INTERVAL_MS 40         // 25Hz default
+#define NEOPIXEL_NUM_PIXELS 7                 // Number of LEDs
+#define BATTERY_CUTOFF_VOLTAGE 3.2            // Auto-shutdown voltage
+#define BRAKE_ACCEL_THRESHOLD 3.0             // Brake detection (g-force)
+```
 
-**Can't connect to WiFi:**
-- Make sure you're connecting to "IMU_Logger" (not looking for it to join your network)
-- Password is case-sensitive: "vertex123"
-- Check Serial Monitor for IP address
+## Features
 
-**Sensor not detected:**
-- Verify STEMMA QT cable is fully plugged into both devices
-- Check power - ensure battery is charged or USB is connected
-- See `BNO055_CONNECTION_GUIDE.md` for wiring details
+### BLE Streaming
+- Real-time sensor data at 25Hz (adjustable 1-50Hz)
+- 47-byte binary packets for efficiency
+- Automatic MTU negotiation (185 bytes)
+- Connection status monitoring
 
-**Page loads but data doesn't update:**
-- Check Serial Monitor for errors
-- Try refreshing the page
-- Ensure you're connected to the IMU_Logger WiFi network
+### Tail Light
+- 7-LED visual status indication
+- Automatic brake detection (3.0g threshold)
+- Attention-grabbing strobe pattern during braking
+- Configurable modes: Off / Status / Always-on
 
-**All values are zero:**
-- Move the sensor to initiate calibration
-- Wait a few seconds for calibration to complete
-- Look for calibration values > 0
+### Power Management
+- Battery voltage monitoring (every 1 second)
+- Critical battery auto-shutdown (3.2V)
+- User button shutdown (hold 2+ seconds)
+- Deep sleep mode with wake-on-reset
 
-For more help, see `TROUBLESHOOTING.md`
+## Battery Life
 
-## Next Steps
+| Capacity | With NeoPixels | LEDs Off |
+|----------|---------------|----------|
+| 500mAh   | ~5-8 hours    | ~6-10 hours |
+| 1200mAh  | ~12-19 hours  | ~15-24 hours |
+| 2500mAh  | ~25-40 hours  | ~31-50 hours |
 
-Once the web server is working:
+## BLE Protocol
 
-1. **Test sensor accuracy** by placing it in known orientations
-2. **Monitor calibration status** - ensure all sensors reach 3
-3. **Check data quality** - move sensor slowly and watch for smooth updates
-4. **Proceed to data logging** implementation
+**Service UUID**: `12345678-1234-5678-1234-56789abcdef0`
 
-## Architecture
+**Sensor Data Characteristic** (NOTIFY + READ):
+- UUID: `12345678-1234-5678-1234-56789abcdef1`
+- 47 bytes: timestamp, euler, accel, gyro, calibration, battery
 
-The web server uses:
-- **WiFi Access Point mode**: ESP32 creates its own network
-- **WebServer library**: Built-in HTTP server
-- **JSON API**: `/data` endpoint returns sensor data
-- **Modern UI**: Responsive CSS with live updates via JavaScript
+**Configuration Characteristic** (WRITE):
+- UUID: `12345678-1234-5678-1234-56789abcdef2`
+- Commands: Set sample rate, LED mode, power mode, reset
 
-The sketch updates sensor data at 10Hz and serves it to browsers on request.
+See [README_FIRMWARE.md](./README_FIRMWARE.md) for complete protocol specification.
+
+## Project Structure
+
+```
+firmware/
+├── imu_manager/              # Main firmware (current/active)
+│   ├── imu_manager.ino       # Arduino sketch entry point
+│   ├── config.h              # All configuration constants
+│   ├── ble_manager.h/cpp     # BLE GATT server
+│   ├── sensor_manager.h/cpp  # BNO055 interface
+│   ├── power_manager.h/cpp   # Battery and shutdown
+│   ├── neopixel_manager.h/cpp # LED control and brake detection
+│   └── performance.h/cpp     # Performance monitoring
+├── README.md                 # This file
+├── README_FIRMWARE.md        # Complete firmware documentation
+└── [documentation files]     # Additional guides
+```
+
+## Troubleshooting
+
+**Sensor not detected**:
+- Check I2C wiring (SDA=GPIO22, SCL=GPIO23)
+- Verify 3.3V power supply
+- Ensure I2C address is 0x28
+
+**BLE connection issues**:
+- Attach external 2.4GHz antenna
+- NeoPixels cause RF interference without antenna
+- Check device name is "Vertex-IMU"
+
+**NeoPixels not working**:
+- Verify 5V boost converter is connected
+- Check data line to GPIO 13
+- Ensure common ground
+
+See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for more help.
+
+## Compilation Stats
+
+```
+Program storage: 1,180,619 bytes (35% of 3.3MB flash)
+RAM usage:          42,092 bytes (12% of 320KB)
+```
+
+Plenty of headroom for additional features and sensors.
+
+## Version
+
+Current firmware version: **v0.3.0**
+
+See [CHANGELOG.md](./CHANGELOG.md) for version history.
+
+## License
+
+MIT License - See main project LICENSE file
