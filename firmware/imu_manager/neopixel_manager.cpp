@@ -407,10 +407,10 @@ void NeoPixelManager::showShutdown() {
     return;
   }
 
-  // Set all 7 LEDs to red at 10% brightness (25/255)
-  uint32_t shutdownColor = pixels.Color(25, 0, 0);
-  setAllPixels(shutdownColor);
+  // Turn off all LEDs completely (sleep mode)
+  uint32_t offColor = pixels.Color(0, 0, 0);
+  setAllPixels(offColor);
   pixels.show();
 
-  Serial.println("[NEOPIXEL] Shutdown visual displayed (all LEDs red 10%)");
+  Serial.println("[NEOPIXEL] LEDs turned off for sleep mode");
 }

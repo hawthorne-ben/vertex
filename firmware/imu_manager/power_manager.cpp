@@ -116,7 +116,7 @@ void PowerManager::shutdown(const char* reason) {
   Serial.println("[POWER] Entering deep sleep mode");
   Serial.println("[POWER] Press RESET button to wake\n");
 
-  // Show shutdown visual on NeoPixels (all LEDs red 10%)
+  // Turn off all NeoPixels for sleep mode
   neopixelManager.showShutdown();
 
   // Turn off LED

@@ -64,17 +64,18 @@ DIN     →  GPIO 13 (data)
 
 MiniBoost  →  Connections
 --------------------------
-VIN     →  LiPo BAT+ (3.7V)
-GND     →  LiPo BAT- / common GND
+VIN     →  Feather BAT pin (3.7V from LiPo)
+GND     →  Common GND
 VOUT    →  NeoPixel 5V
+EN      →  VIN (always on) OR GPIO 27 (software control, recommended)
 
-LiPo Battery  →  Connections
------------------------------
-BAT+    →  Feather BAT, MiniBoost VIN (parallel)
-BAT-    →  Common GND
+Power Distribution
+------------------
+Battery (+) → Feather BAT pin → MiniBoost VIN
+Battery (-) → Common GND
 ```
 
-**Note**: Use screw terminal blocks or perma-proto board to split battery connections cleanly.
+**Note**: Connect battery to Feather BAT pin, then tap MiniBoost VIN from the same BAT connection point. Use screw terminal blocks or perma-proto board for clean connections.
 
 ## NeoPixel Visual Feedback
 

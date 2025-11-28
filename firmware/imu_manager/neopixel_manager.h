@@ -48,7 +48,7 @@ public:
   // Set error state
   void setError(bool error) { errorState = error; }
 
-  // Show shutdown visual (all LEDs red at 10% brightness)
+  // Show shutdown visual (turn off all LEDs)
   void showShutdown();
 
 private:

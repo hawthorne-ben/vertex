@@ -44,6 +44,8 @@ ESP32-based firmware for the BNO055 IMU sensor with multiple operating modes.
 **Microcontroller**: Adafruit Feather ESP32 V2
 **Sensor**: BNO055 9-DOF Absolute Orientation IMU
 **Battery**: 3.7V LiPo (500-2500mAh)
+**Indicator**: NeoPixel LED strip
+**Power Management**: 3.7V to 5V boost converter for NeoPixels
 
 ### Wiring
 
@@ -52,9 +54,34 @@ BNO055  →  Feather ESP32 V2
 ----------------------------
 VIN     →  3V (3.3V power)
 GND     →  GND
-SDA     →  GPIO 22
-SCL     →  GPIO 23
+SDA     →  GPIO 22 (I2C STEMMA port)
+SCL     →  GPIO 23 (I2C STEMMA port)
+
+NeoPixels  →  Feather ESP32 V2
+-------------------------------
+Data       →  GPIO 13
+GND        →  GND
+VIN (5V)   →  Boost Converter 5V output
+
+Boost Converter (3.7V→5V)  →  Connections
+-------------------------------------------
+VIN        →  ESP32 BAT pin (3.7V from battery)
+GND        →  Common GND
+5V         →  NeoPixel VIN
+EN         →  VIN (always enabled)
+            OR GPIO 27 (software control, recommended)
+
+Power Distribution
+------------------
+Battery (+) → ESP32 BAT pin → Boost Converter VIN
+Battery (-) → Common GND
 ```
+
+**Note on Power Control**:
+- Connecting EN to VIN keeps NeoPixels always powered
+- Connecting EN to a GPIO (e.g., Pin 27) allows software control to disable NeoPixels and save battery
+- NeoPixels draw ~60mA per LED at full white brightness
+- Ensure boost converter can handle total NeoPixel current draw
 
 ## Development Tools
 

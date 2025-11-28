@@ -12,12 +12,15 @@ Simple proof-of-concept to validate NeoPixel wiring on ESP32 Feather.
 
 ```
 NeoPixel Jewel 7:
-├─ 5V      → USB pin on Feather
-├─ GND     → GND (connect both GND pins to same ground)
+├─ 5V      → 3.7V-5V Boost Converter 5V output
+├─ GND     → Common GND
 └─ Data In → GPIO 13
 
-Power:
-└─ USB cable (provides 5V to USB pin)
+Boost Converter (3.7V→5V):
+├─ VIN     → ESP32 BAT pin (3.7V from battery)
+├─ GND     → Common GND
+├─ 5V      → NeoPixel 5V
+└─ EN      → VIN (always on) OR GPIO 27 (software control)
 ```
 
 ## Arduino IDE Setup
@@ -37,15 +40,16 @@ This creates an attention-grabbing tail light effect.
 
 ## Power Notes
 
-**Current setup (USB power only)**:
-- Works great for testing
-- NeoPixels get 5V from USB pin
-- Battery connected to JST will power ESP32 but NOT NeoPixels
+**Production setup (Battery + Boost Converter)**:
+- 3.7V LiPo battery powers ESP32 via BAT pin
+- Boost converter (3.7V→5V) powers NeoPixels at 5V
+- EN pin can be tied to VIN (always on) or GPIO 27 (software controlled)
+- Recommended: Adafruit MiniBoost 5V @ 1A or similar
 
-**For battery operation**:
-- Need 3.7V → 5V boost converter (e.g., Adafruit PowerBoost 500)
-- Wire LiPo → boost converter → NeoPixel 5V pin
-- See main project docs for battery calculations
+**Testing with USB power**:
+- Can temporarily power NeoPixels from USB 5V pin during development
+- Not suitable for production (no battery operation)
+- Use boost converter for final assembly
 
 ## Power Draw
 
