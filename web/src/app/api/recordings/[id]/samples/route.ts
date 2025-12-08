@@ -178,6 +178,11 @@ export async function GET(
           x: record.quatX,
           y: record.quatY,
           z: record.quatZ
+        } : undefined,
+        euler: record.roll !== undefined ? {
+          roll: record.roll,
+          pitch: record.pitch,
+          yaw: record.yaw
         } : undefined
       })
     }

@@ -75,7 +75,10 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
         gyro_z: s.gyro.z,
         mag_x: s.mag?.x,
         mag_y: s.mag?.y,
-        mag_z: s.mag?.z
+        mag_z: s.mag?.z,
+        roll: s.euler?.roll,
+        pitch: s.euler?.pitch,
+        yaw: s.euler?.yaw
       }))
 
       // API already applies LTTB downsampling, use samples directly

@@ -90,6 +90,9 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
             mag_x: s.mag?.x ?? null,
             mag_y: s.mag?.y ?? null,
             mag_z: s.mag?.z ?? null,
+            roll: s.euler?.roll ?? null,
+            pitch: s.euler?.pitch ?? null,
+            yaw: s.euler?.yaw ?? null
           }))
           setSamples(transformedSamples)
         }
@@ -571,26 +574,40 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4">
-        {stats.map(({ axis, min, max, mean }) => (
-          <div key={axis} className="p-4 bg-muted rounded-lg border border-border">
-            <div className="flex items-center gap-2 mb-2">
-              <div 
-                className="w-3 h-3 rounded-full" 
-                style={{ 
-                  backgroundColor: axis === 'X' ? 'hsl(0, 70%, 50%)' : 
-                                   axis === 'Y' ? 'hsl(120, 70%, 40%)' : 
-                                   'hsl(210, 70%, 50%)' 
-                }}
-              />
-              <span className="font-medium text-foreground">{axis}-axis</span>
+        {stats.map(({ axis, min, max, mean }) => {
+          // Determine color based on data type and axis
+          let color = 'hsl(0, 70%, 50%)' // Default red
+          if (dataType === 'orientation') {
+            // Match orientation chart colors
+            if (axis === 'Roll') color = 'hsl(220, 70%, 50%)' // Blue
+            else if (axis === 'Pitch') color = 'hsl(145, 60%, 45%)' // Green
+            else if (axis === 'Yaw') color = 'hsl(10, 70%, 50%)' // Red
+          } else {
+            // Match accel/gyro chart colors
+            if (axis === 'X') color = 'hsl(10, 49.20%, 52.90%)'
+            else if (axis === 'Y') color = 'hsl(145, 49.60%, 54.10%)'
+            else if (axis === 'Z') color = 'hsl(205, 59.70%, 70.80%)'
+          }
+
+          return (
+            <div key={axis} className="p-4 bg-muted rounded-lg border border-border">
+              <div className="flex items-center gap-2 mb-2">
+                <div
+                  className="w-3 h-3 rounded-full"
+                  style={{ backgroundColor: color }}
+                />
+                <span className="font-medium text-foreground">
+                  {dataType === 'orientation' ? axis : `${axis}-axis`}
+                </span>
+              </div>
+              <div className="space-y-1 text-xs text-muted-foreground font-mono">
+                <div>Min: {min.toFixed(3)} {getUnit()}</div>
+                <div>Max: {max.toFixed(3)} {getUnit()}</div>
+                <div>Mean: {mean.toFixed(3)} {getUnit()}</div>
+              </div>
             </div>
-            <div className="space-y-1 text-xs text-muted-foreground font-mono">
-              <div>Min: {min.toFixed(3)} {getUnit()}</div>
-              <div>Max: {max.toFixed(3)} {getUnit()}</div>
-              <div>Mean: {mean.toFixed(3)} {getUnit()}</div>
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
 
       {/* Info */}

@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 from scipy import signal
 from scipy.fft import rfft, rfftfreq
 sys.path.append('../packages/vtx-parser/python')
-from vtx_parser import decode_vtx_file
+from vtx_parser import decode_vtx
 
 def analyze_vibration_spectrum(vtx_file_path, window_seconds=10):
     """
@@ -30,8 +30,8 @@ def analyze_vibration_spectrum(vtx_file_path, window_seconds=10):
     print(f"{'='*70}\n")
 
     # Load data
-    data = decode_vtx_file(vtx_file_path)
-    samples = data['samples']
+    data = decode_vtx(vtx_file_path)
+    samples = data.samples
 
     # Calculate sample rate
     timestamps = samples['timestamp_ms'].values
