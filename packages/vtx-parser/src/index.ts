@@ -14,7 +14,11 @@ export { VTXDecoder } from './decoder';
 export type {
   VTXHeader,
   IMURecord,
+  GPSRecord,
   VTXFile,
+  VTXMetadata,
+  VTXEncoderOptions,
+  VTXDecoderOptions,
 } from './types';
 
 export { RecordFormatFlags } from './types';

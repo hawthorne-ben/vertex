@@ -7,6 +7,7 @@ import {
   VTXHeader,
   VTXMetadata,
   IMURecord,
+  GPSRecord,
   VTXEncoderOptions,
   VTX_CONSTANTS,
   RecordFormatFlags,
@@ -16,8 +17,10 @@ export class VTXEncoder {
   private sampleRate: number;
   private includeMag: boolean;
   private includeQuat: boolean;
+  private includeGPS: boolean;
   private metadata: VTXMetadata;
   private records: IMURecord[] = [];
+  private gpsRecords: GPSRecord[] = [];
   private recordSize: number;
   private recordFormat: number;
 
@@ -25,6 +28,7 @@ export class VTXEncoder {
     this.sampleRate = options.sampleRate;
     this.includeMag = options.includeMag ?? false;
     this.includeQuat = options.includeQuat ?? false;
+    this.includeGPS = options.includeGPS ?? false;
     this.metadata = options.metadata ?? {};
 
     // Calculate record format bitmask
@@ -107,6 +111,35 @@ export class VTXEncoder {
   }
 
   /**
+   * Add a single GPS record to the encoder buffer
+   */
+  addGPSRecord(record: GPSRecord): void {
+    if (!this.includeGPS) {
+      throw new Error('GPS recording is not enabled in encoder options');
+    }
+
+    // Validate required fields
+    if (
+      record.timestamp === undefined ||
+      record.latitude === undefined ||
+      record.longitude === undefined
+    ) {
+      throw new Error('GPS record missing required timestamp, latitude, or longitude');
+    }
+
+    this.gpsRecords.push(record);
+  }
+
+  /**
+   * Add multiple GPS records at once
+   */
+  addGPSRecords(records: GPSRecord[]): void {
+    for (const record of records) {
+      this.addGPSRecord(record);
+    }
+  }
+
+  /**
    * Encode all data to a binary buffer
    */
   encode(): ArrayBuffer {
@@ -127,7 +160,19 @@ export class VTXEncoder {
 
     // Calculate offsets
     const dataOffset = VTX_CONSTANTS.HEADER_SIZE + metadataLength;
-    const totalSize = dataOffset + this.recordSize * this.records.length;
+    const imuDataSize = this.recordSize * this.records.length;
+
+    // GPS data follows IMU data (if enabled)
+    let gpsDataOffset = 0;
+    let gpsDataSize = 0;
+    if (this.includeGPS && this.gpsRecords.length > 0) {
+      // Sort GPS records by timestamp
+      this.gpsRecords.sort((a, b) => a.timestamp - b.timestamp);
+      gpsDataOffset = dataOffset + imuDataSize;
+      gpsDataSize = VTX_CONSTANTS.GPS_RECORD_SIZE * this.gpsRecords.length;
+    }
+
+    const totalSize = dataOffset + imuDataSize + gpsDataSize;
 
     // Create buffer for entire file
     const buffer = new ArrayBuffer(totalSize);
@@ -147,6 +192,8 @@ export class VTXEncoder {
       endTimestamp,
       recordFormat: this.recordFormat,
       compression: VTX_CONSTANTS.COMPRESSION_NONE,
+      gpsRecordCount: this.includeGPS ? BigInt(this.gpsRecords.length) : undefined,
+      gpsDataOffset: this.includeGPS && this.gpsRecords.length > 0 ? gpsDataOffset : undefined,
     };
 
     offset = this.writeHeader(view, offset, header);
@@ -154,8 +201,13 @@ export class VTXEncoder {
     // Write metadata
     offset = this.writeMetadata(buffer, offset, metadataBytes);
 
-    // Write data records
+    // Write IMU data records
     offset = this.writeRecords(view, offset, startTimestamp);
+
+    // Write GPS data records (if enabled)
+    if (this.includeGPS && this.gpsRecords.length > 0) {
+      offset = this.writeGPSRecords(view, offset, startTimestamp);
+    }
 
     return buffer;
   }
@@ -206,8 +258,24 @@ export class VTXEncoder {
     // Compression (1 byte)
     view.setUint8(offset++, header.compression);
 
-    // Reserved fields (18 bytes) - fill with zeros
-    for (let i = 0; i < 18; i++) {
+    // GPS record count (8 bytes, v1.1+)
+    if (header.gpsRecordCount !== undefined) {
+      view.setBigUint64(offset, header.gpsRecordCount, true);
+    } else {
+      view.setBigUint64(offset, BigInt(0), true);
+    }
+    offset += 8;
+
+    // GPS data offset (4 bytes, v1.1+)
+    if (header.gpsDataOffset !== undefined) {
+      view.setUint32(offset, header.gpsDataOffset, true);
+    } else {
+      view.setUint32(offset, 0, true);
+    }
+    offset += 4;
+
+    // Reserved fields (6 bytes remaining) - fill with zeros
+    for (let i = 0; i < 6; i++) {
       view.setUint8(offset++, 0);
     }
 
@@ -297,10 +365,76 @@ export class VTXEncoder {
   }
 
   /**
-   * Get current record count
+   * Write all GPS records to buffer
+   */
+  private writeGPSRecords(
+    view: DataView,
+    offset: number,
+    startTimestamp: bigint
+  ): number {
+    for (const record of this.gpsRecords) {
+      offset = this.writeGPSRecord(view, offset, record, startTimestamp);
+    }
+    return offset;
+  }
+
+  /**
+   * Write a single GPS record to buffer (44 bytes)
+   */
+  private writeGPSRecord(
+    view: DataView,
+    offset: number,
+    record: GPSRecord,
+    startTimestamp: bigint
+  ): number {
+    // Timestamp as offset from start (uint32 milliseconds)
+    const timestampOffset = Number(BigInt(record.timestamp) - startTimestamp);
+    view.setUint32(offset, timestampOffset, true);
+    offset += 4;
+
+    // Latitude (float64)
+    view.setFloat64(offset, record.latitude, true);
+    offset += 8;
+
+    // Longitude (float64)
+    view.setFloat64(offset, record.longitude, true);
+    offset += 8;
+
+    // Altitude (float32, or NaN if null)
+    view.setFloat32(offset, record.altitude ?? NaN, true);
+    offset += 4;
+
+    // Speed (float32, or NaN if null)
+    view.setFloat32(offset, record.speed ?? NaN, true);
+    offset += 4;
+
+    // Bearing (float32, or NaN if null)
+    view.setFloat32(offset, record.bearing ?? NaN, true);
+    offset += 4;
+
+    // Accuracy (float32, or NaN if null)
+    view.setFloat32(offset, record.accuracy ?? NaN, true);
+    offset += 4;
+
+    // Reserved (4 bytes)
+    view.setUint32(offset, 0, true);
+    offset += 4;
+
+    return offset;
+  }
+
+  /**
+   * Get current IMU record count
    */
   getRecordCount(): number {
     return this.records.length;
+  }
+
+  /**
+   * Get current GPS record count
+   */
+  getGPSRecordCount(): number {
+    return this.gpsRecords.length;
   }
 
   /**
@@ -308,5 +442,6 @@ export class VTXEncoder {
    */
   clear(): void {
     this.records = [];
+    this.gpsRecords = [];
   }
 }

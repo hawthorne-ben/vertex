@@ -8,6 +8,7 @@ import {
   VTXEncoder,
   VTXDecoder,
   IMURecord,
+  GPSRecord,
   VTXMetadata,
   VTXFile,
   VTXHeader,
@@ -19,12 +20,14 @@ export interface VTXRecordingMetadata {
   startTime: Date;
   endTime: Date;
   sampleCount: number;
+  gpsRecordCount?: number;
   fileSize: number;
   sampleRate: number;
   deviceName?: string;
   deviceId?: string;
   includeMag: boolean;
   includeQuat: boolean;
+  includeGPS: boolean;
 }
 
 class VTXFileService {
@@ -176,12 +179,14 @@ class VTXFileService {
           startTime: new Date(Number(header.startTimestamp)),
           endTime: new Date(Number(header.endTimestamp)),
           sampleCount: Number(header.recordCount),
-          fileSize: parseInt(file.size),
+          gpsRecordCount: header.gpsRecordCount ? Number(header.gpsRecordCount) : undefined,
+          fileSize: Number(file.size),
           sampleRate: header.sampleRate,
           deviceName: metadata.device?.name,
           deviceId: metadata.device?.id,
           includeMag: !!(header.recordFormat & 0x04), // HAS_MAG flag
           includeQuat: !!(header.recordFormat & 0x08), // HAS_QUAT flag
+          includeGPS: !!(header.gpsRecordCount && header.gpsRecordCount > 0n),
         };
 
         recordings.push(recordingMetadata);
@@ -245,6 +250,26 @@ class VTXFileService {
   ): Promise<IMURecord[]> {
     const vtxFile = await this.readVTXFile(filePath);
     return vtxFile.records.slice(startIndex, startIndex + count);
+  }
+
+  /**
+   * Read GPS records from VTX file
+   */
+  async readGPSRecords(filePath: string): Promise<GPSRecord[]> {
+    const vtxFile = await this.readVTXFile(filePath);
+    return vtxFile.gpsRecords || [];
+  }
+
+  /**
+   * Read a subset of GPS records from VTX file (for efficient data viewing)
+   */
+  async readGPSRecordsSubset(
+    filePath: string,
+    startIndex: number,
+    count: number
+  ): Promise<GPSRecord[]> {
+    const gpsRecords = await this.readGPSRecords(filePath);
+    return gpsRecords.slice(startIndex, startIndex + count);
   }
 
   /**
@@ -348,11 +373,17 @@ class VTXFileService {
         includeMag: !!(vtxFile.header.recordFormat & 0x04),
         includeQuat: !!(vtxFile.header.recordFormat & 0x08),
         includeEuler: !!(vtxFile.header.recordFormat & 0x10),
+        includeGPS: !!(vtxFile.gpsRecords && vtxFile.gpsRecords.length > 0),
         metadata: vtxFile.metadata,
       });
 
       // Add all recovered records
       encoder.addRecords(records);
+
+      // Add GPS records if present
+      if (vtxFile.gpsRecords && vtxFile.gpsRecords.length > 0) {
+        encoder.addGPSRecords(vtxFile.gpsRecords);
+      }
 
       // Encode with correct header
       const recoveredBuffer = encoder.encode();

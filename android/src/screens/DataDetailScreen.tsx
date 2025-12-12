@@ -115,6 +115,9 @@ const DataDetailScreen: React.FC = () => {
           quat_x: record.quatX,
           quat_y: record.quatY,
           quat_z: record.quatZ,
+          roll: record.roll,
+          pitch: record.pitch,
+          yaw: record.yaw,
         }));
       } else {
         // Read CSV file

@@ -7,6 +7,7 @@ import {
   VTXHeader,
   VTXMetadata,
   IMURecord,
+  GPSRecord,
   VTXEncoderOptions,
   VTX_CONSTANTS,
   RecordFormatFlags,
@@ -27,22 +28,26 @@ export class VTXStreamEncoder {
   private includeMag: boolean;
   private includeQuat: boolean;
   private includeEuler: boolean;
+  private includeGPS: boolean;
   private metadata: VTXMetadata;
   private recordSize: number;
   private recordFormat: number;
   private writeCallback: WriteCallback;
 
   private recordCount: number = 0;
+  private gpsRecordCount: number = 0;
   private startTimestamp: bigint | null = null;
   private lastTimestamp: bigint | null = null;
   private headerWritten: boolean = false;
   private tempHeaderBuffer: ArrayBuffer | null = null;
+  private gpsDataOffset: number = 0;
 
   constructor(options: VTXEncoderOptions & { writeCallback: WriteCallback }) {
     this.sampleRate = options.sampleRate;
     this.includeMag = options.includeMag ?? false;
     this.includeQuat = options.includeQuat ?? false;
     this.includeEuler = options.includeEuler ?? false;
+    this.includeGPS = options.includeGPS ?? false;
     this.metadata = options.metadata ?? {};
     this.writeCallback = options.writeCallback;
 
@@ -206,6 +211,90 @@ export class VTXStreamEncoder {
   }
 
   /**
+   * Add a single GPS record and write it immediately
+   */
+  async addGPSRecord(record: GPSRecord): Promise<void> {
+    if (!this.includeGPS) {
+      throw new Error('GPS recording is not enabled');
+    }
+
+    if (!this.headerWritten) {
+      throw new Error('Must call initialize() before adding GPS records');
+    }
+
+    // Validate required fields
+    if (
+      record.timestamp === undefined ||
+      record.latitude === undefined ||
+      record.longitude === undefined
+    ) {
+      throw new Error('GPS record missing required timestamp, latitude, or longitude');
+    }
+
+    // Track GPS data offset on first GPS record
+    if (this.gpsRecordCount === 0 && this.recordCount > 0) {
+      // GPS data starts after IMU data
+      const metadataJson = JSON.stringify(this.metadata);
+      const metadataLength = new TextEncoder().encode(metadataJson).length;
+      const dataOffset = VTX_CONSTANTS.HEADER_SIZE + metadataLength;
+      const imuDataSize = this.recordSize * this.recordCount;
+      this.gpsDataOffset = dataOffset + imuDataSize;
+    }
+
+    // Initialize timestamps if this is the first GPS record
+    if (this.gpsRecordCount === 0) {
+      // GPS uses same timestamp range as IMU
+      if (!this.startTimestamp) {
+        this.startTimestamp = BigInt(record.timestamp);
+      }
+    }
+
+    // Write GPS record to stream
+    const recordBuffer = new ArrayBuffer(VTX_CONSTANTS.GPS_RECORD_SIZE);
+    const view = new DataView(recordBuffer);
+    const startTimestamp = this.startTimestamp || BigInt(record.timestamp);
+
+    let offset = 0;
+
+    // Timestamp as offset from start (uint32 milliseconds)
+    const timestampOffset = Number(BigInt(record.timestamp) - startTimestamp);
+    view.setUint32(offset, timestampOffset, true);
+    offset += 4;
+
+    // Latitude (float64)
+    view.setFloat64(offset, record.latitude, true);
+    offset += 8;
+
+    // Longitude (float64)
+    view.setFloat64(offset, record.longitude, true);
+    offset += 8;
+
+    // Altitude (float32, or NaN if null)
+    view.setFloat32(offset, record.altitude ?? NaN, true);
+    offset += 4;
+
+    // Speed (float32, or NaN if null)
+    view.setFloat32(offset, record.speed ?? NaN, true);
+    offset += 4;
+
+    // Bearing (float32, or NaN if null)
+    view.setFloat32(offset, record.bearing ?? NaN, true);
+    offset += 4;
+
+    // Accuracy (float32, or NaN if null)
+    view.setFloat32(offset, record.accuracy ?? NaN, true);
+    offset += 4;
+
+    // Reserved (4 bytes)
+    view.setUint32(offset, 0, true);
+
+    // Write to stream
+    await this.writeCallback(new Uint8Array(recordBuffer));
+
+    this.gpsRecordCount++;
+  }
+
+  /**
    * Finalize the encoding
    * Returns the updated header that should be written to the beginning of the file
    */
@@ -236,6 +325,8 @@ export class VTXStreamEncoder {
       endTimestamp: this.lastTimestamp!,
       recordFormat: this.recordFormat,
       compression: VTX_CONSTANTS.COMPRESSION_NONE,
+      gpsRecordCount: this.includeGPS ? BigInt(this.gpsRecordCount) : undefined,
+      gpsDataOffset: this.includeGPS && this.gpsRecordCount > 0 ? this.gpsDataOffset : undefined,
     };
 
     // Write final header to buffer
@@ -292,8 +383,24 @@ export class VTXStreamEncoder {
     // Compression (1 byte)
     view.setUint8(offset++, header.compression);
 
-    // Reserved fields (18 bytes) - fill with zeros
-    for (let i = 0; i < 18; i++) {
+    // GPS record count (8 bytes, v1.1+)
+    if (header.gpsRecordCount !== undefined) {
+      view.setBigUint64(offset, header.gpsRecordCount, true);
+    } else {
+      view.setBigUint64(offset, BigInt(0), true);
+    }
+    offset += 8;
+
+    // GPS data offset (4 bytes, v1.1+)
+    if (header.gpsDataOffset !== undefined) {
+      view.setUint32(offset, header.gpsDataOffset, true);
+    } else {
+      view.setUint32(offset, 0, true);
+    }
+    offset += 4;
+
+    // Reserved fields (6 bytes remaining) - fill with zeros
+    for (let i = 0; i < 6; i++) {
       view.setUint8(offset++, 0);
     }
 

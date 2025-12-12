@@ -29,6 +29,10 @@ export interface VTXHeader {
   recordFormat: number;
   /** Compression type (0=none, 1=zstd) */
   compression: number;
+  /** Total number of GPS records (v1.1+) */
+  gpsRecordCount?: bigint;
+  /** Byte offset where GPS records start (v1.1+) */
+  gpsDataOffset?: number;
 }
 
 /**
@@ -162,6 +166,27 @@ export interface IMURecord {
 }
 
 /**
+ * Single GPS data record (v1.1+)
+ * Fixed size: 44 bytes
+ */
+export interface GPSRecord {
+  /** Absolute timestamp in milliseconds */
+  timestamp: number;
+  /** Latitude in decimal degrees (WGS84) */
+  latitude: number;
+  /** Longitude in decimal degrees (WGS84) */
+  longitude: number;
+  /** Altitude in meters (or null if unavailable) */
+  altitude: number | null;
+  /** Speed in meters per second (or null if unavailable) */
+  speed: number | null;
+  /** Bearing in degrees 0-360 (or null if unavailable) */
+  bearing: number | null;
+  /** Horizontal accuracy in meters (or null if unavailable) */
+  accuracy: number | null;
+}
+
+/**
  * Complete VTX file data structure
  */
 export interface VTXFile {
@@ -171,6 +196,8 @@ export interface VTXFile {
   metadata: VTXMetadata;
   /** Array of IMU data records */
   records: IMURecord[];
+  /** Array of GPS data records (v1.1+) */
+  gpsRecords?: GPSRecord[];
 }
 
 /**
@@ -185,6 +212,8 @@ export interface VTXEncoderOptions {
   includeQuat?: boolean;
   /** Include Euler angle data (roll, pitch, yaw) */
   includeEuler?: boolean;
+  /** Include GPS data stream (v1.1+) */
+  includeGPS?: boolean;
   /** Metadata to include in file */
   metadata?: VTXMetadata;
 }
@@ -212,7 +241,7 @@ export const VTX_CONSTANTS = {
   /** Current format version major */
   VERSION_MAJOR: 1,
   /** Current format version minor */
-  VERSION_MINOR: 0,
+  VERSION_MINOR: 1,
   /** Fixed header size in bytes */
   HEADER_SIZE: 64,
   /** Footer size in bytes (optional) */
@@ -221,6 +250,8 @@ export const VTX_CONSTANTS = {
   RECORD_SIZE_MINIMAL: 28,
   /** Full record size (accel + gyro + mag + quat) */
   RECORD_SIZE_FULL: 56,
+  /** GPS record size (v1.1+) */
+  GPS_RECORD_SIZE: 44,
   /** Default compression (none) */
   COMPRESSION_NONE: 0,
   /** Zstd compression */

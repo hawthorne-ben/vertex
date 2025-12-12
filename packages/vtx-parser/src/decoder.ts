@@ -7,6 +7,7 @@ import {
   VTXHeader,
   VTXMetadata,
   IMURecord,
+  GPSRecord,
   VTXFile,
   VTXDecoderOptions,
   VTX_CONSTANTS,
@@ -126,10 +127,20 @@ export class VTXDecoder {
 
     const records = this.readRecords(0, recordCount);
 
+    // Parse GPS records (if available in v1.1+)
+    let gpsRecords: GPSRecord[] | undefined;
+    if (this.header.gpsRecordCount && this.header.gpsRecordCount > 0n) {
+      const gpsCount = Number(this.header.gpsRecordCount);
+      const maxGPSRecords = options.maxRecords ?? gpsCount;
+      const actualGPSCount = Math.min(maxGPSRecords, gpsCount);
+      gpsRecords = this.readGPSRecords(0, actualGPSCount);
+    }
+
     return {
       header: this.header,
       metadata: this.metadata,
       records,
+      gpsRecords,
     };
   }
 
@@ -208,8 +219,29 @@ export class VTXDecoder {
     // Calculate record size based on format flags
     this.recordSize = this.calculateRecordSize(recordFormat);
 
-    // Skip reserved fields (18 bytes)
-    // offset += 18; // Not needed as we're done with header
+    // GPS record count (8 bytes, v1.1+)
+    let gpsRecordCount: bigint | undefined;
+    let gpsDataOffset: number | undefined;
+
+    if (versionMinor >= 1) {
+      const gpsCount = this.view.getBigUint64(offset, true);
+      offset += 8;
+
+      const gpsOffset = this.view.getUint32(offset, true);
+      offset += 4;
+
+      // Only set if non-zero
+      if (gpsCount > 0n) {
+        gpsRecordCount = gpsCount;
+        gpsDataOffset = gpsOffset;
+      }
+
+      // Skip remaining reserved fields (6 bytes)
+      // offset += 6; // Not needed as we're done with header
+    } else {
+      // Skip all reserved fields (18 bytes) for v1.0
+      // offset += 18; // Not needed as we're done with header
+    }
 
     const header: VTXHeader = {
       magic,
@@ -223,6 +255,8 @@ export class VTXDecoder {
       endTimestamp,
       recordFormat,
       compression,
+      gpsRecordCount,
+      gpsDataOffset,
     };
 
     this.header = header;
@@ -403,6 +437,111 @@ export class VTXDecoder {
   }
 
   /**
+   * Read a range of GPS records
+   */
+  readGPSRecords(startIndex: number, count: number): GPSRecord[] {
+    if (!this.header) {
+      throw new Error('Must read header before GPS records');
+    }
+
+    if (!this.header.gpsRecordCount || !this.header.gpsDataOffset) {
+      return [];
+    }
+
+    const totalGPSRecords = Number(this.header.gpsRecordCount);
+    if (startIndex < 0 || startIndex >= totalGPSRecords) {
+      throw new Error(
+        `Invalid GPS start index: ${startIndex} (file has ${totalGPSRecords} GPS records)`
+      );
+    }
+
+    const actualCount = Math.min(count, totalGPSRecords - startIndex);
+    const gpsRecords: GPSRecord[] = [];
+
+    for (let i = 0; i < actualCount; i++) {
+      const record = this.readGPSRecord(startIndex + i);
+      gpsRecords.push(record);
+    }
+
+    return gpsRecords;
+  }
+
+  /**
+   * Read a single GPS record by index (44 bytes)
+   */
+  readGPSRecord(index: number): GPSRecord {
+    if (!this.header) {
+      throw new Error('Must read header before GPS records');
+    }
+
+    if (!this.header.gpsRecordCount || !this.header.gpsDataOffset) {
+      throw new Error('No GPS data available in this file');
+    }
+
+    const totalGPSRecords = Number(this.header.gpsRecordCount);
+    if (index < 0 || index >= totalGPSRecords) {
+      throw new Error(
+        `Invalid GPS record index: ${index} (file has ${totalGPSRecords} GPS records)`
+      );
+    }
+
+    // Calculate byte offset for this GPS record
+    let offset = this.header.gpsDataOffset + index * VTX_CONSTANTS.GPS_RECORD_SIZE;
+
+    if (this.buffer.byteLength < offset + VTX_CONSTANTS.GPS_RECORD_SIZE) {
+      throw new Error(`File truncated: GPS record ${index} incomplete`);
+    }
+
+    // Read timestamp offset (uint32 milliseconds from start)
+    const timestampOffset = this.view.getUint32(offset, true);
+    offset += 4;
+
+    // Calculate absolute timestamp
+    const timestamp = Number(this.header.startTimestamp) + timestampOffset;
+
+    // Read latitude (float64)
+    const latitude = this.view.getFloat64(offset, true);
+    offset += 8;
+
+    // Read longitude (float64)
+    const longitude = this.view.getFloat64(offset, true);
+    offset += 8;
+
+    // Read altitude (float32, NaN means null)
+    const altitudeRaw = this.view.getFloat32(offset, true);
+    const altitude = isNaN(altitudeRaw) ? null : altitudeRaw;
+    offset += 4;
+
+    // Read speed (float32, NaN means null)
+    const speedRaw = this.view.getFloat32(offset, true);
+    const speed = isNaN(speedRaw) ? null : speedRaw;
+    offset += 4;
+
+    // Read bearing (float32, NaN means null)
+    const bearingRaw = this.view.getFloat32(offset, true);
+    const bearing = isNaN(bearingRaw) ? null : bearingRaw;
+    offset += 4;
+
+    // Read accuracy (float32, NaN means null)
+    const accuracyRaw = this.view.getFloat32(offset, true);
+    const accuracy = isNaN(accuracyRaw) ? null : accuracyRaw;
+    offset += 4;
+
+    // Skip reserved (4 bytes)
+    // offset += 4; // Not needed
+
+    return {
+      timestamp,
+      latitude,
+      longitude,
+      altitude,
+      speed,
+      bearing,
+      accuracy,
+    };
+  }
+
+  /**
    * Get header without reading entire file
    */
   getHeader(): VTXHeader {
@@ -453,6 +592,16 @@ export class VTXDecoder {
       this.readHeader();
     }
     return this.header!.sampleRate;
+  }
+
+  /**
+   * Get total GPS record count
+   */
+  getGPSRecordCount(): number {
+    if (!this.header) {
+      this.readHeader();
+    }
+    return this.header!.gpsRecordCount ? Number(this.header!.gpsRecordCount) : 0;
   }
 }
 

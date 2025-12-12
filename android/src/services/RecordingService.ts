@@ -12,7 +12,8 @@
 import FileService, { IMUSensorData } from './FileService';
 import VTXFileService from './VTXFileService';
 import BleService from './BleService';
-import { IMURecord, VTXMetadata, VTXStreamEncoder } from '@vertex-pkg/vtx-parser';
+import GPSService from './GPSService';
+import { IMURecord, GPSRecord, VTXMetadata, VTXStreamEncoder } from '@vertex-pkg/vtx-parser';
 import { useDeviceStore } from '../stores/deviceStore';
 import RNFS from 'react-native-fs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -52,6 +53,11 @@ class RecordingService {
   private readonly BUFFER_SIZE = 1000; // 10 seconds at 100Hz
   private isWriting: boolean = false;
   private isStopping: boolean = false; // Flag to prevent new flushes during stop
+
+  // GPS tracking
+  private gpsBuffer: GPSRecord[] = [];
+  private readonly GPS_BUFFER_SIZE = 100; // ~100 seconds at 1Hz
+  private isGPSEnabled: boolean = false;
 
   // VTX stream encoder
   private vtxStreamEncoder: VTXStreamEncoder | null = null;
@@ -191,6 +197,7 @@ class RecordingService {
           includeMag: false,  // Magnetometer removed - using 6DoF mode
           includeQuat: false,
           includeEuler: true,  // Enable Euler angles (roll, pitch, yaw)
+          includeGPS: true,    // Enable GPS tracking
           metadata: vtxMetadata,
           writeCallback,
         });
@@ -231,6 +238,11 @@ class RecordingService {
       // Subscribe to BLE data stream
       await this.subscribeToData();
 
+      // Start GPS tracking (only for VTX format)
+      if (format === 'vtx') {
+        await this.startGPSTracking();
+      }
+
       // Acquire wake lock to prevent CPU sleep
       await WakeLockService.acquire();
 
@@ -269,11 +281,17 @@ class RecordingService {
         this.subscription = null;
       }
 
+      // Stop GPS tracking
+      this.stopGPSTracking();
+
       // Wait a moment for any pending setImmediate callbacks to see isStopping flag
       await new Promise(resolve => setTimeout(resolve, 100));
 
       // Flush any remaining buffered data
       await this.flushBuffer();
+
+      // Flush any remaining GPS data
+      await this.flushGPSBuffer();
 
       // Finalize VTX file if needed
       if (session.format === 'vtx' && this.vtxStreamEncoder) {
@@ -624,6 +642,109 @@ class RecordingService {
   }
 
   /**
+   * Start GPS tracking
+   */
+  private async startGPSTracking(): Promise<void> {
+    try {
+      // Check/request permissions
+      const hasPermission = await GPSService.hasPermissions();
+      if (!hasPermission) {
+        const granted = await GPSService.requestPermissions();
+        if (!granted) {
+          console.warn('[RecordingService] GPS permissions not granted, continuing without GPS');
+          return;
+        }
+      }
+
+      // Start tracking with 1 second interval
+      await GPSService.startTracking(
+        (record) => {
+          this.handleGPSReceived(record);
+        },
+        (error) => {
+          console.error('[RecordingService] GPS error:', error);
+        },
+        {
+          interval: 1000,        // 1 second updates
+          fastestInterval: 500,  // Accept updates as fast as 500ms
+          accuracy: 'high',      // High accuracy mode
+        }
+      );
+
+      this.isGPSEnabled = true;
+      console.log('[RecordingService] GPS tracking started');
+    } catch (error: any) {
+      console.error('[RecordingService] Failed to start GPS tracking:', error);
+      console.warn('[RecordingService] Continuing without GPS');
+    }
+  }
+
+  /**
+   * Stop GPS tracking
+   */
+  private stopGPSTracking(): void {
+    if (!this.isGPSEnabled) {
+      return;
+    }
+
+    GPSService.stopTracking();
+    this.isGPSEnabled = false;
+    console.log('[RecordingService] GPS tracking stopped');
+  }
+
+  /**
+   * Handle incoming GPS data
+   */
+  private handleGPSReceived(record: GPSRecord): void {
+    if (!this.currentSession || !this.currentSession.isRecording || this.currentSession.isPaused) {
+      return;
+    }
+
+    try {
+      // Add to GPS buffer
+      this.gpsBuffer.push(record);
+
+      // Flush GPS buffer when it reaches threshold
+      if (this.gpsBuffer.length >= this.GPS_BUFFER_SIZE && !this.isStopping) {
+        setImmediate(() => {
+          if (!this.isStopping) {
+            this.flushGPSBuffer().catch(err => {
+              console.error('[RecordingService] GPS buffer flush error:', err);
+            });
+          }
+        });
+      }
+    } catch (error: any) {
+      console.error('[RecordingService] Error handling GPS data:', error);
+    }
+  }
+
+  /**
+   * Flush GPS buffer to VTX stream
+   */
+  private async flushGPSBuffer(): Promise<void> {
+    if (this.gpsBuffer.length === 0 || !this.currentSession || !this.vtxStreamEncoder) {
+      return;
+    }
+
+    const dataToWrite = [...this.gpsBuffer];
+    this.gpsBuffer = [];
+
+    try {
+      for (const record of dataToWrite) {
+        await this.vtxStreamEncoder.addGPSRecord(record);
+      }
+
+      console.log(`[RecordingService] Flushed ${dataToWrite.length} GPS records to VTX file`);
+    } catch (error: any) {
+      console.error('[RecordingService] GPS write error:', error);
+
+      // Put data back in buffer on error
+      this.gpsBuffer.unshift(...dataToWrite);
+    }
+  }
+
+  /**
    * Cleanup
    */
   private cleanup(): void {
@@ -636,11 +757,18 @@ class RecordingService {
       this.subscription = null;
     }
 
+    // Stop GPS tracking if active
+    if (this.isGPSEnabled) {
+      this.stopGPSTracking();
+    }
+
     this.currentSession = null;
     this.zeroPoint = null;
     this.writeBuffer = [];
+    this.gpsBuffer = [];
     this.isWriting = false;
     this.isStopping = false;
+    this.isGPSEnabled = false;
     this.vtxStreamEncoder = null;
     this.baseTimestamp = null;
     this.baseOffset = null;
