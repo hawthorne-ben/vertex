@@ -38,6 +38,8 @@ class VTXHeader:
     end_timestamp: int
     record_format: int
     compression: int
+    gps_record_count: Optional[int] = None  # v1.1+ only
+    gps_data_offset: Optional[int] = None   # v1.1+ only
 
 
 @dataclass

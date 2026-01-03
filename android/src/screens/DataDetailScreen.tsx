@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { Activity, FileText, Trash2, CloudUpload, CheckCircle } from 'lucide-react-native';
 import { LineChart } from 'react-native-gifted-charts';
+import MapView, { Polyline, PROVIDER_GOOGLE } from 'react-native-maps';
 import { theme as staticTheme } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { BackButton, ErrorDialog, ConfirmDialog, InfoDialog, UploadProgressDialog } from '../components/ui';
@@ -29,6 +30,7 @@ import { useToast } from '../contexts/ToastContext';
 import { createClient } from '../lib/supabase';
 import { API_URL } from '@env';
 import { useSyncStore } from '../stores/syncStore';
+import { GPSRecord } from '@vertex-pkg/vtx-parser';
 
 type DataDetailRouteProp = RouteProp<RootStackParamList, 'DataDetail'>;
 
@@ -59,8 +61,10 @@ const DataDetailScreen: React.FC = () => {
 
   const [isLoading, setIsLoading] = useState(true);
   const [data, setData] = useState<IMUSensorData[]>([]);
+  const [gpsData, setGpsData] = useState<GPSRecord[]>([]);
   // Check if orientation data exists in first sample
   const hasOrientationData = data.length > 0 && data[0].roll !== undefined;
+  const hasGPSData = gpsData.length > 0;
 
   const [selectedDataType, setSelectedDataType] = useState<DataType>('accelerometer');
   const [statistics, setStatistics] = useState<Record<DataType, Statistics>>({
@@ -119,6 +123,15 @@ const DataDetailScreen: React.FC = () => {
           pitch: record.pitch,
           yaw: record.yaw,
         }));
+
+        // Load GPS records if available
+        if (vtxData.gpsRecords && vtxData.gpsRecords.length > 0) {
+          setGpsData(vtxData.gpsRecords);
+          console.log(`[DataDetailScreen] Loaded ${vtxData.gpsRecords.length} GPS records`);
+        } else {
+          console.log('[DataDetailScreen] No GPS data in VTX file');
+          setGpsData([]);
+        }
       } else {
         // Read CSV file
         recordingData = await FileService.readRecordingData(filePath);
@@ -535,11 +548,75 @@ const DataDetailScreen: React.FC = () => {
   const chartData = getChartData();
   const currentStats = statistics[selectedDataType];
   const screenWidth = Dimensions.get('window').width;
+  const screenHeight = Dimensions.get('window').height;
+  const mapHeight = screenHeight * 0.4;
+
+  // San Francisco coordinates (default when no GPS data)
+  const defaultRegion = {
+    latitude: 37.7749,
+    longitude: -122.4194,
+    latitudeDelta: 0.1,
+    longitudeDelta: 0.1,
+  };
+
+  // Calculate map region from GPS data
+  const getMapRegion = () => {
+    if (!hasGPSData) {
+      return defaultRegion;
+    }
+
+    const latitudes = gpsData.map(point => point.latitude);
+    const longitudes = gpsData.map(point => point.longitude);
+
+    const minLat = Math.min(...latitudes);
+    const maxLat = Math.max(...latitudes);
+    const minLng = Math.min(...longitudes);
+    const maxLng = Math.max(...longitudes);
+
+    const centerLat = (minLat + maxLat) / 2;
+    const centerLng = (minLng + maxLng) / 2;
+    const latDelta = (maxLat - minLat) * 1.5; // Add 50% padding
+    const lngDelta = (maxLng - minLng) * 1.5;
+
+    return {
+      latitude: centerLat,
+      longitude: centerLng,
+      latitudeDelta: Math.max(latDelta, 0.01), // Minimum zoom level
+      longitudeDelta: Math.max(lngDelta, 0.01),
+    };
+  };
+
+  // Convert GPS data to polyline coordinates
+  const gpsPolyline = hasGPSData ? gpsData.map(point => ({
+    latitude: point.latitude,
+    longitude: point.longitude,
+  })) : [];
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      {/* Static Header */}
-      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: theme.colors.background, borderBottomColor: theme.colors.border }]}>
+      {/* Map View */}
+      <View style={{ height: mapHeight }}>
+        <MapView
+          provider={PROVIDER_GOOGLE}
+          style={styles.map}
+          initialRegion={getMapRegion()}
+          showsUserLocation={false}
+          showsMyLocationButton={false}
+          showsCompass={false}
+          toolbarEnabled={false}
+        >
+          {hasGPSData && (
+            <Polyline
+              coordinates={gpsPolyline}
+              strokeColor="#3b82f6"
+              strokeWidth={4}
+            />
+          )}
+        </MapView>
+      </View>
+
+      {/* Absolute Header (overlayed on map) */}
+      <View style={[styles.header, styles.absoluteHeader, { paddingTop: insets.top, backgroundColor: 'transparent' }]}>
         <BackButton onPress={() => navigation.goBack()} />
         <Text style={[styles.title, { color: theme.colors.textPrimary }]} numberOfLines={1}>Detail</Text>
         <View style={styles.headerActions}>
@@ -926,6 +1003,10 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
   },
+  map: {
+    width: '100%',
+    height: '100%',
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -934,6 +1015,15 @@ const styles = StyleSheet.create({
     backgroundColor: staticTheme.colors.background,
     borderBottomWidth: 1,
     borderBottomColor: staticTheme.colors.border,
+  },
+  absoluteHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    borderBottomWidth: 0,
+    backgroundColor: 'transparent',
   },
   backButton: {
     marginRight: staticTheme.spacing.md,

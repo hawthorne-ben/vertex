@@ -30,11 +30,16 @@ def analyze_vibration_spectrum(vtx_file_path, window_seconds=10):
     print(f"{'='*70}\n")
 
     # Load data
-    data = decode_vtx(vtx_file_path)
-    samples = data.samples
+    with open(vtx_file_path, 'rb') as f:
+        file_bytes = f.read()
+    vtx_data = decode_vtx(file_bytes)
+
+    # Convert records to arrays
+    records = vtx_data.records
+    timestamps = np.array([r.timestamp for r in records])
 
     # Calculate sample rate
-    timestamps = samples['timestamp_ms'].values
+    timestamps_sec = timestamps / 1000.0  # Convert to seconds
     dt = np.mean(np.diff(timestamps)) / 1000.0  # Convert to seconds
     sample_rate = 1.0 / dt
 
@@ -44,23 +49,23 @@ def analyze_vibration_spectrum(vtx_file_path, window_seconds=10):
 
     # Select analysis window
     window_samples = int(window_seconds * sample_rate)
-    if len(samples) < window_samples:
-        window_samples = len(samples)
+    if len(records) < window_samples:
+        window_samples = len(records)
         print(f"\nWarning: File shorter than {window_seconds}s, using full duration")
 
     # Get middle section (avoid startup transients)
-    start_idx = len(samples) // 2
+    start_idx = len(records) // 2
     end_idx = start_idx + window_samples
-    if end_idx > len(samples):
+    if end_idx > len(records):
         start_idx = 0
         end_idx = window_samples
 
     print(f"Analyzing window: {start_idx} to {end_idx} ({window_samples} samples)")
 
     # Extract acceleration data
-    accel_x = samples['accel_x'].values[start_idx:end_idx]
-    accel_y = samples['accel_y'].values[start_idx:end_idx]
-    accel_z = samples['accel_z'].values[start_idx:end_idx]
+    accel_x = np.array([r.accel_x for r in records[start_idx:end_idx]])
+    accel_y = np.array([r.accel_y for r in records[start_idx:end_idx]])
+    accel_z = np.array([r.accel_z for r in records[start_idx:end_idx]])
 
     # Compute acceleration magnitude
     accel_mag = np.sqrt(accel_x**2 + accel_y**2 + accel_z**2)
@@ -129,7 +134,7 @@ def analyze_vibration_spectrum(vtx_file_path, window_seconds=10):
             percent = (band_power / total_power) * 100
             print(f"  {band_name:25s}: {percent:6.2f}%")
 
-    return results, sample_rate, data
+    return results, sample_rate, vtx_data
 
 
 def plot_frequency_analysis(results, sample_rate, output_file='vibration_spectrum.png'):

@@ -72,7 +72,7 @@ class VTXDecoder:
 
     def read_header(self) -> VTXHeader:
         """
-        Read file header (64 bytes)
+        Read file header (50 bytes for v1.0, 64 bytes for v1.1+)
 
         Returns:
             Parsed header
@@ -80,9 +80,11 @@ class VTXDecoder:
         Raises:
             ValueError: If file is invalid or corrupted
         """
-        if len(self.data) < VTX_CONSTANTS.HEADER_SIZE:
+        # Minimum header size for v1.0 is 50 bytes
+        MIN_HEADER_SIZE = 50
+        if len(self.data) < MIN_HEADER_SIZE:
             raise ValueError(
-                f"File too small: expected at least {VTX_CONSTANTS.HEADER_SIZE} bytes, "
+                f"File too small: expected at least {MIN_HEADER_SIZE} bytes, "
                 f"got {len(self.data)}"
             )
 
@@ -151,8 +153,30 @@ class VTXDecoder:
         # Calculate record size based on format flags
         self.record_size = self._calculate_record_size(record_format)
 
-        # Skip reserved fields (18 bytes)
-        # offset += 18  # Not needed as we're done with header
+        # GPS record count (8 bytes, v1.1+)
+        gps_record_count = None
+        gps_data_offset = None
+
+        if version_minor >= 1:
+            # v1.1+ has GPS fields
+            gps_count = struct.unpack("<Q", self.data[offset : offset + 8])[0]
+            offset += 8
+
+            gps_offset = struct.unpack("<I", self.data[offset : offset + 4])[0]
+            offset += 4
+
+            # Only set if non-zero
+            if gps_count > 0:
+                gps_record_count = gps_count
+                gps_data_offset = gps_offset
+
+            # Skip remaining reserved fields (6 bytes)
+            # offset += 6  # Not needed as we're done with header
+        else:
+            # v1.0 has no GPS fields
+            # Skip all reserved fields (18 bytes)
+            # offset += 18  # Not needed as we're done with header
+            pass
 
         header = VTXHeader(
             magic=magic,
@@ -166,6 +190,8 @@ class VTXDecoder:
             end_timestamp=end_timestamp,
             record_format=record_format,
             compression=compression,
+            gps_record_count=gps_record_count,
+            gps_data_offset=gps_data_offset,
         )
 
         self.header = header

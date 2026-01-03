@@ -28,10 +28,12 @@ interface IMUUPlotChartsProps {
   originalCount: number
 }
 
-type DataType = 'orientation' | 'accel' | 'gyro'  // Added orientation (roll/pitch/yaw)
+type DataType = 'orientation' | 'trueOrientation' | 'accel' | 'gyro'  // Added orientation and filtered true orientation
 
 export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPlotChartsProps) {
   const [samples, setSamples] = useState<IMUSample[]>(initialSamples)
+  const [filteredSamples, setFilteredSamples] = useState<IMUSample[] | null>(null)
+  const [filteredLoading, setFilteredLoading] = useState(false)
 
   // Check if orientation data exists
   const hasOrientationData = samples.some(s => s.roll !== null && s.pitch !== null && s.yaw !== null)
@@ -106,39 +108,114 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
     fetchDetailData()
   }, [zoomRange, fileId])
 
-  // Reset zoom and samples when dataType actually changes (user clicks button)
+  // Fetch filtered orientation data when switching to trueOrientation
+  useEffect(() => {
+    if (dataType !== 'trueOrientation') return
+    if (filteredSamples !== null) return // Already loaded
+
+    const fetchFilteredData = async () => {
+      setFilteredLoading(true)
+      try {
+        const supabase = createClient()
+        const { data: { session } } = await supabase.auth.getSession()
+
+        if (!session) {
+          console.error('No session found for filtered orientation fetch')
+          return
+        }
+
+        const params = new URLSearchParams()
+        if (zoomRange) {
+          params.set('start', zoomRange.start)
+          params.set('end', zoomRange.end)
+        }
+
+        const response = await fetch(`/api/recordings/${fileId}/samples/filtered?${params}`, {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`
+          }
+        })
+        const responseData = await response.json()
+
+        if (responseData.samples && responseData.samples.length > 0) {
+          // Transform filtered samples to match IMUSample format
+          const transformedSamples: IMUSample[] = responseData.samples.map((s: any) => ({
+            timestamp: new Date(s.timestamp).toISOString(),
+            // Keep original accel/gyro data from main samples
+            accel_x: 0,
+            accel_y: 0,
+            accel_z: 0,
+            gyro_x: 0,
+            gyro_y: 0,
+            gyro_z: 0,
+            // Filtered orientation
+            roll: s.roll,
+            pitch: s.pitch,
+            yaw: s.yaw
+          }))
+          setFilteredSamples(transformedSamples)
+        }
+      } catch (error) {
+        console.error('Failed to fetch filtered orientation:', error)
+      } finally {
+        setFilteredLoading(false)
+      }
+    }
+
+    fetchFilteredData()
+  }, [dataType, fileId, zoomRange, filteredSamples])
+
+  // Track dataType changes but KEEP zoom persistent across tabs!
   useEffect(() => {
     if (prevDataTypeRef.current !== dataType) {
-      // User changed the data type - reset zoom and samples
-      setZoomRange(null)
-      setSamples(initialSamples)
       prevDataTypeRef.current = dataType
+
+      // Only reset to initial samples if NOT zoomed
+      if (!zoomRange) {
+        setSamples(initialSamples)
+      }
+      // If zoomed, keep current samples (or refetch will happen via zoomRange dependency)
     }
-  }, [dataType, initialSamples])
+  }, [dataType, initialSamples, zoomRange])
+
+  // Determine which data source we need for the current chart type
+  const getActiveDataSource = () => {
+    if (dataType === 'trueOrientation') {
+      return filteredSamples
+    }
+    return samples
+  }
 
   // Create/update chart when samples or dataType change
   useEffect(() => {
-    if (!chartRef.current || samples.length === 0) return
+    if (!chartRef.current) return
+
+    const activeData = getActiveDataSource()
+
+    // Wait for data to be available
+    if (!activeData || activeData.length === 0) {
+      return // Don't render yet, data is still loading
+    }
 
     // Detect gaps in timestamps and insert null markers
     // Only mark gaps that are significantly larger than expected sample spacing
     // For downsampled data, we need a much larger threshold to avoid false positives
     // Calculate expected sample spacing based on data span
-    const firstTime = new Date(samples[0].timestamp).getTime()
-    const lastTime = new Date(samples[samples.length - 1].timestamp).getTime()
+    const firstTime = new Date(activeData[0].timestamp).getTime()
+    const lastTime = new Date(activeData[activeData.length - 1].timestamp).getTime()
     const totalDuration = lastTime - firstTime
-    const expectedSampleSpacing = totalDuration / samples.length
+    const expectedSampleSpacing = totalDuration / activeData.length
     // Use 10x the expected spacing as threshold - only mark real gaps
     const GAP_THRESHOLD_MS = Math.max(5000, expectedSampleSpacing * 10)
-    
+
     const samplesWithGaps: (IMUSample | null)[] = []
 
-    for (let i = 0; i < samples.length; i++) {
-      samplesWithGaps.push(samples[i])
+    for (let i = 0; i < activeData.length; i++) {
+      samplesWithGaps.push(activeData[i])
 
-      if (i < samples.length - 1) {
-        const currentTime = new Date(samples[i].timestamp).getTime()
-        const nextTime = new Date(samples[i + 1].timestamp).getTime()
+      if (i < activeData.length - 1) {
+        const currentTime = new Date(activeData[i].timestamp).getTime()
+        const nextTime = new Date(activeData[i + 1].timestamp).getTime()
         const gap = nextTime - currentTime
 
         if (gap > GAP_THRESHOLD_MS) {
@@ -177,6 +254,7 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
 
     switch (dataType) {
       case 'orientation':
+      case 'trueOrientation':
         data = [
           finalTimestamps,
           finalSamplesWithGaps.map(s => s ? (s.roll ?? null) : null) as (number | null)[],
@@ -435,7 +513,7 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
       resizeObserver.disconnect()
       // Don't destroy chart here - we manage it manually based on dataType changes
     }
-  }, [samples, dataType, zoomRange])
+  }, [samples, dataType, zoomRange, filteredSamples])
   
   // Separate cleanup on unmount
   useEffect(() => {
@@ -451,13 +529,19 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
   // Calculate stats
   const calculateStats = () => {
     let values: { [key: string]: number[] } = {}
-    
+
+    // Use filtered samples for trueOrientation
+    const activeSamples = dataType === 'trueOrientation' && filteredSamples !== null
+      ? filteredSamples
+      : samples
+
     switch (dataType) {
       case 'orientation':
+      case 'trueOrientation':
         values = {
-          'Roll': samples.map(s => s.roll ?? 0),
-          'Pitch': samples.map(s => s.pitch ?? 0),
-          'Yaw': samples.map(s => s.yaw ?? 0)
+          'Roll': activeSamples.map(s => s.roll ?? 0),
+          'Pitch': activeSamples.map(s => s.pitch ?? 0),
+          'Yaw': activeSamples.map(s => s.yaw ?? 0)
         }
         break
       case 'accel':
@@ -493,6 +577,7 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
   const getUnit = () => {
     switch (dataType) {
       case 'orientation': return '°'
+      case 'trueOrientation': return '°'
       case 'accel': return 'm/s²'
       case 'gyro': return 'rad/s'
       // Magnetometer removed
@@ -501,7 +586,8 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
 
   const getTitle = () => {
     switch (dataType) {
-      case 'orientation': return 'Orientation'
+      case 'orientation': return 'Orientation (BNO055)'
+      case 'trueOrientation': return 'True* Orientation (Bicycle Filter)'
       case 'accel': return 'Accelerometer'
       case 'gyro': return 'Gyroscope'
       // Magnetometer removed
@@ -513,16 +599,30 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
       {/* Selector */}
       <div className="flex gap-2 items-center">
         {hasOrientationData && (
-          <button
-            onClick={() => setDataType('orientation')}
-            className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
-              dataType === 'orientation'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-muted text-muted-foreground hover:bg-muted/80'
-            }`}
-          >
-            Orientation
-          </button>
+          <>
+            <button
+              onClick={() => setDataType('orientation')}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                dataType === 'orientation'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted text-muted-foreground hover:bg-muted/80'
+              }`}
+            >
+              Orientation
+            </button>
+            <button
+              onClick={() => setDataType('trueOrientation')}
+              className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+                dataType === 'trueOrientation'
+                  ? 'bg-primary text-primary-foreground'
+                  : 'bg-muted text-muted-foreground hover:bg-muted/80'
+              }`}
+              disabled={filteredLoading}
+            >
+              True* Orientation
+              {filteredLoading && <span className="ml-1 text-xs">...</span>}
+            </button>
+          </>
         )}
         <button
           onClick={() => setDataType('accel')}
@@ -577,7 +677,7 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
         {stats.map(({ axis, min, max, mean }) => {
           // Determine color based on data type and axis
           let color = 'hsl(0, 70%, 50%)' // Default red
-          if (dataType === 'orientation') {
+          if (dataType === 'orientation' || dataType === 'trueOrientation') {
             // Match orientation chart colors
             if (axis === 'Roll') color = 'hsl(220, 70%, 50%)' // Blue
             else if (axis === 'Pitch') color = 'hsl(145, 60%, 45%)' // Green
@@ -597,7 +697,7 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
                   style={{ backgroundColor: color }}
                 />
                 <span className="font-medium text-foreground">
-                  {dataType === 'orientation' ? axis : `${axis}-axis`}
+                  {(dataType === 'orientation' || dataType === 'trueOrientation') ? axis : `${axis}-axis`}
                 </span>
               </div>
               <div className="space-y-1 text-xs text-muted-foreground font-mono">

@@ -74,10 +74,11 @@ bool SensorManager::update() {
   // Convert quaternion to euler angles
   imu::Vector<3> euler = quat.toEuler();
 
-  // Read other sensor data
-  // Use VECTOR_LINEARACCEL: gravity-compensated acceleration from sensor fusion
-  // This provides filtered, clean acceleration data without gravity component
-  imu::Vector<3> accel = bno.getVector(Adafruit_BNO055::VECTOR_LINEARACCEL);
+  // Read sensor data
+  // VECTOR_ACCELEROMETER: Raw accelerometer data including gravity (for recording/fusion)
+  // VECTOR_LINEARACCEL: Gravity-compensated (for on-device brake detection)
+  imu::Vector<3> accel = bno.getVector(Adafruit_BNO055::VECTOR_ACCELEROMETER);
+  imu::Vector<3> accel_linear = bno.getVector(Adafruit_BNO055::VECTOR_LINEARACCEL);
   imu::Vector<3> gyro = bno.getVector(Adafruit_BNO055::VECTOR_GYROSCOPE);
   // Magnetometer removed - using 6DoF IMU mode (no mag interference)
 
@@ -99,7 +100,7 @@ bool SensorManager::update() {
   sensorData.roll = normalizeAngle(euler.y() * RAD_TO_DEG);
   sensorData.pitch = normalizeAngle(euler.z() * RAD_TO_DEG);
 
-  // Linear acceleration (m/s²)
+  // Raw acceleration (m/s²) - includes gravity component for fusion
   sensorData.accel_x = accel.x();
   sensorData.accel_y = accel.y();
   sensorData.accel_z = accel.z();
@@ -117,8 +118,9 @@ bool SensorManager::update() {
   sensorData.cal_accel = accel_cal;
 
   // Brake detection: check if X-axis acceleration exceeds threshold
-  // Note: VECTOR_LINEARACCEL is already gravity-compensated
-  float accel_magnitude_x = fabs(accel.x());
+  // Use linear accel (gravity-compensated) for brake detection
+  // This works consistently at any pitch angle
+  float accel_magnitude_x = fabs(accel_linear.x());
 
   if (accel_magnitude_x > BRAKE_ACCEL_THRESHOLD) {
     // High acceleration detected

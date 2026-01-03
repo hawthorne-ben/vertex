@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2025-12-12
+
+### Added
+- **GPS Support (VTX Format v1.1)**: Added separate GPS data stream to VTX binary format
+- New GPSRecord type with fields: `timestamp`, `latitude`, `longitude`, `altitude`, `speed`, `bearing`, `accuracy`
+- GPS records stored as separate stream after IMU data (44 bytes per record)
+- Extended VTXHeader with `gpsRecordCount` and `gpsDataOffset` fields for v1.1+
+- `includeGPS` option in VTXEncoderOptions for enabling GPS recording
+- GPS_RECORD_SIZE constant (44 bytes) in VTX_CONSTANTS
+- VTXEncoder methods: `addGPSRecord()`, `addGPSRecords()`, `getGPSRecordCount()`
+- VTXStreamEncoder method: `addGPSRecord()` for real-time GPS recording
+- VTXDecoder methods: `readGPSRecords()`, `readGPSRecord()`, `getGPSRecordCount()`
+- VTXFile interface now includes optional `gpsRecords` array
+- Exported additional types: `GPSRecord`, `VTXMetadata`, `VTXEncoderOptions`, `VTXDecoderOptions`
+
+### Changed
+- Binary format version bumped to v1.1 (minor version increment)
+- VTXHeader reserved space now used for GPS fields (8 bytes for gpsRecordCount, 4 bytes for gpsDataOffset)
+- Decoder is backwards compatible - reads v1.0 files without GPS data
+- VTXStreamEncoder tracks GPS data offset and includes GPS records in finalize()
+
+### Technical Details
+- GPS records use double precision for lat/lon (float64), single precision for other fields (float32)
+- Null/unavailable GPS fields stored as NaN in binary format
+- GPS data stream is independent from IMU data stream for efficient access
+- GPS timestamps use same base timestamp as IMU records for synchronization
+- Record layout: timestamp (4B) + lat (8B) + lon (8B) + altitude (4B) + speed (4B) + bearing (4B) + accuracy (4B) + reserved (4B) = 44 bytes
+
+### Migration Guide
+- v1.0 files continue to work without changes
+- v1.1 files with GPS are readable by updated decoder
+- Files without GPS data (gpsRecordCount = 0) behave identically to v1.0
+- Optional fields in VTXHeader are backwards compatible
+
 ## [0.4.0] - 2025-11-06
 
 ### Added
