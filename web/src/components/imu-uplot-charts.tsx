@@ -28,12 +28,14 @@ interface IMUUPlotChartsProps {
   originalCount: number
 }
 
-type DataType = 'orientation' | 'trueOrientation' | 'accel' | 'gyro'  // Added orientation and filtered true orientation
+type DataType = 'orientation' | 'trueOrientation' | 'accel' | 'gyro' | 'smoothedAccel' | 'smoothedGyro'
 
 export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPlotChartsProps) {
   const [samples, setSamples] = useState<IMUSample[]>(initialSamples)
   const [filteredSamples, setFilteredSamples] = useState<IMUSample[] | null>(null)
+  const [smoothedSamples, setSmoothedSamples] = useState<IMUSample[] | null>(null)
   const [filteredLoading, setFilteredLoading] = useState(false)
+  const [smoothedLoading, setSmoothedLoading] = useState(false)
 
   // Check if orientation data exists
   const hasOrientationData = samples.some(s => s.roll !== null && s.pitch !== null && s.yaw !== null)
@@ -69,10 +71,19 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
         const params = new URLSearchParams({
           start: zoomRange.start,
           end: zoomRange.end,
-          resolution: 'high'
         })
 
-        const response = await fetch(`/api/recordings/${fileId}/samples?${params}`, {
+        // Use appropriate endpoint based on current data type
+        let endpoint: string
+        if (dataType === 'trueOrientation') {
+          endpoint = `/api/recordings/${fileId}/samples/filtered?${params}`
+        } else if (dataType === 'smoothedAccel' || dataType === 'smoothedGyro') {
+          endpoint = `/api/recordings/${fileId}/samples/smoothed?${params}`
+        } else {
+          endpoint = `/api/recordings/${fileId}/samples?${params}&resolution=high`
+        }
+
+        const response = await fetch(endpoint, {
           headers: {
             'Authorization': `Bearer ${session.access_token}`
           }
@@ -80,23 +91,55 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
         const responseData = await response.json()
 
         if (responseData.samples && responseData.samples.length > 0) {
-          // Transform API response format to component format
-          const transformedSamples: IMUSample[] = responseData.samples.map((s: any) => ({
-            timestamp: new Date(s.timestamp).toISOString(),
-            accel_x: s.accel.x,
-            accel_y: s.accel.y,
-            accel_z: s.accel.z,
-            gyro_x: s.gyro.x,
-            gyro_y: s.gyro.y,
-            gyro_z: s.gyro.z,
-            mag_x: s.mag?.x ?? null,
-            mag_y: s.mag?.y ?? null,
-            mag_z: s.mag?.z ?? null,
-            roll: s.euler?.roll ?? null,
-            pitch: s.euler?.pitch ?? null,
-            yaw: s.euler?.yaw ?? null
-          }))
-          setSamples(transformedSamples)
+          if (dataType === 'trueOrientation') {
+            // Transform filtered samples
+            const transformedSamples: IMUSample[] = responseData.samples.map((s: any) => ({
+              timestamp: new Date(s.timestamp).toISOString(),
+              accel_x: 0,
+              accel_y: 0,
+              accel_z: 0,
+              gyro_x: 0,
+              gyro_y: 0,
+              gyro_z: 0,
+              roll: s.roll,
+              pitch: s.pitch,
+              yaw: s.yaw
+            }))
+            setFilteredSamples(transformedSamples)
+          } else if (dataType === 'smoothedAccel' || dataType === 'smoothedGyro') {
+            // Transform smoothed samples
+            const transformedSamples: IMUSample[] = responseData.samples.map((s: any) => ({
+              timestamp: new Date(s.timestamp).toISOString(),
+              accel_x: s.accel.x,
+              accel_y: s.accel.y,
+              accel_z: s.accel.z,
+              gyro_x: s.gyro.x,
+              gyro_y: s.gyro.y,
+              gyro_z: s.gyro.z,
+              roll: null,
+              pitch: null,
+              yaw: null
+            }))
+            setSmoothedSamples(transformedSamples)
+          } else {
+            // Transform regular samples
+            const transformedSamples: IMUSample[] = responseData.samples.map((s: any) => ({
+              timestamp: new Date(s.timestamp).toISOString(),
+              accel_x: s.accel.x,
+              accel_y: s.accel.y,
+              accel_z: s.accel.z,
+              gyro_x: s.gyro.x,
+              gyro_y: s.gyro.y,
+              gyro_z: s.gyro.z,
+              mag_x: s.mag?.x ?? null,
+              mag_y: s.mag?.y ?? null,
+              mag_z: s.mag?.z ?? null,
+              roll: s.euler?.roll ?? null,
+              pitch: s.euler?.pitch ?? null,
+              yaw: s.euler?.yaw ?? null
+            }))
+            setSamples(transformedSamples)
+          }
         }
       } catch (error) {
         console.error('Failed to fetch detail data:', error)
@@ -106,12 +149,13 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
     }
 
     fetchDetailData()
-  }, [zoomRange, fileId])
+  }, [zoomRange, fileId, dataType])
 
-  // Fetch filtered orientation data when switching to trueOrientation
+  // Fetch filtered orientation data when switching to trueOrientation (initial load only)
   useEffect(() => {
     if (dataType !== 'trueOrientation') return
     if (filteredSamples !== null) return // Already loaded
+    if (zoomRange !== null) return // Zoom handler will fetch zoomed filtered data
 
     const fetchFilteredData = async () => {
       setFilteredLoading(true)
@@ -124,13 +168,7 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
           return
         }
 
-        const params = new URLSearchParams()
-        if (zoomRange) {
-          params.set('start', zoomRange.start)
-          params.set('end', zoomRange.end)
-        }
-
-        const response = await fetch(`/api/recordings/${fileId}/samples/filtered?${params}`, {
+        const response = await fetch(`/api/recordings/${fileId}/samples/filtered`, {
           headers: {
             'Authorization': `Bearer ${session.access_token}`
           }
@@ -163,7 +201,57 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
     }
 
     fetchFilteredData()
-  }, [dataType, fileId, zoomRange, filteredSamples])
+  }, [dataType, fileId, filteredSamples, zoomRange])
+
+  // Fetch smoothed sensor data when switching to smoothed tabs (initial load only)
+  useEffect(() => {
+    if (dataType !== 'smoothedAccel' && dataType !== 'smoothedGyro') return
+    if (smoothedSamples !== null) return // Already loaded
+    if (zoomRange !== null) return // Zoom handler will fetch zoomed data
+
+    const fetchSmoothedData = async () => {
+      setSmoothedLoading(true)
+      try {
+        const supabase = createClient()
+        const { data: { session } } = await supabase.auth.getSession()
+
+        if (!session) {
+          console.error('No session found for smoothed data fetch')
+          return
+        }
+
+        const response = await fetch(`/api/recordings/${fileId}/samples/smoothed`, {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`
+          }
+        })
+        const responseData = await response.json()
+
+        if (responseData.samples && responseData.samples.length > 0) {
+          // Transform smoothed samples to match IMUSample format
+          const transformedSamples: IMUSample[] = responseData.samples.map((s: any) => ({
+            timestamp: new Date(s.timestamp).toISOString(),
+            accel_x: s.accel.x,
+            accel_y: s.accel.y,
+            accel_z: s.accel.z,
+            gyro_x: s.gyro.x,
+            gyro_y: s.gyro.y,
+            gyro_z: s.gyro.z,
+            roll: null,
+            pitch: null,
+            yaw: null
+          }))
+          setSmoothedSamples(transformedSamples)
+        }
+      } catch (error) {
+        console.error('Failed to fetch smoothed data:', error)
+      } finally {
+        setSmoothedLoading(false)
+      }
+    }
+
+    fetchSmoothedData()
+  }, [dataType, fileId, smoothedSamples, zoomRange])
 
   // Track dataType changes but KEEP zoom persistent across tabs!
   useEffect(() => {
@@ -178,17 +266,20 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
     }
   }, [dataType, initialSamples, zoomRange])
 
-  // Determine which data source we need for the current chart type
-  const getActiveDataSource = () => {
-    if (dataType === 'trueOrientation') {
-      return filteredSamples
-    }
-    return samples
-  }
-
   // Create/update chart when samples or dataType change
   useEffect(() => {
     if (!chartRef.current) return
+
+    // Determine which data source we need for the current chart type
+    const getActiveDataSource = () => {
+      if (dataType === 'trueOrientation') {
+        return filteredSamples
+      }
+      if (dataType === 'smoothedAccel' || dataType === 'smoothedGyro') {
+        return smoothedSamples
+      }
+      return samples
+    }
 
     const activeData = getActiveDataSource()
 
@@ -285,6 +376,36 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
         yAxisLabel = 'Acceleration (m/s²)'
         break
       case 'gyro':
+        data = [
+          finalTimestamps,
+          finalSamplesWithGaps.map(s => s ? s.gyro_x : null) as (number | null)[],
+          finalSamplesWithGaps.map(s => s ? s.gyro_y : null) as (number | null)[],
+          finalSamplesWithGaps.map(s => s ? s.gyro_z : null) as (number | null)[]
+        ]
+        series = [
+          {}, // Timestamp series (no label, no stroke - won't show in legend)
+          { label: 'X', stroke: 'hsl(10, 49.20%, 52.90%)', width: 2, spanGaps: false, points: { show: false, size: 0 } },
+          { label: 'Y', stroke: 'hsl(145, 49.60%, 54.10%)', width: 2, spanGaps: false, points: { show: false, size: 0 } },
+          { label: 'Z', stroke: 'hsl(205, 59.70%, 70.80%)', width: 2, spanGaps: false, points: { show: false, size: 0 } }
+        ]
+        yAxisLabel = 'Angular Velocity (rad/s)'
+        break
+      case 'smoothedAccel':
+        data = [
+          finalTimestamps,
+          finalSamplesWithGaps.map(s => s ? s.accel_x : null) as (number | null)[],
+          finalSamplesWithGaps.map(s => s ? s.accel_y : null) as (number | null)[],
+          finalSamplesWithGaps.map(s => s ? s.accel_z : null) as (number | null)[]
+        ]
+        series = [
+          {}, // Timestamp series (no label, no stroke - won't show in legend)
+          { label: 'X', stroke: 'hsl(10, 49.20%, 52.90%)', width: 2, spanGaps: false, points: { show: false, size: 0 } },
+          { label: 'Y', stroke: 'hsl(145, 49.60%, 54.10%)', width: 2, spanGaps: false, points: { show: false, size: 0 } },
+          { label: 'Z', stroke: 'hsl(205, 59.70%, 70.80%)', width: 2, spanGaps: false, points: { show: false, size: 0 } }
+        ]
+        yAxisLabel = 'Acceleration (m/s²)'
+        break
+      case 'smoothedGyro':
         data = [
           finalTimestamps,
           finalSamplesWithGaps.map(s => s ? s.gyro_x : null) as (number | null)[],
@@ -513,7 +634,7 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
       resizeObserver.disconnect()
       // Don't destroy chart here - we manage it manually based on dataType changes
     }
-  }, [samples, dataType, zoomRange, filteredSamples])
+  }, [samples, dataType, zoomRange, filteredSamples, smoothedSamples])
   
   // Separate cleanup on unmount
   useEffect(() => {
@@ -579,7 +700,9 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
       case 'orientation': return '°'
       case 'trueOrientation': return '°'
       case 'accel': return 'm/s²'
-      case 'gyro': return 'rad/s'
+      case 'smoothedAccel': return 'm/s²'
+      case 'gyro': return 'deg/s'
+      case 'smoothedGyro': return 'rad/s'
       // Magnetometer removed
     }
   }
@@ -589,7 +712,9 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
       case 'orientation': return 'Orientation (BNO055)'
       case 'trueOrientation': return 'True* Orientation (Bicycle Filter)'
       case 'accel': return 'Accelerometer'
+      case 'smoothedAccel': return 'Smoothed Accelerometer (0.1Hz EMA)'
       case 'gyro': return 'Gyroscope'
+      case 'smoothedGyro': return 'Smoothed Gyroscope (2Hz EMA)'
       // Magnetometer removed
     }
   }
@@ -644,8 +769,32 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
         >
           Gyroscope
         </button>
+        <button
+          onClick={() => setDataType('smoothedAccel')}
+          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+            dataType === 'smoothedAccel'
+              ? 'bg-primary text-primary-foreground'
+              : 'bg-muted text-muted-foreground hover:bg-muted/80'
+          }`}
+          disabled={smoothedLoading}
+        >
+          Smoothed Accel
+          {smoothedLoading && <span className="ml-1 text-xs">...</span>}
+        </button>
+        <button
+          onClick={() => setDataType('smoothedGyro')}
+          className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${
+            dataType === 'smoothedGyro'
+              ? 'bg-primary text-primary-foreground'
+              : 'bg-muted text-muted-foreground hover:bg-muted/80'
+          }`}
+          disabled={smoothedLoading}
+        >
+          Smoothed Gyro
+          {smoothedLoading && <span className="ml-1 text-xs">...</span>}
+        </button>
         {/* Magnetometer button removed - using 6DoF mode */}
-        
+
         {loading && (
           <span className="text-xs text-secondary ml-2">Loading detail...</span>
         )}
@@ -655,6 +804,9 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
             onClick={() => {
               setZoomRange(null)
               setSamples(initialSamples)
+              // Also reset filtered and smoothed samples so they refetch full dataset
+              setFilteredSamples(null)
+              setSmoothedSamples(null)
             }}
             className="ml-auto px-3 py-1 text-xs rounded-md bg-muted text-muted-foreground hover:bg-muted/80"
           >

@@ -217,3 +217,38 @@ export class MedianFilter {
     this.buffer = []
   }
 }
+
+/**
+ * 3-axis median filter for vector data (outlier rejection)
+ */
+export class VectorMedianFilter {
+  private xFilter: MedianFilter
+  private yFilter: MedianFilter
+  private zFilter: MedianFilter
+
+  constructor(windowSize: number = 5) {
+    this.xFilter = new MedianFilter(windowSize)
+    this.yFilter = new MedianFilter(windowSize)
+    this.zFilter = new MedianFilter(windowSize)
+  }
+
+  /**
+   * Filter a 3D vector
+   */
+  update(x: number, y: number, z: number): { x: number; y: number; z: number } {
+    return {
+      x: this.xFilter.update(x),
+      y: this.yFilter.update(y),
+      z: this.zFilter.update(z),
+    }
+  }
+
+  /**
+   * Reset filter state
+   */
+  reset() {
+    this.xFilter.reset()
+    this.yFilter.reset()
+    this.zFilter.reset()
+  }
+}

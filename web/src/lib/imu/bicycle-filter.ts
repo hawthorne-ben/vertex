@@ -7,7 +7,7 @@
  * Key improvement: Denoise gyro and accel BEFORE fusion (like BNO055 does internally)
  */
 
-import { VectorLowPassFilter } from './signal-processing'
+import { VectorLowPassFilter, VectorMedianFilter } from './signal-processing'
 
 export interface IMUReading {
   accelX: number
@@ -56,6 +56,7 @@ export class BicycleIMUFilter {
   private readonly MAX_PITCH = (30.0 * Math.PI) / 180 // 30 degrees in radians
 
   // Preprocessing filters (denoise BEFORE fusion - critical!)
+  private gyroMedianFilter: VectorMedianFilter // Reject outlier spikes from gyro
   private gyroFilter: VectorLowPassFilter // Remove vibration from gyro
   private accelFilter: VectorLowPassFilter // Clean gravity vector
   private sampleRate: number
@@ -85,11 +86,14 @@ export class BicycleIMUFilter {
     this.sampleRate = options?.sampleRate || 50.0
 
     // Initialize preprocessing filters
-    // Gyro: Cut at 10 Hz (remove vibration, keep motion)
-    // Accel: Cut at 5 Hz (clean gravity vector, remove bumps/vibration)
-    const gyroCutoff = options?.gyroCutoff || 10.0
-    const accelCutoff = options?.accelCutoff || 5.0
+    // Gyro: Two-stage filtering
+    //   1. Median filter (3-sample window) - reject outlier spikes
+    //   2. Low-pass (2 Hz) - smooth remaining noise
+    // Accel: Very aggressive (0.1 Hz) - gravity vector changes slowly, filter out all dynamics
+    const gyroCutoff = options?.gyroCutoff || 2.0
+    const accelCutoff = options?.accelCutoff || 0.1
 
+    this.gyroMedianFilter = new VectorMedianFilter(3) // Small window for quick response
     this.gyroFilter = new VectorLowPassFilter(gyroCutoff, this.sampleRate)
     this.accelFilter = new VectorLowPassFilter(accelCutoff, this.sampleRate)
 
@@ -127,31 +131,58 @@ export class BicycleIMUFilter {
     const gyroRadY = (imu.gyroY * Math.PI) / 180
     const gyroRadZ = (imu.gyroZ * Math.PI) / 180
 
-    // PREPROCESSING: Denoise gyro and accel BEFORE fusion
-    // This is what the BNO055 does internally - critical for stability!
-    const gyroFiltered = this.gyroFilter.update(gyroRadX, gyroRadY, gyroRadZ)
-    const accelFiltered = this.accelFilter.update(imu.accelX, imu.accelY, imu.accelZ)
-
-    // 2. ACCELEROMETER GRAVITY (use filtered accel)
-    const accelMag = Math.sqrt(
-      accelFiltered.x ** 2 + accelFiltered.y ** 2 + accelFiltered.z ** 2
+    // Calculate trust from RAW accel magnitude (before filtering)
+    // This is critical - filtered accel lags during dynamics and looks deceptively stable
+    const accelMagRaw = Math.sqrt(
+      imu.accelX ** 2 + imu.accelY ** 2 + imu.accelZ ** 2
     )
+
+    // Calculate gyro magnitude (rotation rate)
+    // During turns, even if accel magnitude looks normal, the pitch/roll from accel is WRONG
+    // because centripetal acceleration corrupts the gravity vector
+    const gyroMagRaw = Math.sqrt(gyroRadX ** 2 + gyroRadY ** 2 + gyroRadZ ** 2)
 
     // Adaptive trust: trust accel more when |a| ≈ g (low dynamics)
     // When accelMag deviates from gravity, we're experiencing dynamics (braking, cornering, etc.)
     const G = 9.81 // gravity constant (m/s²)
-    const dynamicsFactor = Math.abs(accelMag - G) / G
+    const accelDynamicsFactor = Math.abs(accelMagRaw - G) / G
+
+    // Also reduce trust during rotation (turns, even if coordinated)
+    // During turns, centripetal acceleration corrupts the gravity vector
+    // Threshold: 0.5 rad/s (~30 deg/s) is a gentle turn
+    const gyroThreshold = 0.5 // rad/s
+    const gyroDynamicsFactor = Math.max(0, (gyroMagRaw - gyroThreshold) / gyroThreshold)
+
+    // Combined dynamics: use the WORSE of the two (most conservative)
+    const dynamicsFactor = Math.max(accelDynamicsFactor, gyroDynamicsFactor)
+
+    // Drop trust aggressively during dynamics: 20% deviation -> 10% trust
+    // This prevents accelerometer noise from corrupting orientation during braking/bumps/turns
     this.accelTrust = Math.max(
       this.minAccelTrust,
-      Math.min(1.0, 1.0 - dynamicsFactor / 4.0)
+      Math.min(1.0, 1.0 - dynamicsFactor * 4.5)
     )
+
+    // PREPROCESSING: Two-stage gyro filtering (BNO055 likely does similar)
+    // Stage 1: Median filter to reject outlier spikes (critical for gyro stability)
+    const gyroMedian = this.gyroMedianFilter.update(gyroRadX, gyroRadY, gyroRadZ)
+    // Stage 2: Low-pass filter to smooth remaining noise
+    const gyroFiltered = this.gyroFilter.update(gyroMedian.x, gyroMedian.y, gyroMedian.z)
+
+    // Accel: Single-stage aggressive low-pass (gravity vector only)
+    const accelFiltered = this.accelFilter.update(imu.accelX, imu.accelY, imu.accelZ)
 
     // Smooth trust over time to prevent jittery fusion gains (0.2 Hz low-pass)
     const trustAlpha = 0.05 // 5% new, 95% old (very smooth)
     this.accelTrustSmoothed = trustAlpha * this.accelTrust + (1.0 - trustAlpha) * this.accelTrustSmoothed
 
     // Calculate roll/pitch from gravity vector (use filtered accel)
+    // Roll: Y and Z axes (left/up)
     const rollAccel = Math.atan2(accelFiltered.y, accelFiltered.z)
+    // Pitch: X axis (forward/back)
+    // BNO055 convention: negative accel_x when level (sensor X points forward)
+    // When nose tilts down (descent), accel_x becomes MORE negative
+    // But we want pitch to be negative (nose down), so negate accel_x
     const pitchAccel = Math.atan2(
       -accelFiltered.x,
       Math.sqrt(accelFiltered.y ** 2 + accelFiltered.z ** 2)
@@ -163,7 +194,7 @@ export class BicycleIMUFilter {
     if (!this.initialized) {
       const MIN_ACCEL_FOR_INIT = 5.0 // m/s² - must be at least half of gravity
 
-      if (accelMag > MIN_ACCEL_FOR_INIT) {
+      if (accelMagRaw > MIN_ACCEL_FOR_INIT) {
         // Valid gravity vector detected, initialize orientation
         this.roll = rollAccel
         this.pitch = pitchAccel
@@ -180,7 +211,7 @@ export class BicycleIMUFilter {
 
         if (this.enableDebug) {
           result.debug = {
-            accelMag,
+            accelMag: accelMagRaw,
             accelFiltered: { x: accelFiltered.x, y: accelFiltered.y, z: accelFiltered.z },
             gyroFiltered: { x: gyroFiltered.x, y: gyroFiltered.y, z: gyroFiltered.z },
             rollAccel,
@@ -206,7 +237,7 @@ export class BicycleIMUFilter {
 
       if (this.enableDebug) {
         result.debug = {
-          accelMag,
+          accelMag: accelMagRaw,
           accelFiltered: { x: accelFiltered.x, y: accelFiltered.y, z: accelFiltered.z },
           gyroFiltered: { x: gyroFiltered.x, y: gyroFiltered.y, z: gyroFiltered.z },
           rollAccel,
@@ -287,7 +318,7 @@ export class BicycleIMUFilter {
 
     if (this.enableDebug) {
       result.debug = {
-        accelMag,
+        accelMag: accelMagRaw,
         accelFiltered: { x: accelFiltered.x, y: accelFiltered.y, z: accelFiltered.z },
         gyroFiltered: { x: gyroFiltered.x, y: gyroFiltered.y, z: gyroFiltered.z },
         rollAccel,
@@ -316,6 +347,7 @@ export class BicycleIMUFilter {
     this.initialized = false
 
     // Reset preprocessing filters
+    this.gyroMedianFilter.reset()
     this.gyroFilter.reset()
     this.accelFilter.reset()
   }

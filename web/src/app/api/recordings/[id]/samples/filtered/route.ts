@@ -177,7 +177,7 @@ export async function GET(
         }
 
         // Only include if we have valid speed and bearing
-        if (!isNaN(gps.speed) && !isNaN(gps.bearing)) {
+        if (gps.speed !== null && gps.bearing !== null && !isNaN(gps.speed) && !isNaN(gps.bearing)) {
           gpsReadings.push({
             speed: gps.speed,
             heading: (gps.bearing * Math.PI) / 180, // Convert to radians

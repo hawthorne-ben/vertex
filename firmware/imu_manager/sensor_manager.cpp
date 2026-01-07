@@ -92,13 +92,13 @@ bool SensorManager::update() {
   sensorData.timestamp = now;
 
   // Euler angles from quaternion (convert radians to degrees and normalize)
-  // toEuler() returns radians: x=heading/yaw, y=roll, z=pitch
+  // toEuler() returns radians: x=heading/yaw, y=pitch, z=roll (corrected)
   // Note: Using quaternion->euler conversion instead of BNO055 native euler angles
   // because BNO055 has a known bug with native euler at >20° (problematic for cycling)
   // Safety: normalizeAngle() will return 0 if input is NaN/infinite
   sensorData.yaw = normalizeAngle(euler.x() * RAD_TO_DEG);
-  sensorData.roll = normalizeAngle(euler.y() * RAD_TO_DEG);
-  sensorData.pitch = normalizeAngle(euler.z() * RAD_TO_DEG);
+  sensorData.roll = normalizeAngle(euler.z() * RAD_TO_DEG);   // z = roll
+  sensorData.pitch = normalizeAngle(euler.y() * RAD_TO_DEG);  // y = pitch
 
   // Raw acceleration (m/s²) - includes gravity component for fusion
   sensorData.accel_x = accel.x();
