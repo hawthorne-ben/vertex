@@ -22,16 +22,23 @@ interface IMUSample {
   mag_z?: number | null
 }
 
+interface VTXRecordingMetadata {
+  id: string
+  start_time: string
+  end_time: string
+}
+
 interface IMUUPlotChartsProps {
-  fileId: string
+  fileId: string // Keep for backward compatibility, but use recordings array for fetching
   initialSamples: IMUSample[]
   originalCount: number
   highlightTime?: number | null // Unix timestamp in seconds to highlight
+  recordings?: VTXRecordingMetadata[] // Array of recording metadata for multi-file zoom support
 }
 
 type DataType = 'orientation' | 'trueOrientation' | 'accel' | 'gyro' | 'smoothedAccel' | 'smoothedGyro'
 
-export function IMUUPlotCharts({ fileId, initialSamples, originalCount, highlightTime }: IMUUPlotChartsProps) {
+export function IMUUPlotCharts({ fileId, initialSamples, originalCount, highlightTime, recordings }: IMUUPlotChartsProps) {
   const [samples, setSamples] = useState<IMUSample[]>(initialSamples)
   const [filteredSamples, setFilteredSamples] = useState<IMUSample[] | null>(null)
   const [smoothedSamples, setSmoothedSamples] = useState<IMUSample[] | null>(null)
@@ -75,77 +82,120 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount, highligh
           return
         }
 
-        const params = new URLSearchParams({
-          start: zoomRange.start,
-          end: zoomRange.end,
-        })
-
-        // Use appropriate endpoint based on current data type
-        let endpoint: string
-        if (dataType === 'trueOrientation') {
-          endpoint = `/api/recordings/${fileId}/samples/filtered?${params}`
-        } else if (dataType === 'smoothedAccel' || dataType === 'smoothedGyro') {
-          endpoint = `/api/recordings/${fileId}/samples/smoothed?${params}`
-        } else {
-          endpoint = `/api/recordings/${fileId}/samples?${params}&resolution=high`
+        // If no recordings metadata provided, fall back to single file fetch
+        if (!recordings || recordings.length === 0) {
+          console.warn('No recordings metadata provided for zoom, falling back to single file')
+          return
         }
 
-        const response = await fetch(endpoint, {
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`
-          }
-        })
-        const responseData = await response.json()
+        // Determine which recordings overlap with the zoom range
+        const zoomStartMs = new Date(zoomRange.start).getTime()
+        const zoomEndMs = new Date(zoomRange.end).getTime()
 
-        if (responseData.samples && responseData.samples.length > 0) {
+        const overlappingRecordings = recordings.filter(rec => {
+          const recStartMs = new Date(rec.start_time).getTime()
+          const recEndMs = new Date(rec.end_time).getTime()
+          // Check if ranges overlap
+          return recStartMs < zoomEndMs && recEndMs > zoomStartMs
+        })
+
+        if (overlappingRecordings.length === 0) {
+          console.warn('No recordings found in zoom range')
+          return
+        }
+
+        // Fetch samples from each overlapping recording
+        const allFetchedSamples: IMUSample[] = []
+
+        for (const recording of overlappingRecordings) {
+          const params = new URLSearchParams({
+            start: zoomRange.start,
+            end: zoomRange.end,
+          })
+
+          // Use appropriate endpoint based on current data type
+          let endpoint: string
           if (dataType === 'trueOrientation') {
-            // Transform filtered samples
-            const transformedSamples: IMUSample[] = responseData.samples.map((s: any) => ({
-              timestamp: new Date(s.timestamp).toISOString(),
-              accel_x: 0,
-              accel_y: 0,
-              accel_z: 0,
-              gyro_x: 0,
-              gyro_y: 0,
-              gyro_z: 0,
-              roll: s.roll,
-              pitch: s.pitch,
-              yaw: s.yaw
-            }))
-            setFilteredSamples(transformedSamples)
+            endpoint = `/api/recordings/${recording.id}/samples/filtered?${params}`
           } else if (dataType === 'smoothedAccel' || dataType === 'smoothedGyro') {
-            // Transform smoothed samples
-            const transformedSamples: IMUSample[] = responseData.samples.map((s: any) => ({
-              timestamp: new Date(s.timestamp).toISOString(),
-              accel_x: s.accel.x,
-              accel_y: s.accel.y,
-              accel_z: s.accel.z,
-              gyro_x: s.gyro.x,
-              gyro_y: s.gyro.y,
-              gyro_z: s.gyro.z,
-              roll: null,
-              pitch: null,
-              yaw: null
-            }))
-            setSmoothedSamples(transformedSamples)
+            endpoint = `/api/recordings/${recording.id}/samples/smoothed?${params}`
           } else {
-            // Transform regular samples
-            const transformedSamples: IMUSample[] = responseData.samples.map((s: any) => ({
-              timestamp: new Date(s.timestamp).toISOString(),
-              accel_x: s.accel.x,
-              accel_y: s.accel.y,
-              accel_z: s.accel.z,
-              gyro_x: s.gyro.x,
-              gyro_y: s.gyro.y,
-              gyro_z: s.gyro.z,
-              mag_x: s.mag?.x ?? null,
-              mag_y: s.mag?.y ?? null,
-              mag_z: s.mag?.z ?? null,
-              roll: s.euler?.roll ?? null,
-              pitch: s.euler?.pitch ?? null,
-              yaw: s.euler?.yaw ?? null
-            }))
-            setSamples(transformedSamples)
+            endpoint = `/api/recordings/${recording.id}/samples?${params}&resolution=high`
+          }
+
+          const response = await fetch(endpoint, {
+            headers: {
+              'Authorization': `Bearer ${session.access_token}`
+            }
+          })
+          const responseData = await response.json()
+
+          if (responseData.samples && responseData.samples.length > 0) {
+            if (dataType === 'trueOrientation') {
+              // Transform filtered samples
+              const transformedSamples: IMUSample[] = responseData.samples.map((s: any) => ({
+                timestamp: new Date(s.timestamp).toISOString(),
+                accel_x: 0,
+                accel_y: 0,
+                accel_z: 0,
+                gyro_x: 0,
+                gyro_y: 0,
+                gyro_z: 0,
+                roll: s.roll,
+                pitch: s.pitch,
+                yaw: s.yaw
+              }))
+              allFetchedSamples.push(...transformedSamples)
+            } else if (dataType === 'smoothedAccel' || dataType === 'smoothedGyro') {
+              // Transform smoothed samples
+              const transformedSamples: IMUSample[] = responseData.samples.map((s: any) => ({
+                timestamp: new Date(s.timestamp).toISOString(),
+                accel_x: s.accel.x,
+                accel_y: s.accel.y,
+                accel_z: s.accel.z,
+                gyro_x: s.gyro.x,
+                gyro_y: s.gyro.y,
+                gyro_z: s.gyro.z,
+                roll: null,
+                pitch: null,
+                yaw: null
+              }))
+              allFetchedSamples.push(...transformedSamples)
+            } else {
+              // Transform regular samples
+              const transformedSamples: IMUSample[] = responseData.samples.map((s: any) => ({
+                timestamp: new Date(s.timestamp).toISOString(),
+                accel_x: s.accel.x,
+                accel_y: s.accel.y,
+                accel_z: s.accel.z,
+                gyro_x: s.gyro.x,
+                gyro_y: s.gyro.y,
+                gyro_z: s.gyro.z,
+                mag_x: s.mag?.x ?? null,
+                mag_y: s.mag?.y ?? null,
+                mag_z: s.mag?.z ?? null,
+                roll: s.euler?.roll ?? null,
+                pitch: s.euler?.pitch ?? null,
+                yaw: s.euler?.yaw ?? null
+              }))
+              allFetchedSamples.push(...transformedSamples)
+            }
+          }
+        }
+
+        // Sort merged samples by timestamp
+        allFetchedSamples.sort((a, b) => {
+          return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        })
+
+        // Update the appropriate state based on data type
+        if (allFetchedSamples.length > 0) {
+          if (dataType === 'trueOrientation') {
+            setFilteredSamples(allFetchedSamples)
+          } else if (dataType === 'smoothedAccel' || dataType === 'smoothedGyro') {
+            setSmoothedSamples(allFetchedSamples)
+          } else {
+            setSamples(allFetchedSamples)
           }
         }
       } catch (error) {
@@ -156,7 +206,7 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount, highligh
     }
 
     fetchDetailData()
-  }, [zoomRange, fileId, dataType])
+  }, [zoomRange, recordings, dataType])
 
   // Fetch filtered orientation data when switching to trueOrientation (initial load only)
   useEffect(() => {
@@ -175,30 +225,50 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount, highligh
           return
         }
 
-        const response = await fetch(`/api/recordings/${fileId}/samples/filtered`, {
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`
-          }
-        })
-        const responseData = await response.json()
+        // If no recordings metadata, fall back to single file
+        if (!recordings || recordings.length === 0) {
+          console.warn('No recordings metadata for filtered data fetch')
+          return
+        }
 
-        if (responseData.samples && responseData.samples.length > 0) {
-          // Transform filtered samples to match IMUSample format
-          const transformedSamples: IMUSample[] = responseData.samples.map((s: any) => ({
-            timestamp: new Date(s.timestamp).toISOString(),
-            // Keep original accel/gyro data from main samples
-            accel_x: 0,
-            accel_y: 0,
-            accel_z: 0,
-            gyro_x: 0,
-            gyro_y: 0,
-            gyro_z: 0,
-            // Filtered orientation
-            roll: s.roll,
-            pitch: s.pitch,
-            yaw: s.yaw
-          }))
-          setFilteredSamples(transformedSamples)
+        // Fetch filtered data from all recordings
+        const allFilteredSamples: IMUSample[] = []
+
+        for (const recording of recordings) {
+          const response = await fetch(`/api/recordings/${recording.id}/samples/filtered`, {
+            headers: {
+              'Authorization': `Bearer ${session.access_token}`
+            }
+          })
+          const responseData = await response.json()
+
+          if (responseData.samples && responseData.samples.length > 0) {
+            // Transform filtered samples to match IMUSample format
+            const transformedSamples: IMUSample[] = responseData.samples.map((s: any) => ({
+              timestamp: new Date(s.timestamp).toISOString(),
+              // Keep original accel/gyro data from main samples
+              accel_x: 0,
+              accel_y: 0,
+              accel_z: 0,
+              gyro_x: 0,
+              gyro_y: 0,
+              gyro_z: 0,
+              // Filtered orientation
+              roll: s.roll,
+              pitch: s.pitch,
+              yaw: s.yaw
+            }))
+            allFilteredSamples.push(...transformedSamples)
+          }
+        }
+
+        // Sort merged samples by timestamp
+        allFilteredSamples.sort((a, b) => {
+          return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        })
+
+        if (allFilteredSamples.length > 0) {
+          setFilteredSamples(allFilteredSamples)
         }
       } catch (error) {
         console.error('Failed to fetch filtered orientation:', error)
@@ -208,7 +278,7 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount, highligh
     }
 
     fetchFilteredData()
-  }, [dataType, fileId, filteredSamples, zoomRange])
+  }, [dataType, recordings, filteredSamples, zoomRange])
 
   // Fetch smoothed sensor data when switching to smoothed tabs (initial load only)
   useEffect(() => {
@@ -227,28 +297,48 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount, highligh
           return
         }
 
-        const response = await fetch(`/api/recordings/${fileId}/samples/smoothed`, {
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`
-          }
-        })
-        const responseData = await response.json()
+        // If no recordings metadata, fall back to single file
+        if (!recordings || recordings.length === 0) {
+          console.warn('No recordings metadata for smoothed data fetch')
+          return
+        }
 
-        if (responseData.samples && responseData.samples.length > 0) {
-          // Transform smoothed samples to match IMUSample format
-          const transformedSamples: IMUSample[] = responseData.samples.map((s: any) => ({
-            timestamp: new Date(s.timestamp).toISOString(),
-            accel_x: s.accel.x,
-            accel_y: s.accel.y,
-            accel_z: s.accel.z,
-            gyro_x: s.gyro.x,
-            gyro_y: s.gyro.y,
-            gyro_z: s.gyro.z,
-            roll: null,
-            pitch: null,
-            yaw: null
-          }))
-          setSmoothedSamples(transformedSamples)
+        // Fetch smoothed data from all recordings
+        const allSmoothedSamples: IMUSample[] = []
+
+        for (const recording of recordings) {
+          const response = await fetch(`/api/recordings/${recording.id}/samples/smoothed`, {
+            headers: {
+              'Authorization': `Bearer ${session.access_token}`
+            }
+          })
+          const responseData = await response.json()
+
+          if (responseData.samples && responseData.samples.length > 0) {
+            // Transform smoothed samples to match IMUSample format
+            const transformedSamples: IMUSample[] = responseData.samples.map((s: any) => ({
+              timestamp: new Date(s.timestamp).toISOString(),
+              accel_x: s.accel.x,
+              accel_y: s.accel.y,
+              accel_z: s.accel.z,
+              gyro_x: s.gyro.x,
+              gyro_y: s.gyro.y,
+              gyro_z: s.gyro.z,
+              roll: null,
+              pitch: null,
+              yaw: null
+            }))
+            allSmoothedSamples.push(...transformedSamples)
+          }
+        }
+
+        // Sort merged samples by timestamp
+        allSmoothedSamples.sort((a, b) => {
+          return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        })
+
+        if (allSmoothedSamples.length > 0) {
+          setSmoothedSamples(allSmoothedSamples)
         }
       } catch (error) {
         console.error('Failed to fetch smoothed data:', error)
@@ -258,7 +348,7 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount, highligh
     }
 
     fetchSmoothedData()
-  }, [dataType, fileId, smoothedSamples, zoomRange])
+  }, [dataType, recordings, smoothedSamples, zoomRange])
 
   // Track dataType changes but KEEP zoom persistent across tabs!
   useEffect(() => {
