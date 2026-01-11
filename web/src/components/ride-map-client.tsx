@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import dynamic from 'next/dynamic'
 
@@ -13,12 +13,47 @@ const RideMap = dynamic(
 interface RideMapClientProps {
   rideId: string
   fitRecordingId: string | null
+  highlightTime?: number | null // Unix timestamp in seconds to highlight
 }
 
-export function RideMapClient({ rideId, fitRecordingId }: RideMapClientProps) {
+export function RideMapClient({ rideId, fitRecordingId, highlightTime }: RideMapClientProps) {
   const [gpsTrack, setGpsTrack] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  // Convert highlightTime to GPS track index (optimized with useMemo)
+  const highlightIndex = useMemo(() => {
+    if (highlightTime === null || highlightTime === undefined || gpsTrack.length === 0) {
+      return null
+    }
+
+    // Binary search for closest GPS point
+    let left = 0
+    let right = gpsTrack.length - 1
+    let closestIdx = 0
+    let minDiff = Infinity
+
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2)
+      const pointTime = new Date(gpsTrack[mid].timestamp).getTime() / 1000
+      const diff = Math.abs(pointTime - highlightTime)
+
+      if (diff < minDiff) {
+        minDiff = diff
+        closestIdx = mid
+      }
+
+      if (pointTime < highlightTime) {
+        left = mid + 1
+      } else if (pointTime > highlightTime) {
+        right = mid - 1
+      } else {
+        return mid // Exact match
+      }
+    }
+
+    return closestIdx
+  }, [highlightTime, gpsTrack])
 
   useEffect(() => {
     async function loadGPS() {
@@ -98,5 +133,11 @@ export function RideMapClient({ rideId, fitRecordingId }: RideMapClientProps) {
     )
   }
 
-  return <RideMap gpsTrack={gpsTrack} className="w-full" />
+  return (
+    <RideMap
+      gpsTrack={gpsTrack}
+      hoverIndex={highlightIndex !== null && highlightIndex !== -1 ? highlightIndex : null}
+      className="w-full"
+    />
+  )
 }

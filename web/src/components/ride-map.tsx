@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { Home } from 'lucide-react'
@@ -33,8 +33,38 @@ const createHomeIcon = (color: string) => {
   })
 }
 
+// Create custom hover marker (pulsing circle)
+const createHoverIcon = () => {
+  const iconHtml = renderToStaticMarkup(
+    <div style={{
+      position: 'relative',
+      width: '24px',
+      height: '24px'
+    }}>
+      <div style={{
+        position: 'absolute',
+        width: '24px',
+        height: '24px',
+        backgroundColor: '#3b82f6',
+        borderRadius: '50%',
+        border: '3px solid white',
+        boxShadow: '0 0 0 4px rgba(59, 130, 246, 0.3), 0 2px 8px rgba(0,0,0,0.4)',
+        animation: 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite'
+      }} />
+    </div>
+  )
+
+  return L.divIcon({
+    html: iconHtml,
+    className: 'hover-marker',
+    iconSize: [24, 24],
+    iconAnchor: [12, 12],
+  })
+}
+
 const startIcon = createHomeIcon('#22c55e') // Green for start
 const endIcon = createHomeIcon('#ef4444')   // Red for end
+const hoverIcon = createHoverIcon()         // Blue pulsing marker
 
 interface GPSPoint {
   lat: number
@@ -52,17 +82,20 @@ interface RideMapProps {
   className?: string
 }
 
-// Component to fit bounds when track changes
+// Component to fit bounds only on initial mount
 function FitBounds({ positions }: { positions: [number, number][] }) {
   const map = useMap()
+  const hasInitialized = useRef(false)
 
   useEffect(() => {
-    if (positions.length > 0) {
+    // Only fit bounds once on mount, preserve user zoom/pan after that
+    if (!hasInitialized.current && positions.length > 0) {
       const bounds = L.latLngBounds(positions)
-      // Tighter padding for more zoomed-in view
       map.fitBounds(bounds, { padding: [20, 20], maxZoom: 16 })
+      hasInitialized.current = true
     }
-  }, [positions, map])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Empty deps - only run once
 
   return null
 }
@@ -201,7 +234,7 @@ export function RideMap({
 
         {/* Hover marker */}
         {hoverPosition && (
-          <Marker position={hoverPosition}>
+          <Marker position={hoverPosition} icon={hoverIcon}>
             <Popup>
               {gpsTrack[hoverIndex!].speed && (
                 <div>Speed: {(gpsTrack[hoverIndex!].speed! * 2.23694).toFixed(1)} mph</div>

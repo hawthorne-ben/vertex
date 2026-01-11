@@ -1,10 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
 import { notFound, redirect } from 'next/navigation'
+import { headers } from 'next/headers'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Bike, Clock, MapPin, TrendingUp, Zap, Heart, Activity } from 'lucide-react'
 import { AddVtxDataButton } from '@/components/add-vtx-data-button'
-import { RideMapClient } from '@/components/ride-map-client'
-import { RideChartsClient } from '@/components/ride-charts-client'
+import { RideVisualizationsClient } from '@/components/ride-visualizations-client'
 import { formatDurationFromSeconds } from '@/lib/utils/format-duration'
 
 export default async function RideDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -32,6 +32,8 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
           start_time,
           end_time,
           duration_ms,
+          sample_count,
+          status,
           uploaded_at,
           device_info,
           session_metadata,
@@ -55,6 +57,73 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
   const vtxRecordings = ride.ride_recordings
     ?.filter((rr: any) => rr.recordings?.file_type === 'vtx')
     .map((rr: any) => rr.recordings) || []
+
+  // Fetch IMU samples for each VTX recording (server-side)
+  const vtxRecordingsWithSamples = await Promise.all(
+    vtxRecordings.map(async (vtx: any) => {
+      if (vtx.status !== 'ready') {
+        return { ...vtx, samples: null, originalCount: 0 }
+      }
+
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session) {
+          return { ...vtx, samples: null, originalCount: 0 }
+        }
+
+        const headersList = await headers()
+        const host = headersList.get('host') || 'localhost:3000'
+        const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http'
+        const apiUrl = `${protocol}://${host}`
+
+        const samplesUrl = `${apiUrl}/api/recordings/${vtx.id}/samples?resolution=1000&downsample=lttb`
+
+        const response = await fetch(samplesUrl, {
+          headers: {
+            'Authorization': `Bearer ${session.access_token}`
+          },
+          cache: 'no-store'
+        })
+
+        if (!response.ok) {
+          console.error(`Failed to fetch samples for ${vtx.id}:`, response.statusText)
+          return { ...vtx, samples: null, originalCount: 0 }
+        }
+
+        const result = await response.json()
+
+        if (!result.samples || result.samples.length === 0) {
+          return { ...vtx, samples: [], originalCount: result.metadata?.total_samples || 0 }
+        }
+
+        // Transform samples to match IMUUPlotCharts expected format
+        const samples = result.samples.map((s: any) => ({
+          timestamp: new Date(s.timestamp).toISOString(),
+          accel_x: s.accel.x,
+          accel_y: s.accel.y,
+          accel_z: s.accel.z,
+          gyro_x: s.gyro.x,
+          gyro_y: s.gyro.y,
+          gyro_z: s.gyro.z,
+          mag_x: s.mag?.x ?? null,
+          mag_y: s.mag?.y ?? null,
+          mag_z: s.mag?.z ?? null,
+          roll: s.euler?.roll ?? null,
+          pitch: s.euler?.pitch ?? null,
+          yaw: s.euler?.yaw ?? null
+        }))
+
+        return {
+          ...vtx,
+          samples,
+          originalCount: result.metadata?.total_samples || samples.length
+        }
+      } catch (error) {
+        console.error(`Error fetching samples for ${vtx.id}:`, error)
+        return { ...vtx, samples: null, originalCount: 0 }
+      }
+    })
+  )
 
   const analysis = fitRecording?.analysis_results || {}
 
@@ -111,16 +180,6 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
         </div>
       </div>
 
-      {/* GPS Map */}
-      {fitRecording && analysis.has_gps_data && (
-        <div className="mb-8">
-          <RideMapClient
-            rideId={id}
-            fitRecordingId={fitRecording.id}
-          />
-        </div>
-      )}
-
       {/* Quick Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 md:gap-4 mb-8">
         <Card>
@@ -159,164 +218,40 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
         )}
       </div>
 
-      {/* Performance Charts & Elevation Profile */}
-      {fitRecording && (
-        <div className="mb-8">
-          <RideChartsClient
-            rideId={id}
-            fitRecordingId={fitRecording.id}
-          />
-        </div>
-      )}
+      {/* Time-Synced Visualizations (Map, IMU Charts, FIT Charts) */}
+      <RideVisualizationsClient
+        rideId={id}
+        rideStartTime={ride.start_time}
+        rideEndTime={ride.end_time}
+        fitRecordingId={fitRecording?.id || null}
+        hasGpsData={analysis.has_gps_data || false}
+        vtxRecordings={vtxRecordingsWithSamples}
+      />
 
-      {/* FIT File Metadata */}
-      {fitRecording && (
-        <Card className="mb-6">
+      {/* Add VTX Data Button (if no recordings yet) */}
+      {vtxRecordingsWithSamples.length === 0 && (
+        <Card className="mt-6">
           <CardHeader>
-            <CardTitle>FIT File Data</CardTitle>
+            <CardTitle>Vertex IMU Data</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid md:grid-cols-2 gap-6">
-              {/* Performance Metrics */}
-              {(analysis.max_power_watts || analysis.max_heart_rate || analysis.max_cadence) && (
-                <div>
-                  <h3 className="font-semibold mb-3">Performance</h3>
-                  <div className="space-y-3">
-                    {analysis.max_power_watts && (
-                      <div className="flex items-center gap-2">
-                        <Zap className="h-4 w-4 text-gray-500" />
-                        <div className="flex-1">
-                          <div className="text-sm text-gray-600">Power</div>
-                          <div className="font-medium">
-                            Avg: {analysis.avg_power_watts || 'N/A'}W • Max: {analysis.max_power_watts}W
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                    {analysis.max_heart_rate && (
-                      <div className="flex items-center gap-2">
-                        <Heart className="h-4 w-4 text-gray-500" />
-                        <div className="flex-1">
-                          <div className="text-sm text-gray-600">Heart Rate</div>
-                          <div className="font-medium">
-                            Avg: {analysis.avg_heart_rate || 'N/A'} bpm • Max: {analysis.max_heart_rate} bpm
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                    {analysis.max_cadence && (
-                      <div className="flex items-center gap-2">
-                        <Activity className="h-4 w-4 text-gray-500" />
-                        <div className="flex-1">
-                          <div className="text-sm text-gray-600">Cadence</div>
-                          <div className="font-medium">
-                            Avg: {analysis.avg_cadence || 'N/A'} rpm • Max: {analysis.max_cadence} rpm
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* GPS & File Info */}
-              <div>
-                <h3 className="font-semibold mb-3">Data Summary</h3>
-                <div className="space-y-2 text-sm">
-                  {analysis.has_gps_data && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">GPS Points</span>
-                      <span className="font-medium">{analysis.gps_points_count?.toLocaleString() || 'Yes'}</span>
-                    </div>
-                  )}
-                  {analysis.riding_time_seconds && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Riding Time</span>
-                      <span className="font-medium">{formatDuration(analysis.riding_time_seconds)}</span>
-                    </div>
-                  )}
-                  {analysis.stationary_time_seconds && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">Stationary Time</span>
-                      <span className="font-medium">{formatDuration(analysis.stationary_time_seconds)}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">File</span>
-                    <span className="font-medium text-xs">{fitRecording.filename}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">File Size</span>
-                    <span className="font-medium">{formatFileSize(fitRecording.file_size_bytes)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Uploaded</span>
-                    <span className="font-medium">{new Date(fitRecording.uploaded_at).toLocaleDateString()}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Device & Session Info (if available) */}
-            {(fitRecording.device_info || fitRecording.session_metadata) && (
-              <div className="mt-6 pt-6 border-t border-gray-200">
-                <h3 className="font-semibold mb-3">Additional Metadata</h3>
-                <div className="grid md:grid-cols-2 gap-4 text-sm">
-                  {fitRecording.device_info && (
-                    <div>
-                      <div className="text-gray-600 font-medium mb-2">Device Info</div>
-                      <pre className="text-xs bg-gray-50 p-2 rounded overflow-auto max-h-32">
-                        {JSON.stringify(fitRecording.device_info, null, 2)}
-                      </pre>
-                    </div>
-                  )}
-                  {fitRecording.session_metadata && (
-                    <div>
-                      <div className="text-gray-600 font-medium mb-2">Session Metadata</div>
-                      <pre className="text-xs bg-gray-50 p-2 rounded overflow-auto max-h-32">
-                        {JSON.stringify(fitRecording.session_metadata, null, 2)}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
+            <p className="text-muted-foreground mb-4">No IMU data associated with this ride yet.</p>
+            <AddVtxDataButton rideId={id} />
           </CardContent>
         </Card>
       )}
 
-      {/* VTX Data Section */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Vertex IMU Data</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {vtxRecordings.length > 0 ? (
-            <div className="space-y-3 mb-4">
-              {vtxRecordings.map((vtx: any) => (
-                <div key={vtx.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                  <div>
-                    <div className="font-medium">{vtx.filename}</div>
-                    <div className="text-sm text-gray-600">
-                      {new Date(vtx.start_time).toLocaleString()} • {formatFileSize(vtx.file_size_bytes)}
-                    </div>
-                  </div>
-                  <a
-                    href={`/recordings/${vtx.id}`}
-                    className="px-3 py-1 text-sm bg-white border border-gray-300 rounded hover:bg-gray-50"
-                  >
-                    View
-                  </a>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-gray-600 mb-4">No IMU data associated with this ride yet.</p>
-          )}
-
-          <AddVtxDataButton rideId={id} />
-        </CardContent>
-      </Card>
+      {/* Add More VTX Data Button (if recordings exist) */}
+      {vtxRecordingsWithSamples.length > 0 && (
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle>Add More IMU Data</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <AddVtxDataButton rideId={id} />
+          </CardContent>
+        </Card>
+      )}
     </div>
   )
 }

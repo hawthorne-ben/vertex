@@ -26,11 +26,12 @@ interface IMUUPlotChartsProps {
   fileId: string
   initialSamples: IMUSample[]
   originalCount: number
+  highlightTime?: number | null // Unix timestamp in seconds to highlight
 }
 
 type DataType = 'orientation' | 'trueOrientation' | 'accel' | 'gyro' | 'smoothedAccel' | 'smoothedGyro'
 
-export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPlotChartsProps) {
+export function IMUUPlotCharts({ fileId, initialSamples, originalCount, highlightTime }: IMUUPlotChartsProps) {
   const [samples, setSamples] = useState<IMUSample[]>(initialSamples)
   const [filteredSamples, setFilteredSamples] = useState<IMUSample[] | null>(null)
   const [smoothedSamples, setSmoothedSamples] = useState<IMUSample[] | null>(null)
@@ -48,6 +49,12 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
   const uplotRef = useRef<uPlot | null>(null)
   const prevDataTypeRef = useRef<DataType>(dataType)
   const prevDataTypeForChartRef = useRef<DataType>(dataType)
+  const highlightTimeRef = useRef<number | null>(highlightTime || null)
+
+  // Keep ref in sync with prop
+  useEffect(() => {
+    highlightTimeRef.current = highlightTime || null
+  }, [highlightTime])
 
 
   // Magnetometer removed - using 6DoF mode
@@ -423,22 +430,60 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
       // Magnetometer case removed - using 6DoF mode
     }
 
-    // Debug: log data structure
-    console.log('Chart data:', {
-      timestampCount: finalTimestamps.length,
-      dataLengths: data.map(d => d.length),
-      firstTimestamp: finalTimestamps[0],
-      lastTimestamp: finalTimestamps[finalTimestamps.length - 1],
-      sampleCount: finalSamplesWithGaps.length
-    })
 
     // Get computed colors for theme support
     const foregroundColor = getComputedStyle(chartRef.current).getPropertyValue('--foreground').trim()
     const borderColor = getComputedStyle(chartRef.current).getPropertyValue('--border').trim()
-    
+
+    // Plugin to draw vertical highlight line
+    const highlightPlugin: uPlot.Plugin = {
+      hooks: {
+        draw: [
+          (u) => {
+            const ht = highlightTimeRef.current
+            if (ht === null || ht === undefined) return
+
+            const ctx = u.ctx
+            const data = u.data
+            if (!data || !data[0] || data[0].length === 0) return
+
+            const timestamps = data[0] as number[]
+
+            // Find closest timestamp
+            let closestIdx = 0
+            let minDiff = Math.abs(timestamps[0] - ht)
+            for (let i = 1; i < timestamps.length; i++) {
+              const diff = Math.abs(timestamps[i] - ht)
+              if (diff < minDiff) {
+                minDiff = diff
+                closestIdx = i
+              } else {
+                break
+              }
+            }
+
+            // Get pixel position
+            const x = Math.round(u.valToPos(timestamps[closestIdx], 'x', true))
+
+            // Draw vertical line
+            ctx.save()
+            ctx.strokeStyle = '#3b82f6'
+            ctx.lineWidth = 2
+            ctx.setLineDash([5, 5])
+            ctx.beginPath()
+            ctx.moveTo(x, u.bbox.top)
+            ctx.lineTo(x, u.bbox.top + u.bbox.height)
+            ctx.stroke()
+            ctx.restore()
+          }
+        ]
+      }
+    }
+
     const opts: uPlot.Options = {
       width: chartRef.current.clientWidth,
       height: 400,
+      plugins: [highlightPlugin],
       series,
       axes: [
         {
@@ -525,28 +570,11 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
               // This correctly handles downsampled/irregular data
               const startTimeUnix = self.posToVal(select.left, 'x')
               const endTimeUnix = self.posToVal(select.left + select.width, 'x')
-              
-              // Log the current X-axis scale bounds for debugging
-              const xScale = self.scales.x
-              console.log('🔍 Zoom selection:', {
-                pixelLeft: select.left,
-                pixelRight: select.left + select.width,
-                pixelWidth: select.width,
-                currentXScaleMin: xScale?.min,
-                currentXScaleMax: xScale?.max,
-                currentXScaleMinLocal: xScale?.min ? new Date(xScale.min * 1000).toLocaleTimeString() : 'N/A',
-                currentXScaleMaxLocal: xScale?.max ? new Date(xScale.max * 1000).toLocaleTimeString() : 'N/A',
-                startTimeUnix,
-                endTimeUnix,
-                startTimeLocal: new Date(startTimeUnix * 1000).toLocaleTimeString(),
-                endTimeLocal: new Date(endTimeUnix * 1000).toLocaleTimeString()
-              })
-              
+
               // Convert Unix seconds to ISO string
               const startTime = new Date(startTimeUnix * 1000).toISOString()
               const endTime = new Date(endTimeUnix * 1000).toISOString()
-              
-              console.log('🔍 Setting zoom range:', { startTime, endTime })
+
               setZoomRange({ start: startTime, end: endTime })
             }
           }
@@ -591,12 +619,12 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
     } else {
       // First time or after dataType change - create the chart
       uplotRef.current = new uPlot(opts, data, chartRef.current)
-      
+
       // Ensure scales are set after creation
       if (finalTimestamps.length > 0 && !zoomRange) {
-        uplotRef.current.setScale('x', { 
-          min: Math.min(...finalTimestamps), 
-          max: Math.max(...finalTimestamps) 
+        uplotRef.current.setScale('x', {
+          min: Math.min(...finalTimestamps),
+          max: Math.max(...finalTimestamps)
         })
       }
     }
@@ -646,6 +674,19 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Trigger redraw when highlightTime changes (only when actually set, not on mount with null)
+  useEffect(() => {
+    if (uplotRef.current && highlightTime !== null && highlightTime !== undefined) {
+      // Use RAF to batch redraws across multiple charts
+      requestAnimationFrame(() => {
+        if (uplotRef.current) {
+          const currentData = uplotRef.current.data
+          uplotRef.current.setData(currentData)
+        }
+      })
+    }
+  }, [highlightTime])
 
   // Calculate stats
   const calculateStats = () => {
@@ -820,7 +861,7 @@ export function IMUUPlotCharts({ fileId, initialSamples, originalCount }: IMUUPl
         <h3 className="text-lg font-medium text-card-foreground mb-4">
           {getTitle()} <span className="text-sm text-muted-foreground">({getUnit()})</span>
         </h3>
-        
+
         <div ref={chartRef} className="w-full" />
       </div>
 

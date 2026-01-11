@@ -13,6 +13,7 @@ interface SingleMetricChartProps {
   unit: string
   color: string
   onHover?: (index: number | null) => void
+  highlightIndex?: number | null // Externally controlled highlight
   syncKey?: string
   resetTrigger?: number // Increment to trigger reset
   className?: string
@@ -24,12 +25,19 @@ export function SingleMetricChart({
   unit,
   color,
   onHover,
+  highlightIndex,
   syncKey = 'ride-charts',
   resetTrigger = 0,
   className = ''
 }: SingleMetricChartProps) {
   const chartRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
+  const highlightIndexRef = useRef<number | null>(highlightIndex || null)
+
+  // Keep ref in sync
+  useEffect(() => {
+    highlightIndexRef.current = highlightIndex || null
+  }, [highlightIndex])
 
   useEffect(() => {
     if (!chartRef.current || samples.length === 0) return
@@ -72,10 +80,42 @@ export function SingleMetricChart({
       }
     ]
 
+    // Plugin to draw vertical highlight line
+    const highlightPlugin: uPlot.Plugin = {
+      hooks: {
+        draw: [
+          (u) => {
+            const idx = highlightIndexRef.current
+            if (idx === null || idx === undefined) return
+
+            const data = u.data
+            if (!data || !data[0] || data[0].length === 0) return
+            if (idx < 0 || idx >= data[0].length) return
+
+            const timestamps = data[0] as number[]
+            const x = Math.round(u.valToPos(timestamps[idx], 'x', true))
+
+            // Draw vertical line
+            const ctx = u.ctx
+            ctx.save()
+            ctx.strokeStyle = '#3b82f6'
+            ctx.lineWidth = 2
+            ctx.setLineDash([5, 5])
+            ctx.beginPath()
+            ctx.moveTo(x, u.bbox.top)
+            ctx.lineTo(x, u.bbox.top + u.bbox.height)
+            ctx.stroke()
+            ctx.restore()
+          }
+        ]
+      }
+    }
+
     const opts: uPlot.Options = {
       width: chartRef.current.clientWidth,
       height: 200,
       padding: [8, 8, 0, 0],
+      plugins: [highlightPlugin],
       series,
       scales: {
         x: {},
@@ -145,6 +185,19 @@ export function SingleMetricChart({
       plot.destroy()
     }
   }, [samples, label, unit, color, onHover, syncKey])
+
+  // Trigger redraw only when highlightIndex is actually set (not null/undefined)
+  useEffect(() => {
+    if (highlightIndex !== null && highlightIndex !== undefined && plotRef.current) {
+      // Use RAF to batch redraws across multiple charts
+      requestAnimationFrame(() => {
+        if (plotRef.current) {
+          const currentData = plotRef.current.data
+          plotRef.current.setData(currentData)
+        }
+      })
+    }
+  }, [highlightIndex])
 
   if (samples.length === 0 || !samples.some(s => s.value !== null)) {
     return (

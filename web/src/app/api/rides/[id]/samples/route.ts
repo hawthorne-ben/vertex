@@ -130,6 +130,8 @@ export async function GET(
         speedUnit: 'm/s',
         lengthUnit: 'm',
         temperatureUnit: 'celsius',
+        pressureUnit: 'bar',
+        elapsedRecordField: true, // Include all record fields (power, cadence, etc.)
         mode: 'cascade',
       })
 
@@ -142,10 +144,27 @@ export async function GET(
       })
     })
 
-    // Extract records from parsed data
+    // Extract records from parsed data (matching Inngest logic exactly)
     let records = fitData.records || []
 
-    // Check if records are in laps (common structure)
+    // Get session for lap-based records
+    let session = fitData.sessions?.[0] || fitData.activity?.sessions?.[0] || fitData.activity?.session
+
+    // Check if records are in session laps (Coros structure)
+    if (session?.laps && session.laps.length > 0) {
+      const lapRecords: any[] = []
+      session.laps.forEach((lap: any) => {
+        if (lap.records && lap.records.length > 0) {
+          lapRecords.push(...lap.records)
+        }
+      })
+
+      if (lapRecords.length > 0) {
+        records = lapRecords
+      }
+    }
+
+    // Fallback: check activity.sessions[0].laps
     if (records.length === 0 && fitData.activity?.sessions?.[0]?.laps) {
       const laps = fitData.activity.sessions[0].laps
       records = laps.flatMap((lap: any) => lap.records || [])

@@ -85,20 +85,47 @@ export function AddVtxDataButton({ rideId }: AddVtxDataButtonProps) {
 
     setSubmitting(true)
 
-    // Simulate async operation
-    setTimeout(() => {
-      // Show success toast (dummy - not actually saving yet)
+    try {
+      const response = await fetch(`/api/rides/${rideId}/recordings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          recordingIds: Array.from(selectedIds)
+        })
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to associate recordings')
+      }
+
+      // Show success toast
       addToast({
         type: 'success',
-        title: 'VTX data selected',
-        message: `${selectedIds.size} file(s) selected. Note: This doesn't actually save yet - overlap analysis and association logic coming soon!`
+        title: 'VTX data associated',
+        message: result.message || `${result.added} recording(s) added to ride`
       })
 
       // Close modal and reset
       setIsOpen(false)
       setSelectedIds(new Set())
+
+      // Reload page to show new associations
+      window.location.reload()
+
+    } catch (error) {
+      console.error('Failed to associate recordings:', error)
+      addToast({
+        type: 'error',
+        title: 'Association failed',
+        message: error instanceof Error ? error.message : 'Unknown error'
+      })
+    } finally {
       setSubmitting(false)
-    }, 500)
+    }
   }
 
   const formatDate = (dateString: string) => {

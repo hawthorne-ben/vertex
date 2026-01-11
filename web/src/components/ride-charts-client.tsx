@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import dynamic from 'next/dynamic'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
@@ -26,6 +26,7 @@ interface RideChartsClientProps {
   fitRecordingId: string | null
   showMap?: boolean
   onElevationUpdate?: (elevationMeters: number) => void
+  highlightTime?: number | null // Unix timestamp in seconds to highlight
 }
 
 interface Sample {
@@ -41,11 +42,48 @@ interface Sample {
   grade?: number | null
 }
 
-export function RideChartsClient({ rideId, fitRecordingId, showMap = false, onElevationUpdate }: RideChartsClientProps) {
+export function RideChartsClient({ rideId, fitRecordingId, showMap = false, onElevationUpdate, highlightTime }: RideChartsClientProps) {
   const [samples, setSamples] = useState<Sample[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [hoverIndex, setHoverIndex] = useState<number | null>(null)
+
+  // Convert highlightTime to sample index (optimized binary search)
+  const highlightIndex = useMemo(() => {
+    if (highlightTime === null || highlightTime === undefined || samples.length === 0) {
+      return null
+    }
+
+    // Binary search for closest sample
+    let left = 0
+    let right = samples.length - 1
+    let closestIdx = 0
+    let minDiff = Infinity
+
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2)
+      const sampleTime = new Date(samples[mid].timestamp).getTime() / 1000
+      const diff = Math.abs(sampleTime - highlightTime)
+
+      if (diff < minDiff) {
+        minDiff = diff
+        closestIdx = mid
+      }
+
+      if (sampleTime < highlightTime) {
+        left = mid + 1
+      } else if (sampleTime > highlightTime) {
+        right = mid - 1
+      } else {
+        return mid // Exact match
+      }
+    }
+
+    return closestIdx
+  }, [highlightTime, samples])
+
+  // Use highlightIndex if set, otherwise use hoverIndex
+  const activeIndex = highlightIndex !== null && highlightIndex !== -1 ? highlightIndex : hoverIndex
 
   useEffect(() => {
     async function loadSamples() {
@@ -92,6 +130,30 @@ export function RideChartsClient({ rideId, fitRecordingId, showMap = false, onEl
     loadSamples()
   }, [rideId, fitRecordingId])
 
+  // Check what data we have (must be before any returns for hooks rules)
+  const hasPower = samples.some(s => s.power_watts !== null && s.power_watts !== undefined)
+  const hasHR = samples.some(s => s.heart_rate !== null && s.heart_rate !== undefined)
+  const hasCadence = samples.some(s => s.cadence !== null && s.cadence !== undefined)
+  const hasSpeed = samples.some(s => s.speed_ms !== null && s.speed_ms !== undefined)
+  const hasElevation = samples.some(s => s.altitude !== null && s.altitude !== undefined)
+  const hasGpsData = samples.some(s => s.latitude !== null && s.longitude !== null)
+
+  // Debug: log what data is available
+  useEffect(() => {
+    if (samples.length > 0) {
+      console.log('[RideChartsClient] Data availability:', {
+        hasPower,
+        hasHR,
+        hasCadence,
+        hasSpeed,
+        hasElevation,
+        hasGpsData,
+        sampleCount: samples.length,
+        firstSample: samples[0]
+      })
+    }
+  }, [samples, hasPower, hasHR, hasCadence, hasSpeed, hasElevation, hasGpsData])
+
   if (loading) {
     return (
       <div className="space-y-6">
@@ -129,14 +191,6 @@ export function RideChartsClient({ rideId, fitRecordingId, showMap = false, onEl
       </Card>
     )
   }
-
-  // Check what data we have
-  const hasPower = samples.some(s => s.power_watts !== null)
-  const hasHR = samples.some(s => s.heart_rate !== null)
-  const hasCadence = samples.some(s => s.cadence !== null)
-  const hasSpeed = samples.some(s => s.speed_ms !== null)
-  const hasElevation = samples.some(s => s.altitude !== null)
-  const hasGpsData = samples.some(s => s.latitude !== null && s.longitude !== null)
 
   // Prepare data for individual charts
   const powerData = samples.map(s => ({ timestamp: s.timestamp, value: s.power_watts ?? null }))
@@ -184,7 +238,7 @@ export function RideChartsClient({ rideId, fitRecordingId, showMap = false, onEl
           <CardContent>
             <RideMap
               gpsTrack={gpsTrack}
-              hoverIndex={hoverIndex}
+              hoverIndex={activeIndex}
               onPointClick={(index) => {
                 // Future: sync to charts
               }}
@@ -208,6 +262,7 @@ export function RideChartsClient({ rideId, fitRecordingId, showMap = false, onEl
                 samples={powerData}
                 label="Power"
                 unit="W"
+                highlightIndex={activeIndex}
                 color="#ef4444"
                 onHover={setHoverIndex}
                 syncKey="ride-sync"
@@ -228,6 +283,7 @@ export function RideChartsClient({ rideId, fitRecordingId, showMap = false, onEl
                 samples={hrData}
                 label="Heart Rate"
                 unit="bpm"
+                highlightIndex={activeIndex}
                 color="#ec4899"
                 onHover={setHoverIndex}
                 syncKey="ride-sync"
@@ -248,6 +304,7 @@ export function RideChartsClient({ rideId, fitRecordingId, showMap = false, onEl
                 samples={cadenceData}
                 label="Cadence"
                 unit="rpm"
+                highlightIndex={activeIndex}
                 color="#3b82f6"
                 onHover={setHoverIndex}
                 syncKey="ride-sync"
@@ -268,6 +325,7 @@ export function RideChartsClient({ rideId, fitRecordingId, showMap = false, onEl
                 samples={speedData}
                 label="Speed"
                 unit="mph"
+                highlightIndex={activeIndex}
                 color="#10b981"
                 onHover={setHoverIndex}
                 syncKey="ride-sync"
@@ -288,6 +346,7 @@ export function RideChartsClient({ rideId, fitRecordingId, showMap = false, onEl
             <ElevationProfile
               samples={samples}
               onHover={setHoverIndex}
+              highlightIndex={activeIndex}
               syncKey="ride-sync"
               className="w-full"
             />
