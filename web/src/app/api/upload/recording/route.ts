@@ -11,26 +11,20 @@ const supabase = createClient(
 )
 
 /**
- * Upload VTX or FIT recording file
- * Accepts chunked uploads (fileId provided) or direct uploads
+ * Process uploaded VTX or FIT recording file
  *
- * For chunked uploads:
- * - Client first uploads chunks via /api/upload/chunk-url
- * - Client then calls this endpoint with fileId to complete upload
- *
- * For direct uploads:
- * - Client uploads file directly to storage first
- * - Client then calls this endpoint with storage path
+ * Expects file to already be uploaded to storage via TUS.
+ * This endpoint validates the file, parses metadata, and creates DB record.
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { fileId, fileName, fileSize, totalChunks, mimeType, storagePath } = body
+    const { fileName, fileSize, storagePath } = body
 
     // Validate required fields
-    if (!fileName || !fileSize) {
+    if (!fileName || !fileSize || !storagePath) {
       return NextResponse.json(
-        { error: 'Missing required fields: fileName, fileSize' },
+        { error: 'Missing required fields: fileName, fileSize, storagePath' },
         { status: 400 }
       )
     }
@@ -46,7 +40,7 @@ export async function POST(request: NextRequest) {
 
     const fileType = lowercaseFileName.endsWith('.vtx') ? 'vtx' : 'fit'
 
-    // Get user ID from Supabase session
+    // Authenticate user
     const authHeader = request.headers.get('authorization')
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       return NextResponse.json(
@@ -68,63 +62,27 @@ export async function POST(request: NextRequest) {
 
     const userId = user.id
 
-    // Determine storage path based on upload type
-    let finalStoragePath: string
+    // Verify file exists in storage
+    const { data: fileData, error: downloadError } = await supabase.storage
+      .from('recordings')
+      .download(storagePath)
 
-    if (fileId && totalChunks) {
-      // Chunked upload - verify chunks exist
-      const { data: chunkFiles, error: listError } = await supabase.storage
-        .from('uploads')
-        .list(`chunks/${fileId}`)
-
-      if (listError) {
-        console.error('Error listing chunks:', listError)
-        return NextResponse.json(
-          { error: 'Failed to verify chunks' },
-          { status: 500 }
-        )
-      }
-
-      const existingChunks = chunkFiles?.map(f => f.name) || []
-      const expectedChunks = Array.from({ length: totalChunks }, (_, i) =>
-        `${fileId}_chunk_${i.toString().padStart(3, '0')}`
-      )
-
-      const missingChunks = expectedChunks.filter(chunk => !existingChunks.includes(chunk))
-
-      if (missingChunks.length > 0) {
-        return NextResponse.json(
-          { error: `Missing chunks: ${missingChunks.join(', ')}` },
-          { status: 400 }
-        )
-      }
-
-      finalStoragePath = `chunks/${fileId}`
-    } else if (storagePath) {
-      // Direct upload - path already provided
-      finalStoragePath = storagePath
-    } else {
+    if (downloadError || !fileData) {
+      console.error('File not found in storage:', downloadError)
       return NextResponse.json(
-        { error: 'Must provide either fileId+totalChunks or storagePath' },
-        { status: 400 }
+        { error: 'File not found in storage. Upload may have failed.' },
+        { status: 404 }
       )
     }
 
-    // Download and parse file to extract metadata
+    // Parse file metadata
     let metadata: any
     let dataRanges: number[][]
     let gapInfo: any
 
     if (fileType === 'vtx') {
       // Parse VTX file header and detect gaps
-      const fileBuffer = await downloadFile(finalStoragePath, fileId, totalChunks)
-
-      // Parse VTX file - convert Buffer to ArrayBuffer
-      const arrayBuffer = fileBuffer.buffer.slice(
-        fileBuffer.byteOffset,
-        fileBuffer.byteOffset + fileBuffer.byteLength
-      ) as ArrayBuffer
-
+      const arrayBuffer = await fileData.arrayBuffer()
       const decoder = new VTXDecoder(arrayBuffer)
 
       // Extract metadata from header
@@ -152,64 +110,8 @@ export async function POST(request: NextRequest) {
       gapInfo = null
     }
 
-    // Move file to final location in recordings bucket
+    // Generate unique recording ID
     const recordingId = crypto.randomUUID()
-    let finalPath = `${userId}/${recordingId}.${fileType}`
-
-
-    if (fileId && totalChunks) {
-      // For chunked uploads, download all chunks and reassemble
-      const fileBuffer = await downloadFile(finalStoragePath, fileId, totalChunks)
-
-      // Upload to final location
-      const { error: uploadError } = await supabase.storage
-        .from('recordings')
-        .upload(finalPath, fileBuffer, {
-          contentType: fileType === 'vtx' ? 'application/octet-stream' : 'application/vnd.ant.fit',
-          upsert: false
-        })
-
-      if (uploadError) {
-        console.error('Error moving file to recordings bucket:', uploadError)
-        return NextResponse.json(
-          { error: 'Failed to move file to recordings bucket' },
-          { status: 500 }
-        )
-      }
-
-      // Clean up chunks
-      await cleanupChunks(fileId, totalChunks)
-    } else {
-      // For direct uploads, need to move/rename file to use unique recordingId
-      if (finalStoragePath.startsWith(userId)) {
-        // File is already in recordings bucket with user_id prefix
-        // Move it to use unique recordingId to avoid duplicates
-        const { error: moveError } = await supabase.storage
-          .from('recordings')
-          .move(finalStoragePath, finalPath)
-
-        if (moveError) {
-          console.error('Error renaming file in recordings bucket:', moveError)
-          return NextResponse.json(
-            { error: 'Failed to rename file to unique path' },
-            { status: 500 }
-          )
-        }
-      } else {
-        // File is in uploads bucket, move it to recordings
-        const { error: moveError } = await supabase.storage
-          .from('uploads')
-          .move(finalStoragePath, `recordings/${finalPath}`)
-
-        if (moveError) {
-          console.error('Error moving file:', moveError)
-          return NextResponse.json(
-            { error: 'Failed to move file to recordings bucket' },
-            { status: 500 }
-          )
-        }
-      }
-    }
 
     // Check if a recording with this filename already exists for this user
     const { data: existingRecording } = await supabase
@@ -225,7 +127,7 @@ export async function POST(request: NextRequest) {
       console.log(`📝 Overwriting existing recording: ${fileName}`)
 
       // Delete old file from storage
-      if (existingRecording.storage_path) {
+      if (existingRecording.storage_path && existingRecording.storage_path !== storagePath) {
         await supabase.storage
           .from('recordings')
           .remove([existingRecording.storage_path])
@@ -235,7 +137,7 @@ export async function POST(request: NextRequest) {
       const { data: updated, error: updateError } = await supabase
         .from('recordings')
         .update({
-          storage_path: finalPath,
+          storage_path: storagePath,
           file_size_bytes: fileSize,
           start_time: metadata.startTime,
           end_time: metadata.endTime,
@@ -257,7 +159,6 @@ export async function POST(request: NextRequest) {
 
       if (updateError) {
         console.error('Error updating recording record:', updateError)
-        await supabase.storage.from('recordings').remove([finalPath])
         return NextResponse.json(
           { error: 'Failed to update recording record' },
           { status: 500 }
@@ -274,7 +175,7 @@ export async function POST(request: NextRequest) {
           user_id: userId,
           filename: fileName,
           file_type: fileType,
-          storage_path: finalPath,
+          storage_path: storagePath,
           file_size_bytes: fileSize,
           start_time: metadata.startTime,
           end_time: metadata.endTime,
@@ -293,7 +194,6 @@ export async function POST(request: NextRequest) {
 
       if (insertError) {
         console.error('Error creating recording record:', insertError)
-        await supabase.storage.from('recordings').remove([finalPath])
         return NextResponse.json(
           { error: 'Failed to create recording record' },
           { status: 500 }
@@ -349,70 +249,3 @@ export async function POST(request: NextRequest) {
   }
 }
 
-/**
- * Download file from storage (handles both chunked and direct uploads)
- */
-async function downloadFile(
-  storagePath: string,
-  fileId?: string,
-  totalChunks?: number
-): Promise<Buffer> {
-  if (fileId && totalChunks) {
-    // Download and combine chunks
-    const chunks: Buffer[] = []
-
-    for (let i = 0; i < totalChunks; i++) {
-      const chunkPath = `chunks/${fileId}/${fileId}_chunk_${i.toString().padStart(3, '0')}`
-
-      const { data: chunkData, error: chunkError } = await supabase.storage
-        .from('uploads')
-        .download(chunkPath)
-
-      if (chunkError || !chunkData) {
-        throw new Error(`Failed to download chunk ${i}: ${chunkError?.message}`)
-      }
-
-      const chunkBuffer = Buffer.from(await chunkData.arrayBuffer())
-      chunks.push(chunkBuffer)
-    }
-
-    return Buffer.concat(chunks)
-  } else {
-    // Download single file from recordings bucket
-    const { data: fileData, error: downloadError} = await supabase.storage
-      .from('recordings')
-      .download(storagePath)
-
-    if (downloadError || !fileData) {
-      console.error('Download error details:', {
-        error: downloadError,
-        errorString: JSON.stringify(downloadError),
-        path: storagePath,
-        hasData: !!fileData
-      })
-      throw new Error(`Failed to download file from recordings/${storagePath}: ${downloadError?.message || JSON.stringify(downloadError)}`)
-    }
-
-    return Buffer.from(await fileData.arrayBuffer())
-  }
-}
-
-/**
- * Clean up chunk files after successful upload
- */
-async function cleanupChunks(fileId: string, totalChunks: number): Promise<void> {
-  const chunkPaths = Array.from({ length: totalChunks }, (_, i) =>
-    `chunks/${fileId}/${fileId}_chunk_${i.toString().padStart(3, '0')}`
-  )
-
-  const { error } = await supabase.storage
-    .from('uploads')
-    .remove(chunkPaths)
-
-  if (error) {
-    console.warn(`⚠️ Failed to cleanup chunks for ${fileId}:`, error)
-    // Don't throw - cleanup is best effort
-  } else {
-    console.log(`✅ Cleaned up ${totalChunks} chunks for ${fileId}`)
-  }
-}

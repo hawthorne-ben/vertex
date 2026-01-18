@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Upload, FileText } from 'lucide-react'
 import { ConfirmationModal, UploadProgressModal } from '@/components/upload-modals'
-import { FileChunker } from '@/lib/upload/chunking'
+import { TusUploader } from '@/lib/upload/tus-uploader'
 import { useToast } from '@/components/ui/toast-context'
 
 interface FileToUpload {
@@ -45,92 +45,30 @@ export default function UploadPage() {
     setShowConfirmation(true)
   }, [])
 
-  const uploadFileDirect = useCallback(async (
+  /**
+   * Upload file using TUS resumable protocol
+   * Returns storage path on success
+   */
+  const uploadFile = useCallback(async (
     file: File,
     onProgress: (progress: number) => void
-  ) => {
-    // Original direct upload method for small files
-    const supabase = createClient()
-    const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
-      throw new Error('Not authenticated')
-    }
+  ): Promise<string> => {
+    console.log(`📤 Starting TUS upload for ${file.name} (${TusUploader.formatBytes(file.size)})`)
 
-    const timestamp = Date.now()
-    const storagePath = `${session.user.id}/${timestamp}_${file.name}`
-
-    return new Promise<string>((resolve, reject) => {
-      const xhr = new XMLHttpRequest()
-      
-      xhr.upload.onprogress = (e) => {
-        if (e.lengthComputable) {
-          const progress = (e.loaded / e.total) * 100
-          onProgress(progress)
-        }
+    // Upload via TUS (direct to Supabase Storage)
+    const storagePath = await TusUploader.upload(file, 'recordings', {
+      onProgress: (bytesUploaded, bytesTotal) => {
+        const percent = (bytesUploaded / bytesTotal) * 100
+        onProgress(percent)
+      },
+      onError: (error) => {
+        console.error('TUS upload error:', error)
       }
-      
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          resolve(storagePath)
-        } else {
-          reject(new Error(`Upload failed: ${xhr.status} ${xhr.statusText}`))
-        }
-      }
-      
-      xhr.onerror = () => {
-        reject(new Error('Upload failed: Network error'))
-      }
-      
-      const uploadUrl = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/recordings/${storagePath}`
-      
-      xhr.open('POST', uploadUrl, true)
-      xhr.setRequestHeader('Authorization', `Bearer ${session.access_token}`)
-      xhr.setRequestHeader('Cache-Control', '3600')
-      
-      const formData = new FormData()
-      formData.append('file', file)
-      xhr.send(formData)
     })
+
+    console.log(`✅ TUS upload completed: ${storagePath}`)
+    return storagePath
   }, [])
-
-  const uploadFileChunked = useCallback(async (
-    file: File,
-    onProgress: (progress: number) => void,
-    onChunkComplete?: (chunkIndex: number, success: boolean) => void
-  ) => {
-    try {
-      // Check if file needs chunking
-      if (!FileChunker.shouldChunk(file)) {
-        // Small file - use original upload method
-        return await uploadFileDirect(file, onProgress)
-      }
-
-      // Large file - use chunked upload
-      console.log(`📦 File ${file.name} (${Math.round(file.size / 1024 / 1024)}MB) requires chunking`)
-      
-      // Create chunks
-      const { chunks, metadata } = await FileChunker.createChunks(file)
-      console.log(`📦 Created ${chunks.length} chunks for ${file.name}`)
-
-      // Upload chunks sequentially
-      await FileChunker.uploadChunks(
-        chunks,
-        metadata,
-        onProgress,
-        onChunkComplete
-      )
-
-      // Complete the chunked upload
-      await FileChunker.completeChunkedUpload(metadata)
-      
-      console.log(`✅ Chunked upload completed for ${file.name}`)
-      return metadata.fileId
-
-    } catch (error) {
-      console.error('Chunked upload failed:', error)
-      throw error
-    }
-  }, [uploadFileDirect])
 
   const handleConfirmUpload = useCallback(async () => {
     if (selectedFiles.length === 0) return
@@ -170,25 +108,20 @@ export default function UploadPage() {
         
         console.log(`📁 Processing file ${i + 1}/${selectedFiles.length}: ${file?.name || 'Unknown file'}`)
         console.log(`📁 File progress range: ${fileStartProgress.toFixed(1)}% - ${fileEndProgress.toFixed(1)}%`)
-        
-        // Upload file (chunked or direct)
-        const uploadResult = await uploadFileChunked(file, (fileProgress) => {
-          // Map file progress (0-100) to overall progress range for this file
-          const overallProgress = fileStartProgress + (fileProgress / 100) * (fileEndProgress - fileStartProgress)
-          
-          console.log(`📊 Progress Update:`)
-          console.log(`  File: ${file?.name || 'Unknown file'}`)
-          console.log(`  File Progress: ${fileProgress.toFixed(1)}%`)
-          console.log(`  Overall Progress: ${overallProgress.toFixed(1)}%`)
-          console.log(`  Last Progress: ${lastProgress.toFixed(1)}%`)
-          
+
+        // Reserve progress: 0-90% for upload, 90-100% for server processing
+        const uploadProgressEnd = fileStartProgress + (fileEndProgress - fileStartProgress) * 0.9
+        const processingProgressEnd = fileEndProgress
+
+        // Upload file via TUS (0-90% of this file's range)
+        const storagePath = await uploadFile(file, (fileProgress) => {
+          // Map file upload progress (0-100) to 0-90% of this file's range
+          const overallProgress = fileStartProgress + (fileProgress / 100) * (uploadProgressEnd - fileStartProgress)
+
           // Always update progress if it's greater than the last progress
           if (overallProgress > lastProgress) {
-            console.log(`✅ Updating progress from ${lastProgress.toFixed(1)}% to ${overallProgress.toFixed(1)}%`)
             setUploadProgress(overallProgress)
             setLastProgress(overallProgress)
-          } else {
-            console.log(`⏭️ Skipping progress update: ${overallProgress.toFixed(1)}% <= ${lastProgress.toFixed(1)}%`)
           }
         })
 
@@ -200,40 +133,45 @@ export default function UploadPage() {
           hasVtxFiles = true
         }
 
-        // For chunked uploads, the fileId is returned directly
-        // For direct uploads, call the recording API to process the file
-        if (typeof uploadResult === 'string' && uploadResult.startsWith('file_')) {
-          // Chunked upload - fileId returned (already processed by /api/upload/complete-chunked)
-          uploadedFileIds.push(uploadResult)
-        } else {
-          // Direct upload - process via recording API
-          const storagePath = uploadResult as string
-          const { data: { session } } = await supabase.auth.getSession()
+        // Update progress to 90% (upload complete, starting server processing)
+        if (uploadProgressEnd > lastProgress) {
+          setUploadProgress(uploadProgressEnd)
+          setLastProgress(uploadProgressEnd)
+        }
 
-          if (!session) {
-            throw new Error('Not authenticated')
-          }
+        // Notify server to create DB record and parse metadata (90-100% of this file's range)
+        const { data: { session } } = await supabase.auth.getSession()
 
-          const response = await fetch('/api/upload/recording', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${session.access_token}`
-            },
-            body: JSON.stringify({
-              fileName: file?.name || 'unknown',
-              fileSize: file?.size || 0,
-              storagePath
-            })
+        if (!session) {
+          throw new Error('Not authenticated')
+        }
+
+        const response = await fetch('/api/upload/recording', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${session.access_token}`
+          },
+          body: JSON.stringify({
+            fileName: file?.name || 'unknown',
+            fileSize: file?.size || 0,
+            storagePath,
+            mimeType: file?.type || 'application/octet-stream'
           })
+        })
 
-          if (!response.ok) {
-            const errorData = await response.json()
-            throw new Error(`Recording upload failed: ${errorData.error || response.statusText}`)
-          }
+        if (!response.ok) {
+          const errorData = await response.json()
+          throw new Error(`Recording upload failed: ${errorData.error || response.statusText}`)
+        }
 
-          const recordingData = await response.json()
-          uploadedFileIds.push(recordingData.recordingId)
+        const recordingData = await response.json()
+        uploadedFileIds.push(recordingData.recordingId)
+
+        // Update progress to 100% for this file (processing complete)
+        if (processingProgressEnd > lastProgress) {
+          setUploadProgress(processingProgressEnd)
+          setLastProgress(processingProgressEnd)
         }
       }
 
@@ -268,7 +206,7 @@ export default function UploadPage() {
         message: err instanceof Error ? err.message : 'Unknown error occurred during upload'
       })
     }
-  }, [selectedFiles, router, uploadFileChunked, lastProgress, addToast])
+  }, [selectedFiles, router, uploadFile, lastProgress, addToast])
 
   const handleCancelUpload = useCallback(() => {
     setShowConfirmation(false)
