@@ -1,9 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect, notFound } from 'next/navigation'
 import { headers } from 'next/headers'
-import { IMUUPlotCharts } from '@/components/imu-uplot-charts'
+import { IMUSensorChart } from '@/components/charts/IMUSensorChart'
 import { DataDetailHeader } from '@/components/data-detail-header'
 import { Loader2 } from 'lucide-react'
+import { Card, CardContent } from '@/components/ui/card'
 
 export default async function DataDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -108,7 +109,19 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
 
       {/* Status-based content */}
       {recording.status === 'ready' && samples ? (
-        <IMUUPlotCharts fileId={id} initialSamples={samples} originalCount={originalSampleCount} />
+        <Card>
+          <CardContent className="pt-6">
+            <IMUSensorChart
+              recordings={[{
+                id: id,
+                start_time: recording.start_time,
+                end_time: recording.end_time
+              }]}
+              initialSamples={samples}
+              originalCount={originalSampleCount}
+            />
+          </CardContent>
+        </Card>
       ) : recording.status === 'processing' ? (
         <div className="text-center py-12 border border-border rounded-lg bg-muted">
           <Loader2 className="w-8 h-8 text-info animate-spin mx-auto mb-4" />

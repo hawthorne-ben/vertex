@@ -177,50 +177,64 @@ export async function GET(
       )
     }
 
-    // Convert records to standardized format
+    // Determine which fields to extract based on request
+    const needsSpeed = !requestedFields || requestedFields.includes('speed_ms')
+    const needsGPS = !requestedFields || requestedFields.includes('latitude') || requestedFields.includes('longitude')
+    const needsAltitude = !requestedFields || requestedFields.includes('altitude')
+    const needsPower = !requestedFields || requestedFields.includes('power_watts')
+    const needsHR = !requestedFields || requestedFields.includes('heart_rate')
+    const needsCadence = !requestedFields || requestedFields.includes('cadence')
+    const needsTemp = !requestedFields || requestedFields.includes('temperature')
+    const needsGrade = !requestedFields || requestedFields.includes('grade')
+
+    // Convert records to standardized format (only extract requested fields)
     const samples: FitSample[] = records.map((record: any, index: number, allRecords: any[]) => {
-      // Speed from FIT file (if available) - already in m/s from fit-file-parser
-      let speedMs = record.speed || record.enhanced_speed || null
+      let speedMs = null
 
-      // If no speed in FIT, calculate from GPS position changes
-      if (speedMs === null && record.position_lat && record.position_long && index > 0) {
-        const prevRecord = allRecords[index - 1]
-        if (prevRecord.position_lat && prevRecord.position_long && prevRecord.timestamp && record.timestamp) {
-          const lat1 = prevRecord.position_lat * Math.PI / 180
-          const lat2 = record.position_lat * Math.PI / 180
-          const lon1 = prevRecord.position_long * Math.PI / 180
-          const lon2 = record.position_long * Math.PI / 180
+      // Only calculate speed if needed
+      if (needsSpeed) {
+        // Speed from FIT file (if available) - already in m/s from fit-file-parser
+        speedMs = record.speed || record.enhanced_speed || null
 
-          // Haversine formula for distance between GPS points
-          const dLat = lat2 - lat1
-          const dLon = lon2 - lon1
-          const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                   Math.cos(lat1) * Math.cos(lat2) *
-                   Math.sin(dLon/2) * Math.sin(dLon/2)
-          const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
-          const distanceMeters = 6371000 * c // Earth radius in meters
+        // If no speed in FIT, calculate from GPS position changes
+        if (speedMs === null && needsGPS && record.position_lat && record.position_long && index > 0) {
+          const prevRecord = allRecords[index - 1]
+          if (prevRecord.position_lat && prevRecord.position_long && prevRecord.timestamp && record.timestamp) {
+            const lat1 = prevRecord.position_lat * Math.PI / 180
+            const lat2 = record.position_lat * Math.PI / 180
+            const lon1 = prevRecord.position_long * Math.PI / 180
+            const lon2 = record.position_long * Math.PI / 180
 
-          // Time difference in seconds
-          const timeDiff = (new Date(record.timestamp).getTime() - new Date(prevRecord.timestamp).getTime()) / 1000
+            // Haversine formula for distance between GPS points
+            const dLat = lat2 - lat1
+            const dLon = lon2 - lon1
+            const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                     Math.cos(lat1) * Math.cos(lat2) *
+                     Math.sin(dLon/2) * Math.sin(dLon/2)
+            const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+            const distanceMeters = 6371000 * c // Earth radius in meters
 
-          if (timeDiff > 0 && distanceMeters < 1000) { // Sanity check: ignore if >1km/sample
-            speedMs = distanceMeters / timeDiff
+            // Time difference in seconds
+            const timeDiff = (new Date(record.timestamp).getTime() - new Date(prevRecord.timestamp).getTime()) / 1000
+
+            if (timeDiff > 0 && distanceMeters < 1000) { // Sanity check: ignore if >1km/sample
+              speedMs = distanceMeters / timeDiff
+            }
           }
         }
       }
 
       return {
         timestamp: record.timestamp ? new Date(record.timestamp).toISOString() : null,
-        latitude: record.position_lat || null,
-        longitude: record.position_long || null,
-        // Prefer enhanced_altitude (barometric) over altitude (GPS)
-        altitude: record.enhanced_altitude ?? record.altitude ?? null,
+        latitude: needsGPS ? (record.position_lat || null) : null,
+        longitude: needsGPS ? (record.position_long || null) : null,
+        altitude: needsAltitude ? (record.enhanced_altitude ?? record.altitude ?? null) : null,
         speed_ms: speedMs,
-        power_watts: record.power || null,
-        heart_rate: record.heart_rate || null,
-        cadence: record.cadence || null,
-        temperature: record.temperature || null,
-        grade: record.grade || null,
+        power_watts: needsPower ? (record.power || null) : null,
+        heart_rate: needsHR ? (record.heart_rate || null) : null,
+        cadence: needsCadence ? (record.cadence || null) : null,
+        temperature: needsTemp ? (record.temperature || null) : null,
+        grade: needsGrade ? (record.grade || null) : null,
       }
     }).filter((s: FitSample) => s.timestamp !== null)
 

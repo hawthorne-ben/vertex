@@ -3,6 +3,7 @@
 import { useEffect, useState, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import dynamic from 'next/dynamic'
+import { findClosestByTime } from '@/lib/sync/fit-vtx-sync'
 
 // Dynamically import map to avoid SSR issues with Leaflet
 const RideMap = dynamic(
@@ -10,49 +11,31 @@ const RideMap = dynamic(
   { ssr: false, loading: () => <div className="h-[400px] bg-muted rounded-lg animate-pulse" /> }
 )
 
+interface IMUTimeRange {
+  start: number // Unix timestamp in ms
+  end: number // Unix timestamp in ms
+}
+
 interface RideMapClientProps {
   rideId: string
   fitRecordingId: string | null
   highlightTime?: number | null // Unix timestamp in seconds to highlight
+  imuTimeRanges?: IMUTimeRange[] // Time ranges where IMU data exists
 }
 
-export function RideMapClient({ rideId, fitRecordingId, highlightTime }: RideMapClientProps) {
+export function RideMapClient({ rideId, fitRecordingId, highlightTime, imuTimeRanges = [] }: RideMapClientProps) {
   const [gpsTrack, setGpsTrack] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  // Convert highlightTime to GPS track index (optimized with useMemo)
+  // Convert highlightTime to GPS track index (using shared sync library)
   const highlightIndex = useMemo(() => {
     if (highlightTime === null || highlightTime === undefined || gpsTrack.length === 0) {
       return null
     }
 
-    // Binary search for closest GPS point
-    let left = 0
-    let right = gpsTrack.length - 1
-    let closestIdx = 0
-    let minDiff = Infinity
-
-    while (left <= right) {
-      const mid = Math.floor((left + right) / 2)
-      const pointTime = new Date(gpsTrack[mid].timestamp).getTime() / 1000
-      const diff = Math.abs(pointTime - highlightTime)
-
-      if (diff < minDiff) {
-        minDiff = diff
-        closestIdx = mid
-      }
-
-      if (pointTime < highlightTime) {
-        left = mid + 1
-      } else if (pointTime > highlightTime) {
-        right = mid - 1
-      } else {
-        return mid // Exact match
-      }
-    }
-
-    return closestIdx
+    const result = findClosestByTime(gpsTrack, highlightTime)
+    return result?.index ?? null
   }, [highlightTime, gpsTrack])
 
   useEffect(() => {
@@ -97,6 +80,9 @@ export function RideMapClient({ rideId, fitRecordingId, highlightTime }: RideMap
             altitude: s.altitude,
             speed: s.speed_ms,
             timestamp: s.timestamp,
+            // Pre-calculate converted values for popup efficiency
+            speedMph: s.speed_ms ? s.speed_ms * 2.23694 : undefined,
+            altitudeFt: s.altitude ? s.altitude * 3.28084 : undefined,
           }))
 
         setGpsTrack(track)
@@ -138,6 +124,7 @@ export function RideMapClient({ rideId, fitRecordingId, highlightTime }: RideMap
       gpsTrack={gpsTrack}
       hoverIndex={highlightIndex !== null && highlightIndex !== -1 ? highlightIndex : null}
       className="w-full"
+      imuTimeRanges={imuTimeRanges}
     />
   )
 }

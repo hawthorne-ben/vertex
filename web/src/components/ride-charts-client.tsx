@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 import dynamic from 'next/dynamic'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { findClosestByTime } from '@/lib/sync/fit-vtx-sync'
 
 // Dynamically import charts to avoid SSR issues
 const SingleMetricChart = dynamic(
@@ -48,38 +49,14 @@ export function RideChartsClient({ rideId, fitRecordingId, showMap = false, onEl
   const [error, setError] = useState<string | null>(null)
   const [hoverIndex, setHoverIndex] = useState<number | null>(null)
 
-  // Convert highlightTime to sample index (optimized binary search)
+  // Convert highlightTime to sample index (using shared sync library)
   const highlightIndex = useMemo(() => {
     if (highlightTime === null || highlightTime === undefined || samples.length === 0) {
       return null
     }
 
-    // Binary search for closest sample
-    let left = 0
-    let right = samples.length - 1
-    let closestIdx = 0
-    let minDiff = Infinity
-
-    while (left <= right) {
-      const mid = Math.floor((left + right) / 2)
-      const sampleTime = new Date(samples[mid].timestamp).getTime() / 1000
-      const diff = Math.abs(sampleTime - highlightTime)
-
-      if (diff < minDiff) {
-        minDiff = diff
-        closestIdx = mid
-      }
-
-      if (sampleTime < highlightTime) {
-        left = mid + 1
-      } else if (sampleTime > highlightTime) {
-        right = mid - 1
-      } else {
-        return mid // Exact match
-      }
-    }
-
-    return closestIdx
+    const result = findClosestByTime(samples, highlightTime)
+    return result?.index ?? null
   }, [highlightTime, samples])
 
   // Use highlightIndex if set, otherwise use hoverIndex

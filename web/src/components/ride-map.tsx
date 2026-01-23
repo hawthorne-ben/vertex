@@ -1,10 +1,11 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { Home } from 'lucide-react'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { simplifyGPSTrack } from '@/lib/geo/douglas-peucker'
 import 'leaflet/dist/leaflet.css'
 
 // Create custom home icon for start/end markers
@@ -72,6 +73,13 @@ interface GPSPoint {
   timestamp?: string
   speed?: number | null
   altitude?: number | null
+  speedMph?: number // Pre-calculated
+  altitudeFt?: number // Pre-calculated
+}
+
+interface IMUTimeRange {
+  start: number // Unix timestamp in ms
+  end: number // Unix timestamp in ms
 }
 
 interface RideMapProps {
@@ -80,6 +88,7 @@ interface RideMapProps {
   onPointClick?: (index: number) => void
   colorBy?: 'speed' | 'elevation' | 'none'
   className?: string
+  imuTimeRanges?: IMUTimeRange[] // Time ranges where IMU data exists
 }
 
 // Component to fit bounds only on initial mount
@@ -100,12 +109,112 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
   return null
 }
 
+// Component to dynamically adjust polyline detail based on zoom level
+function DynamicPolylines({
+  fullTrack,
+  imuTimeRanges,
+  defaultColor,
+  imuColor
+}: {
+  fullTrack: GPSPoint[]
+  imuTimeRanges: IMUTimeRange[]
+  defaultColor: string
+  imuColor: string
+}) {
+  const map = useMap()
+  const [zoom, setZoom] = useState(map.getZoom())
+
+  useEffect(() => {
+    const handleZoom = () => {
+      setZoom(map.getZoom())
+    }
+
+    map.on('zoomend', handleZoom)
+    return () => {
+      map.off('zoomend', handleZoom)
+    }
+  }, [map])
+
+  // Adjust simplification based on zoom level
+  const simplifiedTrack = useMemo(() => {
+    // More detail at higher zoom levels
+    // Zoom 10 (city level): 0.0005 (~55m)
+    // Zoom 13 (neighborhood): 0.0002 (~22m)
+    // Zoom 15+ (street level): 0.00005 (~5m)
+    let epsilon: number
+    if (zoom >= 15) {
+      epsilon = 0.00005 // High detail
+    } else if (zoom >= 13) {
+      epsilon = 0.0001 // Medium detail
+    } else if (zoom >= 11) {
+      epsilon = 0.0002 // Low detail
+    } else {
+      epsilon = 0.0005 // Very low detail
+    }
+
+    return simplifyGPSTrack(fullTrack, epsilon).simplified
+  }, [fullTrack, zoom])
+
+  // Split into IMU segments
+  const segments = useMemo(() => {
+    const hasIMUData = (timestamp: string): boolean => {
+      if (imuTimeRanges.length === 0) return false
+      const pointTime = new Date(timestamp).getTime()
+      return imuTimeRanges.some(range => pointTime >= range.start && pointTime <= range.end)
+    }
+
+    const segs: { positions: [number, number][]; hasIMU: boolean }[] = []
+    let currentSegment: [number, number][] = []
+    let currentHasIMU = false
+
+    simplifiedTrack.forEach((point, idx) => {
+      const pointHasIMU = point.timestamp ? hasIMUData(point.timestamp) : false
+
+      if (idx === 0) {
+        currentHasIMU = pointHasIMU
+        currentSegment.push([point.lat, point.lon])
+      } else if (pointHasIMU === currentHasIMU) {
+        currentSegment.push([point.lat, point.lon])
+      } else {
+        if (currentSegment.length > 0) {
+          segs.push({ positions: [...currentSegment], hasIMU: currentHasIMU })
+        }
+        currentSegment = [[simplifiedTrack[idx - 1].lat, simplifiedTrack[idx - 1].lon], [point.lat, point.lon]]
+        currentHasIMU = pointHasIMU
+      }
+    })
+
+    if (currentSegment.length > 0) {
+      segs.push({ positions: currentSegment, hasIMU: currentHasIMU })
+    }
+
+    return segs
+  }, [simplifiedTrack, imuTimeRanges])
+
+  return (
+    <>
+      {segments.map((segment, idx) => (
+        <Polyline
+          key={`segment-${idx}-zoom-${zoom}`}
+          positions={segment.positions}
+          pathOptions={{
+            color: segment.hasIMU ? imuColor : defaultColor,
+            weight: 3,
+            opacity: 0.8,
+          }}
+        />
+      ))}
+    </>
+  )
+}
+
 export function RideMap({
   gpsTrack,
   hoverIndex = null,
   onPointClick,
   colorBy = 'speed',
-  className = ''
+  className = '',
+  imuTimeRanges = []
 }: RideMapProps) {
   const [mounted, setMounted] = useState(false)
   const [isDark, setIsDark] = useState(false)
@@ -131,6 +240,8 @@ export function RideMap({
     return () => observer.disconnect()
   }, [])
 
+  // No need for static simplification - DynamicPolylines will handle it based on zoom
+
   if (!mounted) {
     return (
       <div className={`bg-muted rounded-lg flex items-center justify-center ${className}`} style={{ height: 400 }}>
@@ -147,12 +258,10 @@ export function RideMap({
     )
   }
 
-  // Convert to Leaflet format
-  const positions: [number, number][] = gpsTrack.map(p => [p.lat, p.lon])
-
-  // Calculate center
+  // Calculate center and bounds from original track
   const centerLat = gpsTrack.reduce((sum, p) => sum + p.lat, 0) / gpsTrack.length
   const centerLon = gpsTrack.reduce((sum, p) => sum + p.lon, 0) / gpsTrack.length
+  const positions: [number, number][] = gpsTrack.map(p => [p.lat, p.lon])
 
   // Theme-aware tile layer
   const tileUrl = isDark
@@ -197,8 +306,9 @@ export function RideMap({
     ? [gpsTrack[hoverIndex].lat, gpsTrack[hoverIndex].lon] as [number, number]
     : null
 
-  // Theme-aware route color
-  const routeColor = isDark ? '#ffffff' : '#000000'
+  // Theme-aware colors
+  const defaultRouteColor = isDark ? '#ffffff' : '#000000'
+  const imuRouteColor = '#22c55e' // Green for IMU coverage
 
   return (
     <div className={`${className} relative`} style={{ zIndex: 1 }}>
@@ -217,42 +327,35 @@ export function RideMap({
 
         <FitBounds positions={positions} />
 
-        {/* Route polyline - theme-aware minimal */}
-        <Polyline
-          positions={positions}
-          pathOptions={{
-            color: routeColor,
-            weight: 2,
-            opacity: 0.7,
-          }}
-          eventHandlers={{
-            click: (e) => {
-              // Future: find closest point and trigger chart sync
-            }
-          }}
+        {/* Route polylines - dynamically simplified based on zoom */}
+        <DynamicPolylines
+          fullTrack={gpsTrack}
+          imuTimeRanges={imuTimeRanges}
+          defaultColor={defaultRouteColor}
+          imuColor={imuRouteColor}
         />
 
-        {/* Hover marker */}
+        {/* Hover marker - zIndex 1000 */}
         {hoverPosition && (
-          <Marker position={hoverPosition} icon={hoverIcon}>
+          <Marker position={hoverPosition} icon={hoverIcon} zIndexOffset={1000}>
             <Popup>
-              {gpsTrack[hoverIndex!].speed && (
-                <div>Speed: {(gpsTrack[hoverIndex!].speed! * 2.23694).toFixed(1)} mph</div>
+              {gpsTrack[hoverIndex!].speedMph !== undefined && (
+                <div>Speed: {gpsTrack[hoverIndex!].speedMph!.toFixed(1)} mph</div>
               )}
-              {gpsTrack[hoverIndex!].altitude && (
-                <div>Elevation: {(gpsTrack[hoverIndex!].altitude! * 3.28084).toFixed(0)} ft</div>
+              {gpsTrack[hoverIndex!].altitudeFt !== undefined && (
+                <div>Elevation: {gpsTrack[hoverIndex!].altitudeFt!.toFixed(0)} ft</div>
               )}
             </Popup>
           </Marker>
         )}
 
-        {/* Start marker - green home icon */}
-        <Marker position={positions[0]} icon={startIcon}>
+        {/* Start marker - green home icon - zIndex 500 */}
+        <Marker position={positions[0]} icon={startIcon} zIndexOffset={500}>
           <Popup>Start</Popup>
         </Marker>
 
-        {/* End marker - red home icon */}
-        <Marker position={positions[positions.length - 1]} icon={endIcon}>
+        {/* End marker - red home icon - zIndex 500 */}
+        <Marker position={positions[positions.length - 1]} icon={endIcon} zIndexOffset={500}>
           <Popup>Finish</Popup>
         </Marker>
       </MapContainer>
