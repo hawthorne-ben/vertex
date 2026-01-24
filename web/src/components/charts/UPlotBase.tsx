@@ -208,17 +208,19 @@ export function UPlotBase({
       // Preserve current zoom state before updating data
       const currentXScale = uplotRef.current.scales.x
       const wasZoomed = currentXScale.min !== undefined && currentXScale.max !== undefined
+      const savedMin = currentXScale.min
+      const savedMax = currentXScale.max
 
       uplotRef.current.setData(data)
 
       // Restore zoom after data update (if was zoomed)
-      if (wasZoomed && currentXScale.min !== undefined && currentXScale.max !== undefined) {
+      if (wasZoomed && savedMin !== undefined && savedMax !== undefined) {
         // Use requestAnimationFrame to apply zoom after data is rendered
         requestAnimationFrame(() => {
           if (uplotRef.current) {
             uplotRef.current.setScale('x', {
-              min: currentXScale.min,
-              max: currentXScale.max
+              min: savedMin,
+              max: savedMax
             })
           }
         })
