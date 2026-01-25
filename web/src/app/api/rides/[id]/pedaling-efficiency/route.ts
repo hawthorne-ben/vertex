@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { calculatePedalingEfficiency } from '@/lib/analysis/pedaling-efficiency'
+import { fileCache } from '@/lib/cache/file-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -113,23 +114,26 @@ export async function GET(
     }
 
     // Fetch FIT samples directly from storage (avoid internal API call)
-    // Download and parse FIT file
-    const { data: fitFileData, error: fitDownloadError } = await supabase.storage
-      .from('recordings')
-      .download(fitRecording.storage_path)
+    // Download and parse FIT file (with caching)
+    const fitArrayBuffer = await fileCache.getOrFetch(
+      fitRecording.storage_path,
+      async () => {
+        const { data: fitFileData, error: fitDownloadError } = await supabase.storage
+          .from('recordings')
+          .download(fitRecording.storage_path)
 
-    if (fitDownloadError || !fitFileData) {
-      console.error('Error downloading FIT file:', fitDownloadError)
-      return NextResponse.json(
-        { error: 'Failed to download FIT file' },
-        { status: 500 }
-      )
-    }
+        if (fitDownloadError || !fitFileData) {
+          console.error('Error downloading FIT file:', fitDownloadError)
+          throw new Error('Failed to download FIT file')
+        }
+
+        return await fitFileData.arrayBuffer()
+      }
+    )
 
     // Parse FIT file
     const FitParser = (await import('fit-file-parser')).default
-    const arrayBuffer = await fitFileData.arrayBuffer()
-    const buffer = new Uint8Array(arrayBuffer)
+    const buffer = new Uint8Array(fitArrayBuffer)
 
     const fitData = await new Promise<any>((resolve, reject) => {
       const parser = new FitParser({ force: true, speedUnit: 'm/s', lengthUnit: 'm' })
@@ -171,24 +175,35 @@ export async function GET(
     const allVtxSamples: Array<{ timestamp: string; accel_x: number }> = []
 
     for (const vtx of vtxRecordings) {
-      // Download VTX file
-      const { data: vtxFileData, error: vtxDownloadError } = await supabase.storage
-        .from('recordings')
-        .download(vtx.storage_path)
+      // Download VTX file (with caching)
+      let vtxArrayBuffer: ArrayBuffer
+      try {
+        vtxArrayBuffer = await fileCache.getOrFetch(
+          vtx.storage_path,
+          async () => {
+            const { data: vtxFileData, error: vtxDownloadError } = await supabase.storage
+              .from('recordings')
+              .download(vtx.storage_path)
 
-      if (vtxDownloadError || !vtxFileData) {
-        console.error(`Failed to download VTX file ${vtx.id}:`, vtxDownloadError)
+            if (vtxDownloadError || !vtxFileData) {
+              console.error(`Failed to download VTX file ${vtx.id}:`, vtxDownloadError)
+              throw new Error('Failed to download VTX file')
+            }
+
+            // Parse VTX file
+            const fileBuffer = Buffer.from(await vtxFileData.arrayBuffer())
+            return fileBuffer.buffer.slice(
+              fileBuffer.byteOffset,
+              fileBuffer.byteOffset + fileBuffer.byteLength
+            ) as ArrayBuffer
+          }
+        )
+      } catch (error) {
+        console.error(`Failed to fetch VTX file ${vtx.id}:`, error)
         continue
       }
 
-      // Parse VTX file
-      const fileBuffer = Buffer.from(await vtxFileData.arrayBuffer())
-      const arrayBuffer = fileBuffer.buffer.slice(
-        fileBuffer.byteOffset,
-        fileBuffer.byteOffset + fileBuffer.byteLength
-      ) as ArrayBuffer
-
-      const decoder = new VTXDecoder(arrayBuffer)
+      const decoder = new VTXDecoder(vtxArrayBuffer)
       const header = decoder.getHeader()
       const recordCount = Number(header.recordCount)
 

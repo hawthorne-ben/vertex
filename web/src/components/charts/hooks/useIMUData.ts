@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
 export type IMUDataType = 'orientation' | 'accel' | 'gyro' | 'smoothedAccel' | 'smoothedGyro' | 'trueOrientation'
@@ -50,17 +50,21 @@ export function useIMUData({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [originalCount, setOriginalCount] = useState(initialSamples?.length || 0)
+  const hasFetchedRef = useRef(false)
 
   useEffect(() => {
     // If we have initial samples and no time range (not zoomed), use them
-    if (initialSamples && !timeRange) {
+    // This optimization only applies on FIRST LOAD (before any fetch)
+    // After that, we always fetch to ensure we have the right resolution
+    if (initialSamples && !timeRange && !hasFetchedRef.current) {
       setSamples(initialSamples)
       setOriginalCount(initialSamples.length)
       return
     }
 
-    // Otherwise fetch data (for zoom or special data types)
+    // Otherwise fetch data (for zoom, data type changes, or zoom reset)
     const fetchData = async () => {
+      hasFetchedRef.current = true // Mark that we've fetched
       setLoading(true)
       setError(null)
 
@@ -90,7 +94,8 @@ export function useIMUData({
           console.log(`Zoom: ${recordings.length} total recordings, ${recordingsToFetch.length} overlap with zoom range`)
         }
 
-        for (const recording of recordingsToFetch) {
+        // Fetch all recordings in parallel
+        const fetchPromises = recordingsToFetch.map(async (recording) => {
           const params = new URLSearchParams()
           if (timeRange) {
             params.set('start', timeRange.start)
@@ -134,11 +139,23 @@ export function useIMUData({
             yaw: s.euler?.yaw ?? s.yaw ?? null,
           }))
 
-          allSamples.push(...transformed)
-          if (metadata?.total_samples) {
-            setOriginalCount(prev => prev + metadata.total_samples)
+          return {
+            samples: transformed,
+            totalSamples: metadata?.total_samples || 0
           }
+        })
+
+        // Wait for all fetches to complete in parallel
+        const results = await Promise.all(fetchPromises)
+
+        // Merge results
+        let totalOriginalCount = 0
+        for (const result of results) {
+          allSamples.push(...result.samples)
+          totalOriginalCount += result.totalSamples
         }
+
+        setOriginalCount(totalOriginalCount)
 
         // Sort by timestamp
         allSamples.sort((a, b) => {

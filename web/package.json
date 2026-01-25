@@ -34,7 +34,9 @@
     "fili": "^2.0.2",
     "fit-file-parser": "^1.21.0",
     "inngest": "^3.44.3",
+    "inngest-cli": "^1.16.1",
     "leaflet": "^1.9.4",
+    "lru-cache": "^11.2.4",
     "lucide-react": "^0.468.0",
     "next": "^15.5.7",
     "plotly.js-dist": "^2.35.0",
@@ -64,5 +66,8 @@
     "tailwindcss": "^3.4.0",
     "tailwindcss-animate": "^1.0.7",
     "typescript": "^5.7.0"
+  },
+  "overrides": {
+    "tar": "^7.5.4"
   }
 }

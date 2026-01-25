@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { VTXDecoder } from '@vertex-pkg/vtx-parser'
 import { downsampleLTTB } from '@/lib/data/downsampling'
+import { fileCache } from '@/lib/cache/file-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -99,27 +100,29 @@ export async function GET(
       )
     }
 
-    // Download VTX file from storage
-    const { data: fileData, error: downloadError } = await supabase.storage
-      .from('recordings')
-      .download(recording.storage_path)
+    // Download VTX file from storage (with caching)
+    const arrayBuffer = await fileCache.getOrFetch(
+      recording.storage_path,
+      async () => {
+        const { data: fileData, error: downloadError } = await supabase.storage
+          .from('recordings')
+          .download(recording.storage_path)
 
-    if (downloadError || !fileData) {
-      console.error('Error downloading recording:', downloadError)
-      return NextResponse.json(
-        { error: 'Failed to download recording file' },
-        { status: 500 }
-      )
-    }
+        if (downloadError || !fileData) {
+          console.error('Error downloading recording:', downloadError)
+          throw new Error('Failed to download recording file')
+        }
 
-    // Parse VTX file - convert to ArrayBuffer for VTXDecoder
-    const fileBuffer = Buffer.from(await fileData.arrayBuffer())
+        // Parse VTX file - convert to ArrayBuffer for VTXDecoder
+        const fileBuffer = Buffer.from(await fileData.arrayBuffer())
 
-    // Convert Buffer to ArrayBuffer
-    const arrayBuffer = fileBuffer.buffer.slice(
-      fileBuffer.byteOffset,
-      fileBuffer.byteOffset + fileBuffer.byteLength
-    ) as ArrayBuffer
+        // Convert Buffer to ArrayBuffer
+        return fileBuffer.buffer.slice(
+          fileBuffer.byteOffset,
+          fileBuffer.byteOffset + fileBuffer.byteLength
+        ) as ArrayBuffer
+      }
+    )
 
     const decoder = new VTXDecoder(arrayBuffer)
     const header = decoder.getHeader()

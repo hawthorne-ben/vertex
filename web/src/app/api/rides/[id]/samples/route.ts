@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import FitParser from 'fit-file-parser'
+import { fileCache } from '@/lib/cache/file-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -107,21 +108,24 @@ export async function GET(
       )
     }
 
-    // Download FIT file from storage
-    const { data: fileData, error: downloadError } = await supabase.storage
-      .from('recordings')
-      .download(fitRecording.storage_path)
+    // Download FIT file from storage (with caching)
+    const arrayBuffer = await fileCache.getOrFetch(
+      fitRecording.storage_path,
+      async () => {
+        const { data: fileData, error: downloadError } = await supabase.storage
+          .from('recordings')
+          .download(fitRecording.storage_path)
 
-    if (downloadError || !fileData) {
-      console.error('Error downloading FIT file:', downloadError)
-      return NextResponse.json(
-        { error: 'Failed to download FIT file' },
-        { status: 500 }
-      )
-    }
+        if (downloadError || !fileData) {
+          console.error('Error downloading FIT file:', downloadError)
+          throw new Error('Failed to download FIT file')
+        }
+
+        return await fileData.arrayBuffer()
+      }
+    )
 
     // Parse FIT file
-    const arrayBuffer = await fileData.arrayBuffer()
     const buffer = new Uint8Array(arrayBuffer)
 
     const fitData = await new Promise<any>((resolve, reject) => {
