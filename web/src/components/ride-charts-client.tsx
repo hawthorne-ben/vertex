@@ -28,6 +28,9 @@ interface RideChartsClientProps {
   showMap?: boolean
   onElevationUpdate?: (elevationMeters: number) => void
   highlightTime?: number | null // Unix timestamp in seconds to highlight
+  samples?: Sample[]
+  loading?: boolean
+  error?: string | null
 }
 
 interface Sample {
@@ -43,11 +46,25 @@ interface Sample {
   grade?: number | null
 }
 
-export function RideChartsClient({ rideId, fitRecordingId, showMap = false, onElevationUpdate, highlightTime }: RideChartsClientProps) {
-  const [samples, setSamples] = useState<Sample[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+export function RideChartsClient({
+  rideId,
+  fitRecordingId,
+  showMap = false,
+  onElevationUpdate,
+  highlightTime,
+  samples: propSamples,
+  loading: propLoading,
+  error: propError
+}: RideChartsClientProps) {
+  const [fetchedSamples, setFetchedSamples] = useState<Sample[]>([])
+  const [fetchedLoading, setFetchedLoading] = useState(true)
+  const [fetchedError, setFetchedError] = useState<string | null>(null)
   const [hoverIndex, setHoverIndex] = useState<number | null>(null)
+
+  // Use props if provided, otherwise use fetched state
+  const samples = propSamples ?? fetchedSamples
+  const loading = propLoading ?? fetchedLoading
+  const error = propError ?? fetchedError
 
   // Convert highlightTime to sample index (using shared sync library)
   const highlightIndex = useMemo(() => {
@@ -62,11 +79,17 @@ export function RideChartsClient({ rideId, fitRecordingId, showMap = false, onEl
   // Use highlightIndex if set, otherwise use hoverIndex
   const activeIndex = highlightIndex !== null && highlightIndex !== -1 ? highlightIndex : hoverIndex
 
+  // Only fetch if samples not provided as prop
   useEffect(() => {
     async function loadSamples() {
+      if (propSamples !== undefined) {
+        // Samples provided as prop, skip fetch
+        return
+      }
+
       if (!fitRecordingId) {
-        setError('No FIT file associated with this ride')
-        setLoading(false)
+        setFetchedError('No FIT file associated with this ride')
+        setFetchedLoading(false)
         return
       }
 
@@ -75,8 +98,8 @@ export function RideChartsClient({ rideId, fitRecordingId, showMap = false, onEl
         const { data: { session } } = await supabase.auth.getSession()
 
         if (!session) {
-          setError('Not authenticated')
-          setLoading(false)
+          setFetchedError('Not authenticated')
+          setFetchedLoading(false)
           return
         }
 
@@ -95,17 +118,17 @@ export function RideChartsClient({ rideId, fitRecordingId, showMap = false, onEl
         }
 
         const { samples: sampleData } = await response.json()
-        setSamples(sampleData)
+        setFetchedSamples(sampleData)
       } catch (err: any) {
         console.error('Failed to load ride data:', err)
-        setError(err.message)
+        setFetchedError(err.message)
       } finally {
-        setLoading(false)
+        setFetchedLoading(false)
       }
     }
 
     loadSamples()
-  }, [rideId, fitRecordingId])
+  }, [rideId, fitRecordingId, propSamples])
 
   // Check what data we have (must be before any returns for hooks rules)
   const hasPower = samples.some(s => s.power_watts !== null && s.power_watts !== undefined)

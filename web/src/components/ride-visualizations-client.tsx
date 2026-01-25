@@ -8,6 +8,7 @@ import { RideDataTabs } from './charts/RideDataTabs'
 import { Card, CardHeader, CardTitle, CardContent } from './ui/card'
 import { MapErrorBoundary } from './map-error-boundary'
 import { getVtxTimeRanges } from '@/lib/sync/fit-vtx-sync'
+import { useRideSamples } from './hooks/useRideSamples'
 
 interface VTXRecordingWithSamples {
   id: string
@@ -40,6 +41,9 @@ export function RideVisualizationsClient({
 }: RideVisualizationsClientProps) {
   const [selectedTime, setSelectedTime] = useState<number | null>(null)
 
+  // Fetch ride samples once - shared between map and charts
+  const { samples, loading, error } = useRideSamples(rideId, fitRecordingId)
+
   // Calculate IMU time ranges for GPS color coding (using shared sync library)
   const imuTimeRanges = useMemo(() => {
     return getVtxTimeRanges(vtxRecordings)
@@ -59,6 +63,9 @@ export function RideVisualizationsClient({
               fitRecordingId={fitRecordingId}
               highlightTime={selectedTime}
               imuTimeRanges={imuTimeRanges}
+              samples={samples}
+              loading={loading}
+              error={error}
             />
           </MapErrorBoundary>
         ) : (
@@ -103,6 +110,9 @@ export function RideVisualizationsClient({
             rideId={rideId}
             fitRecordingId={fitRecordingId}
             highlightTime={selectedTime}
+            samples={samples}
+            loading={loading}
+            error={error}
           />
         </div>
       )}

@@ -18,6 +18,8 @@ export interface IMUSensorChartProps {
   zoomRange?: { start: string; end: string } | null
   onZoomChange?: (range: { start: string; end: string } | null) => void
   className?: string
+  initialSamples?: IMUSample[]  // Optional: server-fetched samples (recording detail page)
+  originalCount?: number  // Optional: total sample count when initialSamples provided
 }
 
 /**
@@ -31,17 +33,26 @@ export function IMUSensorChart({
   highlightTime,
   zoomRange = null,
   onZoomChange,
-  className = ''
+  className = '',
+  initialSamples,
+  originalCount: propOriginalCount
 }: IMUSensorChartProps) {
   const [dataType, setDataType] = useState<IMUDataType>('orientation')
 
-  // Fetch data using hook
-  const { samples, loading, error, originalCount } = useIMUData({
+  // Fetch data using hook (skip if initialSamples provided)
+  const { samples: fetchedSamples, loading: fetchedLoading, error: fetchedError, originalCount: fetchedOriginalCount } = useIMUData({
     rideId,
     recordings,
     dataType,
-    timeRange: zoomRange
+    timeRange: zoomRange,
+    skip: !!initialSamples  // Skip fetch if initialSamples provided
   })
+
+  // Use initialSamples if provided, otherwise use fetched data
+  const samples = initialSamples ?? fetchedSamples
+  const loading = initialSamples ? false : fetchedLoading
+  const error = initialSamples ? null : fetchedError
+  const originalCount = propOriginalCount ?? fetchedOriginalCount
 
   // Process data for chart (gap detection, format conversion)
   const chartData = useMemo((): { data: uPlot.AlignedData; series: uPlot.Series[]; yAxisLabel: string; scales: Record<string, uPlot.Scale> } => {

@@ -45,6 +45,7 @@ export interface PedalingEfficiencyInput {
     minCadence?: number          // Min reasonable cadence in RPM (default: 40)
     maxCadence?: number          // Max reasonable cadence in RPM (default: 130)
     useMagnitude?: boolean       // Use 3-axis magnitude vs just accel_x (default: true)
+    includeDebug?: boolean       // Include debug statistics in response (default: false)
   }
 }
 
@@ -72,6 +73,50 @@ export interface PedalingEfficiencyMetadata {
   hasCadence: boolean
   hasGrade: boolean
   sampleRate: number | null   // Detected Hz
+  debug?: DebugStatistics     // Optional debug stats
+}
+
+export interface DebugStatistics {
+  // Signal statistics
+  rawAccelStats: PercentileStats
+  filteredAccelStats: PercentileStats
+  stdDevStats: PercentileStats
+
+  // Confidence distribution
+  confidenceStats: PercentileStats
+  confidenceDistribution: {
+    veryLow: number    // % with confidence < 0.1
+    low: number        // % with confidence 0.1-0.3
+    medium: number     // % with confidence 0.3-0.6
+    high: number       // % with confidence > 0.6
+  }
+
+  // Cadence distribution (for pedaling segments only)
+  cadenceDistribution: {
+    min: number | null
+    max: number | null
+    mean: number | null
+    histogram: Array<{ rpm: number; count: number }> // 10 RPM buckets
+  }
+
+  // Sample windows for inspection
+  sampleWindows: {
+    highConfidencePedaling: PedalingEfficiencyOutput[]  // 10s of high confidence
+    lowConfidence: PedalingEfficiencyOutput[]           // 10s of low confidence
+    highEfficiency: PedalingEfficiencyOutput[]          // 10s of smooth pedaling
+    lowEfficiency: PedalingEfficiencyOutput[]           // 10s of rough pedaling
+  }
+}
+
+export interface PercentileStats {
+  min: number
+  p10: number
+  p25: number
+  p50: number  // median
+  p75: number
+  p90: number
+  max: number
+  mean: number
 }
 
 /**
@@ -90,10 +135,11 @@ export function calculatePedalingEfficiency(
   const windowSize = options.windowSize ?? 3  // seconds
   const syncTolerance = options.syncTolerance ?? 100  // ms
   const fftWindowSize = options.fftWindowSize ?? 10  // seconds
-  const confidenceThreshold = options.confidenceThreshold ?? 0.2  // Lower threshold = more sensitive
+  const confidenceThreshold = options.confidenceThreshold ?? 0.15  // Very sensitive - mountain biking is rough
   const minCadence = options.minCadence ?? 40  // RPM
   const maxCadence = options.maxCadence ?? 130  // RPM
   const useMagnitude = options.useMagnitude ?? true  // Use 3-axis magnitude by default
+  const includeDebug = options.includeDebug ?? false
 
   // Detect sample rate from VTX data
   const sampleRate = calculateSampleRate(vtxSamples, 10) ?? 25  // Default 25 Hz if detection fails
@@ -178,17 +224,19 @@ export function calculatePedalingEfficiency(
     // This measures the variability in pedaling force oscillations
     const stdDev = calculateStdDev(effWindowData.map(s => s.filteredAccel))
 
-    // Improved efficiency formula with better scaling
+    // Improved efficiency formula with better scaling for mountain biking
+    // Mountain biking has higher baseline variance due to terrain
     // Uses exponential decay: efficiency = exp(-k * stdDev)
     // Tuned so that:
-    // - stdDev ~0.5 m/s^2 (smooth) -> ~90% efficiency
-    // - stdDev ~1.5 m/s^2 (moderate) -> ~60% efficiency
-    // - stdDev ~3.0 m/s^2 (rough) -> ~30% efficiency
-    const k = 0.35  // Tuning parameter (lower = more generous scoring)
+    // - stdDev ~0.5 m/s^2 (very smooth) -> ~85% efficiency
+    // - stdDev ~1.0 m/s^2 (smooth) -> ~70% efficiency
+    // - stdDev ~2.0 m/s^2 (moderate) -> ~50% efficiency
+    // - stdDev ~4.0 m/s^2 (rough) -> ~25% efficiency
+    const k = 0.18  // Tuning parameter (lower = more generous scoring for rough terrain)
     let rawEfficiency = Math.exp(-k * stdDev)
 
     // Apply floor to prevent extremely low scores from noise
-    rawEfficiency = Math.max(0.1, rawEfficiency)
+    rawEfficiency = Math.max(0.15, rawEfficiency)
 
     // Only report efficiency if we're confident we're pedaling
     const efficiency = confidence >= confidenceThreshold ? rawEfficiency : null
@@ -207,7 +255,14 @@ export function calculatePedalingEfficiency(
   }
 
   // Calculate metadata
-  const metadata = calculateMetadata(efficiencySamples, grades, sampleRate)
+  const metadata = calculateMetadata(
+    efficiencySamples,
+    processedSamples,
+    grades,
+    sampleRate,
+    includeDebug,
+    confidenceThreshold
+  )
 
   return { samples: efficiencySamples, metadata }
 }
@@ -293,6 +348,143 @@ function calculateStdDev(values: number[]): number {
 }
 
 /**
+ * Calculate percentile statistics for a dataset
+ */
+function calculatePercentileStats(values: number[]): PercentileStats {
+  if (values.length === 0) {
+    return { min: 0, p10: 0, p25: 0, p50: 0, p75: 0, p90: 0, max: 0, mean: 0 }
+  }
+
+  const sorted = [...values].sort((a, b) => a - b)
+  const n = sorted.length
+  const mean = values.reduce((sum, v) => sum + v, 0) / n
+
+  const percentile = (p: number) => {
+    const index = Math.floor((p / 100) * (n - 1))
+    return sorted[index]
+  }
+
+  return {
+    min: sorted[0],
+    p10: percentile(10),
+    p25: percentile(25),
+    p50: percentile(50),
+    p75: percentile(75),
+    p90: percentile(90),
+    max: sorted[n - 1],
+    mean
+  }
+}
+
+/**
+ * Calculate debug statistics for analysis
+ */
+function calculateDebugStatistics(
+  samples: PedalingEfficiencyOutput[],
+  processedSamples: Array<{ rawAccel: number; filteredAccel: number }>,
+  confidenceThreshold: number,
+  sampleRate: number
+): DebugStatistics {
+  // Calculate percentile stats for various metrics
+  const rawAccelStats = calculatePercentileStats(processedSamples.map(s => Math.abs(s.rawAccel)))
+  const filteredAccelStats = calculatePercentileStats(processedSamples.map(s => Math.abs(s.filteredAccel)))
+  const confidenceStats = calculatePercentileStats(samples.map(s => s.confidence))
+
+  // Calculate std dev for each sample's window (reconstruct from efficiency)
+  const stdDevValues = samples.map(s => {
+    if (s.efficiency === null || s.efficiency === 0) return 0
+    // Inverse of: efficiency = exp(-0.35 * stdDev)
+    // stdDev = -ln(efficiency) / 0.35
+    return -Math.log(Math.max(0.1, s.efficiency)) / 0.35
+  })
+  const stdDevStats = calculatePercentileStats(stdDevValues)
+
+  // Confidence distribution
+  const veryLow = samples.filter(s => s.confidence < 0.1).length / samples.length * 100
+  const low = samples.filter(s => s.confidence >= 0.1 && s.confidence < 0.3).length / samples.length * 100
+  const medium = samples.filter(s => s.confidence >= 0.3 && s.confidence < 0.6).length / samples.length * 100
+  const high = samples.filter(s => s.confidence >= 0.6).length / samples.length * 100
+
+  // Cadence distribution (for pedaling samples only)
+  const cadenceSamples = samples.filter(s => s.detectedCadence !== null)
+  const cadences = cadenceSamples.map(s => s.detectedCadence!)
+
+  const cadenceDistribution = {
+    min: cadences.length > 0 ? Math.min(...cadences) : null,
+    max: cadences.length > 0 ? Math.max(...cadences) : null,
+    mean: cadences.length > 0 ? cadences.reduce((sum, c) => sum + c, 0) / cadences.length : null,
+    histogram: createCadenceHistogram(cadences)
+  }
+
+  // Find sample windows for inspection (5 seconds each)
+  const windowSize = Math.floor(5 * sampleRate)
+
+  const sampleWindows = {
+    highConfidencePedaling: findBestWindow(samples, windowSize, s => s.confidence, true),
+    lowConfidence: findBestWindow(samples, windowSize, s => s.confidence, false),
+    highEfficiency: findBestWindow(samples.filter(s => s.efficiency !== null), windowSize, s => s.efficiency ?? 0, true),
+    lowEfficiency: findBestWindow(samples.filter(s => s.efficiency !== null), windowSize, s => s.efficiency ?? 0, false)
+  }
+
+  return {
+    rawAccelStats,
+    filteredAccelStats,
+    stdDevStats,
+    confidenceStats,
+    confidenceDistribution: { veryLow, low, medium, high },
+    cadenceDistribution,
+    sampleWindows
+  }
+}
+
+/**
+ * Create histogram of cadence values in 10 RPM buckets
+ */
+function createCadenceHistogram(cadences: number[]): Array<{ rpm: number; count: number }> {
+  if (cadences.length === 0) return []
+
+  const buckets = new Map<number, number>()
+
+  for (const cadence of cadences) {
+    const bucket = Math.floor(cadence / 10) * 10  // Round down to nearest 10
+    buckets.set(bucket, (buckets.get(bucket) || 0) + 1)
+  }
+
+  return Array.from(buckets.entries())
+    .map(([rpm, count]) => ({ rpm, count }))
+    .sort((a, b) => a.rpm - b.rpm)
+}
+
+/**
+ * Find best window of samples based on a metric
+ */
+function findBestWindow(
+  samples: PedalingEfficiencyOutput[],
+  windowSize: number,
+  metric: (s: PedalingEfficiencyOutput) => number,
+  maximize: boolean
+): PedalingEfficiencyOutput[] {
+  if (samples.length === 0 || windowSize > samples.length) {
+    return samples.slice(0, Math.min(windowSize, samples.length))
+  }
+
+  let bestScore = maximize ? -Infinity : Infinity
+  let bestStart = 0
+
+  for (let i = 0; i <= samples.length - windowSize; i++) {
+    const window = samples.slice(i, i + windowSize)
+    const score = window.reduce((sum, s) => sum + metric(s), 0) / windowSize
+
+    if ((maximize && score > bestScore) || (!maximize && score < bestScore)) {
+      bestScore = score
+      bestStart = i
+    }
+  }
+
+  return samples.slice(bestStart, bestStart + windowSize)
+}
+
+/**
  * Detect pedaling using FFT on high-pass filtered acceleration
  * Returns confidence (0-1) and detected cadence in RPM
  */
@@ -315,7 +507,8 @@ function detectPedalingWithFFT(
   const stdDev = Math.sqrt(variance)
 
   // If variance is very low, we're likely stationary
-  if (stdDev < 0.1) {  // Threshold: less than 0.1 m/s^2 std dev = stationary
+  // RELAXED THRESHOLD: 0.05 instead of 0.1 to be more sensitive
+  if (stdDev < 0.05) {
     return { confidence: 0, cadence: null }
   }
 
@@ -379,23 +572,29 @@ function detectPedalingWithFFT(
   const peakToMedian = medianPower > 0 ? peakPower / medianPower : 0
   const peakToAvg = avgPower > 0 ? peakPower / avgPower : 0
 
-  // Combine metrics: need both strong peak AND sufficient variance
-  // peakToMedian > 2 = strong periodic signal
-  // stdDev > 0.3 = sufficient movement (not stationary)
+  // RELAXED THRESHOLDS based on real-world mountain biking data:
+  // Mountain biking acceleration is much less periodic than road cycling
+  // - Terrain variations add noise to the signal
+  // - Rider shifts weight, adjusts to obstacles
+  // - Still pedaling, just not perfectly smooth
+
   let confidence = 0
+  const cadence = spectrum[peakIdx] ? spectrum[peakIdx].freq * 60 : null
 
-  if (peakToMedian > 2.0 && stdDev > 0.3) {
-    // Scale confidence based on how strong the peak is
-    confidence = Math.min(1.0, (peakToMedian - 2.0) / 3.0)  // Normalize 2-5 range to 0-1
-
-    // Bonus for very strong peaks
-    if (peakToMedian > 5.0) {
-      confidence = Math.min(1.0, confidence + 0.2)
-    }
+  // Method 1: Strong periodic signal (road cycling, smooth trail)
+  if (peakToMedian > 2.5 && stdDev > 0.15) {
+    confidence = Math.min(1.0, (peakToMedian - 2.5) / 3.0)
+    if (peakToMedian > 5.0) confidence = Math.min(1.0, confidence + 0.2)
   }
-
-  // Detected cadence from peak frequency
-  const cadence = spectrum[peakIdx] ? spectrum[peakIdx].freq * 60 : null  // Convert Hz to RPM
+  // Method 2: Moderate signal but reasonable cadence detected (mountain biking)
+  else if (peakToMedian > 1.5 && stdDev > 0.2 && cadence && cadence >= 50 && cadence <= 110) {
+    // Lower confidence but still detect as pedaling
+    confidence = Math.min(0.6, (peakToMedian - 1.5) / 2.0)
+  }
+  // Method 3: Sufficient variance with any reasonable peak (very rough terrain)
+  else if (stdDev > 0.5 && peakToMedian > 1.2 && cadence && cadence >= 40 && cadence <= 120) {
+    confidence = Math.min(0.4, (peakToMedian - 1.2) / 2.0)
+  }
 
   return { confidence, cadence }
 }
@@ -405,8 +604,11 @@ function detectPedalingWithFFT(
  */
 function calculateMetadata(
   samples: PedalingEfficiencyOutput[],
+  processedSamples: Array<{ rawAccel: number; filteredAccel: number }>,
   grades: (number | null)[],
-  sampleRate: number | null
+  sampleRate: number | null,
+  includeDebug: boolean,
+  confidenceThreshold: number
 ): PedalingEfficiencyMetadata {
   if (samples.length === 0) {
     return {
@@ -450,7 +652,7 @@ function calculateMetadata(
     ? cadenceSamples.reduce((sum, s) => sum + (s.detectedCadence ?? 0), 0) / cadenceSamples.length
     : null
 
-  return {
+  const metadata: PedalingEfficiencyMetadata = {
     avgEfficiency,
     avgEfficiencyPercent,
     smoothPercent: pedalingSampleCount > 0 ? (smoothCount / pedalingSampleCount) * 100 : 0,
@@ -464,4 +666,11 @@ function calculateMetadata(
     hasGrade: grades.some(g => g !== null),
     sampleRate
   }
+
+  // Add debug statistics if requested
+  if (includeDebug) {
+    metadata.debug = calculateDebugStatistics(samples, processedSamples, confidenceThreshold, sampleRate ?? 25)
+  }
+
+  return metadata
 }

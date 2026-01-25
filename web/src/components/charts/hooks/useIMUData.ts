@@ -27,6 +27,7 @@ export interface UseIMUDataOptions {
   recordings: VTXRecording[]  // Legacy: for backward compatibility
   dataType: IMUDataType
   timeRange?: { start: string; end: string } | null
+  skip?: boolean  // Skip fetching (when data provided externally)
 }
 
 export interface UseIMUDataResult {
@@ -47,7 +48,8 @@ export function useIMUData({
   rideId,
   recordings,
   dataType,
-  timeRange
+  timeRange,
+  skip = false
 }: UseIMUDataOptions): UseIMUDataResult {
   const [samples, setSamples] = useState<IMUSample[]>([])
   const [loading, setLoading] = useState(false)
@@ -61,6 +63,12 @@ export function useIMUData({
   )
 
   useEffect(() => {
+    // Skip fetch if skip flag is set
+    if (skip) {
+      setLoading(false)
+      return
+    }
+
     // Fetch data on mount and when dependencies change
     const fetchData = async () => {
       setLoading(true)
@@ -214,7 +222,7 @@ export function useIMUData({
     }
 
     fetchData()
-  }, [rideId, recordingIds, dataType, timeRange])
+  }, [rideId, recordingIds, dataType, timeRange, skip])
 
   return { samples, loading, error, originalCount }
 }

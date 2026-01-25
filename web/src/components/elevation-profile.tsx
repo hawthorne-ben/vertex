@@ -161,10 +161,9 @@ export function ElevationProfile({
         elevation: {
           auto: true,
           range: (u, dataMin, dataMax) => {
-            // Add padding and ensure we start from a reasonable floor
+            // Add padding to both min and max
             const padding = (dataMax - dataMin) * 0.1
-            const floor = Math.max(0, dataMin - padding)
-            return [floor, dataMax + padding]
+            return [dataMin - padding, dataMax + padding]
           }
         }
       },

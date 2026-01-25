@@ -1,7 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { findClosestByTime } from '@/lib/sync/fit-vtx-sync'
 
@@ -16,17 +15,41 @@ interface IMUTimeRange {
   end: number // Unix timestamp in ms
 }
 
+interface Sample {
+  timestamp: string
+  latitude?: number | null
+  longitude?: number | null
+  altitude?: number | null
+  speed_ms?: number | null
+}
+
 interface RideMapClientProps {
   rideId: string
   fitRecordingId: string | null
   highlightTime?: number | null // Unix timestamp in seconds to highlight
   imuTimeRanges?: IMUTimeRange[] // Time ranges where IMU data exists
+  samples: Sample[]
+  loading: boolean
+  error: string | null
 }
 
-export function RideMapClient({ rideId, fitRecordingId, highlightTime, imuTimeRanges = [] }: RideMapClientProps) {
-  const [gpsTrack, setGpsTrack] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+export function RideMapClient({ rideId, fitRecordingId, highlightTime, imuTimeRanges = [], samples, loading, error }: RideMapClientProps) {
+
+  // Process samples into GPS track format
+  const gpsTrack = useMemo(() => {
+    return samples
+      .filter(s => s.latitude && s.longitude)
+      .map(s => ({
+        lat: s.latitude!,
+        lon: s.longitude!,
+        altitude: s.altitude,
+        speed: s.speed_ms,
+        timestamp: s.timestamp,
+        // Pre-calculate converted values for popup efficiency
+        speedMph: s.speed_ms ? s.speed_ms * 2.23694 : undefined,
+        altitudeFt: s.altitude ? s.altitude * 3.28084 : undefined,
+      }))
+  }, [samples])
 
   // Convert highlightTime to GPS track index (using shared sync library)
   const highlightIndex = useMemo(() => {
@@ -37,65 +60,6 @@ export function RideMapClient({ rideId, fitRecordingId, highlightTime, imuTimeRa
     const result = findClosestByTime(gpsTrack, highlightTime)
     return result?.index ?? null
   }, [highlightTime, gpsTrack])
-
-  useEffect(() => {
-    async function loadGPS() {
-      if (!fitRecordingId) {
-        setError('No FIT file associated with this ride')
-        setLoading(false)
-        return
-      }
-
-      try {
-        const supabase = createClient()
-        const { data: { session } } = await supabase.auth.getSession()
-
-        if (!session) {
-          setError('Not authenticated')
-          setLoading(false)
-          return
-        }
-
-        const response = await fetch(
-          `/api/rides/${rideId}/samples?fields=latitude,longitude,altitude,speed_ms,timestamp`,
-          {
-            headers: {
-              'Authorization': `Bearer ${session.access_token}`
-            }
-          }
-        )
-
-        if (!response.ok) {
-          const errorData = await response.json()
-          throw new Error(errorData.error || 'Failed to fetch GPS data')
-        }
-
-        const { samples } = await response.json()
-
-        const track = samples
-          .filter((s: any) => s.latitude && s.longitude)
-          .map((s: any) => ({
-            lat: s.latitude,
-            lon: s.longitude,
-            altitude: s.altitude,
-            speed: s.speed_ms,
-            timestamp: s.timestamp,
-            // Pre-calculate converted values for popup efficiency
-            speedMph: s.speed_ms ? s.speed_ms * 2.23694 : undefined,
-            altitudeFt: s.altitude ? s.altitude * 3.28084 : undefined,
-          }))
-
-        setGpsTrack(track)
-      } catch (err: any) {
-        console.error('Failed to load GPS data:', err)
-        setError(err.message)
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    loadGPS()
-  }, [rideId, fitRecordingId])
 
   if (loading) {
     return (

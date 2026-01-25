@@ -95,10 +95,36 @@ export function UPlotBase({
     }
   }
 
-  // Create/update chart
+  // Effect to handle chart creation/recreation when series/config changes
   useEffect(() => {
     if (!chartRef.current) return
     if (!data || data.length === 0 || !data[0] || data[0].length === 0) return
+
+    // Check if series configuration changed
+    let seriesChanged = !uplotRef.current
+
+    if (uplotRef.current) {
+      try {
+        const currentSeries = uplotRef.current.series
+        seriesChanged = currentSeries.length !== series.length ||
+          currentSeries.some((s, i) => s.label !== series[i]?.label)
+      } catch (err) {
+        seriesChanged = true
+      }
+    }
+
+    // Only recreate if series actually changed
+    if (!seriesChanged) return
+
+    // Destroy old chart if exists
+    if (uplotRef.current) {
+      try {
+        uplotRef.current.destroy()
+      } catch (err) {
+        // Already destroyed
+      }
+      uplotRef.current = null
+    }
 
     // Get theme-aware colors
     const isDark = document.documentElement.classList.contains('dark')
@@ -142,16 +168,13 @@ export function UPlotBase({
         highlightPlugin,
         {
           hooks: {
-            // Init: setup event listeners
             init: [
               (u) => {
                 const over = u.over
-                // Double-click to reset zoom
                 over.addEventListener('dblclick', () => {
                   const timestamps = data[0] as number[]
                   u.setScale('x', { min: timestamps[0], max: timestamps[timestamps.length - 1] })
                 })
-                // Track mousedown for user-initiated zoom detection
                 if (onZoom) {
                   over.addEventListener('mousedown', () => {
                     isUserZoomRef.current = true
@@ -159,27 +182,21 @@ export function UPlotBase({
                 }
               }
             ],
-            // Capture zoom for callback (only on user drag, not programmatic)
             setScale: onZoom ? [
               (u) => {
-                // Only trigger callback if this was a user-initiated zoom
-                if (!isUserZoomRef.current) {
-                  return
-                }
+                if (!isUserZoomRef.current) return
 
                 const xScale = u.scales.x
                 if (xScale.min !== undefined && xScale.max !== undefined) {
                   const start = new Date(xScale.min * 1000).toISOString()
                   const end = new Date(xScale.max * 1000).toISOString()
 
-                  // Debounce - only fire if zoom range actually changed (with tolerance)
                   if (lastZoomRef.current) {
                     const prevStart = new Date(lastZoomRef.current.start).getTime()
                     const prevEnd = new Date(lastZoomRef.current.end).getTime()
                     const newStart = new Date(start).getTime()
                     const newEnd = new Date(end).getTime()
 
-                    // If zoom range is within 100ms of previous, skip
                     if (Math.abs(prevStart - newStart) < 100 && Math.abs(prevEnd - newEnd) < 100) {
                       isUserZoomRef.current = false
                       return
@@ -188,13 +205,12 @@ export function UPlotBase({
 
                   lastZoomRef.current = { start, end }
 
-                  // Use setTimeout to debounce rapid zoom changes
                   setTimeout(() => {
                     onZoom(start, end)
                   }, 300)
                 }
 
-                isUserZoomRef.current = false // Reset flag
+                isUserZoomRef.current = false
               }
             ] : undefined
           }
@@ -202,40 +218,10 @@ export function UPlotBase({
       ]
     }
 
-    // Create or update chart
-    if (uplotRef.current) {
-      // Prevent zoom callback from firing during programmatic data updates
-      isUserZoomRef.current = false
+    // Create new chart
+    uplotRef.current = new uPlot(opts, data, chartRef.current)
 
-      uplotRef.current.setData(data)
-
-      // Only preserve zoom if zoomRange prop is set (not null)
-      // When zoomRange is null, we want to reset to full view
-      if (zoomRange !== null) {
-        // Preserve current zoom state
-        const currentXScale = uplotRef.current.scales.x
-        const wasZoomed = currentXScale.min !== undefined && currentXScale.max !== undefined
-        const savedMin = currentXScale.min
-        const savedMax = currentXScale.max
-
-        // Restore zoom after data update (if was zoomed)
-        if (wasZoomed && savedMin !== undefined && savedMax !== undefined) {
-          // Use requestAnimationFrame to apply zoom after data is rendered
-          requestAnimationFrame(() => {
-            if (uplotRef.current) {
-              uplotRef.current.setScale('x', {
-                min: savedMin,
-                max: savedMax
-              })
-            }
-          })
-        }
-      }
-    } else {
-      uplotRef.current = new uPlot(opts, data, chartRef.current)
-    }
-
-    // Manually style legend markers
+    // Style legend markers
     setTimeout(() => {
       const legendMarkers = chartRef.current?.querySelectorAll('.u-legend .u-marker')
       if (legendMarkers) {
@@ -247,14 +233,61 @@ export function UPlotBase({
         })
       }
     }, 0)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [series, axes, scales, height, syncKey, onZoom])
 
-    // Handle resize
+  // Effect to update data when it changes (without recreating chart)
+  useEffect(() => {
+    if (!uplotRef.current || !data || data.length === 0) return
+
+    isUserZoomRef.current = false
+
+    try {
+      uplotRef.current.setData(data)
+
+      // Apply zoom from zoomRange prop if provided
+      if (zoomRange !== null) {
+        const timestamps = data[0] as number[]
+        const zoomStartTime = new Date(zoomRange.start).getTime() / 1000
+        const zoomEndTime = new Date(zoomRange.end).getTime() / 1000
+
+        const dataMin = timestamps[0]
+        const dataMax = timestamps[timestamps.length - 1]
+        const clampedMin = Math.max(dataMin, zoomStartTime)
+        const clampedMax = Math.min(dataMax, zoomEndTime)
+
+        requestAnimationFrame(() => {
+          if (uplotRef.current) {
+            try {
+              uplotRef.current.setScale('x', {
+                min: clampedMin,
+                max: clampedMax
+              })
+            } catch (err) {
+              // Chart might be recreating
+            }
+          }
+        })
+      }
+    } catch (err) {
+      // Chart might be recreating
+    }
+  }, [data, zoomRange])
+
+  // Effect to handle resize
+  useEffect(() => {
+    if (!chartRef.current) return
+
     const resizeObserver = new ResizeObserver(() => {
       if (uplotRef.current && chartRef.current) {
-        uplotRef.current.setSize({
-          width: chartRef.current.clientWidth,
-          height
-        })
+        try {
+          uplotRef.current.setSize({
+            width: chartRef.current.clientWidth,
+            height
+          })
+        } catch (err) {
+          // Chart might be destroyed, ignore
+        }
       }
     })
 
@@ -263,14 +296,17 @@ export function UPlotBase({
     return () => {
       resizeObserver.disconnect()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data, series, axes, scales, height, syncKey, onZoom]) // highlightPlugin is stable, ignore warning
+  }, [height])
 
-  // Cleanup on unmount
+  // Cleanup on unmount only
   useEffect(() => {
     return () => {
       if (uplotRef.current) {
-        uplotRef.current.destroy()
+        try {
+          uplotRef.current.destroy()
+        } catch (err) {
+          // Already destroyed, ignore
+        }
         uplotRef.current = null
       }
     }

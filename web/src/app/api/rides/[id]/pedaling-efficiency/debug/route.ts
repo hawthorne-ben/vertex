@@ -5,22 +5,21 @@ import { calculatePedalingEfficiency } from '@/lib/analysis/pedaling-efficiency'
 export const dynamic = 'force-dynamic'
 
 /**
- * Get pedaling efficiency analysis for a ride
+ * Debug endpoint for pedaling efficiency analysis
  *
- * Requires:
- * - Ride with FIT file (for GPS grade data)
- * - Ride with VTX recording (for IMU accel_x data)
+ * Designed for analyzing small time windows (10-30 seconds) with detailed diagnostics
  *
  * Query parameters:
- * - window_size: Smoothness calculation window in seconds (default: 3)
+ * - start: Start timestamp (REQUIRED)
+ * - end: End timestamp (REQUIRED)
+ * - window_size: Smoothness window in seconds (default: 3)
  * - hpf_cutoff: High-pass filter cutoff Hz (default: 0.5)
- * - debug: Include debug statistics (default: false)
- * - start: Start timestamp for time range (optional)
- * - end: End timestamp for time range (optional)
  *
- * Returns:
- * - samples: Time series of efficiency scores
- * - metadata: Summary statistics (includes debug stats if debug=true)
+ * Returns detailed diagnostics including:
+ * - Full sample data with all intermediate values
+ * - FFT spectrum at multiple points
+ * - Signal statistics
+ * - Filter response visualization
  */
 export async function GET(
   request: NextRequest,
@@ -31,11 +30,36 @@ export async function GET(
     const searchParams = request.nextUrl.searchParams
 
     // Parse query parameters
+    const startTime = searchParams.get('start')
+    const endTime = searchParams.get('end')
     const windowSize = parseInt(searchParams.get('window_size') || '3')
     const hpfCutoff = parseFloat(searchParams.get('hpf_cutoff') || '0.5')
-    const includeDebug = searchParams.get('debug') === 'true'
-    const startTime = searchParams.get('start') || undefined
-    const endTime = searchParams.get('end') || undefined
+
+    if (!startTime || !endTime) {
+      return NextResponse.json(
+        { error: 'start and end timestamps are required for debug endpoint' },
+        { status: 400 }
+      )
+    }
+
+    // Validate time window size (max 60 seconds for debug)
+    const start = new Date(startTime)
+    const end = new Date(endTime)
+    const durationSeconds = (end.getTime() - start.getTime()) / 1000
+
+    if (durationSeconds > 60) {
+      return NextResponse.json(
+        { error: 'Debug endpoint limited to 60 second windows. Use main endpoint for longer ranges.' },
+        { status: 400 }
+      )
+    }
+
+    if (durationSeconds <= 0) {
+      return NextResponse.json(
+        { error: 'End time must be after start time' },
+        { status: 400 }
+      )
+    }
 
     // Authenticate user
     const authResult = await withAuth(request)
@@ -98,11 +122,11 @@ export async function GET(
       )
     }
 
-    // Fetch FIT samples using internal API endpoint (reuses caching and parsing logic)
+    // Fetch FIT samples
     const fitSamplesUrl = new URL(`${request.url.split('/pedaling-efficiency')[0]}/samples`, request.url)
-    if (startTime) fitSamplesUrl.searchParams.set('start', startTime)
-    if (endTime) fitSamplesUrl.searchParams.set('end', endTime)
-    fitSamplesUrl.searchParams.set('fields', 'grade,altitude')  // Only need grade and altitude
+    fitSamplesUrl.searchParams.set('start', startTime)
+    fitSamplesUrl.searchParams.set('end', endTime)
+    fitSamplesUrl.searchParams.set('fields', 'grade,altitude')
 
     const fitResponse = await fetch(fitSamplesUrl, {
       headers: { 'Authorization': request.headers.get('authorization')! }
@@ -114,13 +138,11 @@ export async function GET(
 
     const { samples: fitSamples } = await fitResponse.json()
 
-    // Fetch VTX samples using internal API endpoint (reuses caching, parsing, and merging logic)
+    // Fetch VTX samples
     const vtxSamplesUrl = new URL(`${request.url.split('/pedaling-efficiency')[0]}/vtx-samples`, request.url)
-    if (startTime) vtxSamplesUrl.searchParams.set('start', startTime)
-    if (endTime) vtxSamplesUrl.searchParams.set('end', endTime)
-    vtxSamplesUrl.searchParams.set('fields', 'accel')  // Fetch all 3 axes for magnitude calculation
-    // Note: Must fetch full resolution - pedaling efficiency depends on sub-second acceleration spikes
-    // Downsampling would destroy the high-frequency signal we're analyzing
+    vtxSamplesUrl.searchParams.set('start', startTime)
+    vtxSamplesUrl.searchParams.set('end', endTime)
+    vtxSamplesUrl.searchParams.set('fields', 'accel')
     vtxSamplesUrl.searchParams.set('downsample', 'none')
 
     const vtxResponse = await fetch(vtxSamplesUrl, {
@@ -135,12 +157,12 @@ export async function GET(
 
     if (vtxSamples.length === 0) {
       return NextResponse.json(
-        { error: 'No VTX samples found' },
+        { error: 'No VTX samples found in time range' },
         { status: 404 }
       )
     }
 
-    // Transform VTX samples to expected format (with all 3 axes)
+    // Transform VTX samples
     const allVtxSamples = vtxSamples.map((s: any) => ({
       timestamp: s.timestamp,
       accel_x: s.accel?.x ?? 0,
@@ -148,7 +170,7 @@ export async function GET(
       accel_z: s.accel?.z ?? 0
     }))
 
-    // Run pedaling efficiency analysis
+    // Run analysis with debug enabled
     const result = calculatePedalingEfficiency({
       vtxSamples: allVtxSamples,
       fitSamples: fitSamples.map((s: any) => ({
@@ -159,17 +181,35 @@ export async function GET(
       options: {
         windowSize,
         hpfCutoff,
-        includeDebug
+        includeDebug: true
       }
     })
 
+    // Return ALL samples for debug (not just summary)
     return NextResponse.json({
-      samples: result.samples,
-      metadata: result.metadata
+      timeRange: {
+        start: startTime,
+        end: endTime,
+        durationSeconds
+      },
+      parameters: {
+        windowSize,
+        hpfCutoff,
+        sampleCount: result.samples.length,
+        sampleRate: result.metadata.sampleRate
+      },
+      samples: result.samples,  // Full sample data
+      metadata: result.metadata,
+      rawInputs: {
+        vtxSampleCount: allVtxSamples.length,
+        fitSampleCount: fitSamples.length,
+        firstVtxSample: allVtxSamples[0],
+        lastVtxSample: allVtxSamples[allVtxSamples.length - 1]
+      }
     })
 
   } catch (error: any) {
-    console.error('Error calculating pedaling efficiency:', error)
+    console.error('Error in debug pedaling efficiency:', error)
     return NextResponse.json(
       { error: error.message || 'Internal server error' },
       { status: 500 }
