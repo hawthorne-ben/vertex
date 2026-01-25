@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { calculatePedalingEfficiency } from '@/lib/analysis/pedaling-efficiency'
-import { fileCache } from '@/lib/cache/file-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -113,134 +112,55 @@ export async function GET(
       )
     }
 
-    // Fetch FIT samples directly from storage (avoid internal API call)
-    // Download and parse FIT file (with caching)
-    const fitArrayBuffer = await fileCache.getOrFetch(
-      fitRecording.storage_path,
-      async () => {
-        const { data: fitFileData, error: fitDownloadError } = await supabase.storage
-          .from('recordings')
-          .download(fitRecording.storage_path)
+    // Fetch FIT samples using internal API endpoint (reuses caching and parsing logic)
+    const fitSamplesUrl = new URL(`${request.url.split('/pedaling-efficiency')[0]}/samples`, request.url)
+    if (startTime) fitSamplesUrl.searchParams.set('start', startTime)
+    if (endTime) fitSamplesUrl.searchParams.set('end', endTime)
+    fitSamplesUrl.searchParams.set('fields', 'grade,altitude')  // Only need grade and altitude
 
-        if (fitDownloadError || !fitFileData) {
-          console.error('Error downloading FIT file:', fitDownloadError)
-          throw new Error('Failed to download FIT file')
-        }
-
-        return await fitFileData.arrayBuffer()
-      }
-    )
-
-    // Parse FIT file
-    const FitParser = (await import('fit-file-parser')).default
-    const buffer = new Uint8Array(fitArrayBuffer)
-
-    const fitData = await new Promise<any>((resolve, reject) => {
-      const parser = new FitParser({ force: true, speedUnit: 'm/s', lengthUnit: 'm' })
-      parser.parse(buffer, (error: any, data: any) => {
-        if (error) reject(error)
-        else resolve(data)
-      })
+    const fitResponse = await fetch(fitSamplesUrl, {
+      headers: { 'Authorization': `Bearer ${token}` }
     })
 
-    // Extract records (same logic as rides/[id]/samples route)
-    let records = fitData.records || []
-    const session = fitData.sessions?.[0] || fitData.activity?.sessions?.[0]
-    if (session?.laps) {
-      const lapRecords: any[] = []
-      session.laps.forEach((lap: any) => {
-        if (lap.records?.length > 0) lapRecords.push(...lap.records)
-      })
-      if (lapRecords.length > 0) records = lapRecords
+    if (!fitResponse.ok) {
+      throw new Error('Failed to fetch FIT samples')
     }
 
-    let fitSamples = records.map((record: any) => ({
-      timestamp: record.timestamp ? new Date(record.timestamp).toISOString() : null,
-      grade: record.grade || null,
-      altitude: record.enhanced_altitude ?? record.altitude ?? null
-    })).filter((s: any) => s.timestamp !== null)
+    const { samples: fitSamples } = await fitResponse.json()
 
-    // Apply time filters if provided (for zoom)
-    if (startTime) {
-      const startDate = new Date(startTime)
-      fitSamples = fitSamples.filter((s: any) => new Date(s.timestamp) >= startDate)
-    }
-    if (endTime) {
-      const endDate = new Date(endTime)
-      fitSamples = fitSamples.filter((s: any) => new Date(s.timestamp) <= endDate)
-    }
+    // Fetch VTX samples using internal API endpoint (reuses caching, parsing, and merging logic)
+    const vtxSamplesUrl = new URL(`${request.url.split('/pedaling-efficiency')[0]}/vtx-samples`, request.url)
+    if (startTime) vtxSamplesUrl.searchParams.set('start', startTime)
+    if (endTime) vtxSamplesUrl.searchParams.set('end', endTime)
+    vtxSamplesUrl.searchParams.set('fields', 'accel')  // Fetch all 3 axes for magnitude calculation
+    // Note: Must fetch full resolution - pedaling efficiency depends on sub-second acceleration spikes
+    // Downsampling would destroy the high-frequency signal we're analyzing
+    vtxSamplesUrl.searchParams.set('downsample', 'none')
 
-    // Fetch VTX samples directly from storage (parse binary files)
-    const VTXDecoder = (await import('@vertex-pkg/vtx-parser')).VTXDecoder
-    const allVtxSamples: Array<{ timestamp: string; accel_x: number }> = []
-
-    for (const vtx of vtxRecordings) {
-      // Download VTX file (with caching)
-      let vtxArrayBuffer: ArrayBuffer
-      try {
-        vtxArrayBuffer = await fileCache.getOrFetch(
-          vtx.storage_path,
-          async () => {
-            const { data: vtxFileData, error: vtxDownloadError } = await supabase.storage
-              .from('recordings')
-              .download(vtx.storage_path)
-
-            if (vtxDownloadError || !vtxFileData) {
-              console.error(`Failed to download VTX file ${vtx.id}:`, vtxDownloadError)
-              throw new Error('Failed to download VTX file')
-            }
-
-            // Parse VTX file
-            const fileBuffer = Buffer.from(await vtxFileData.arrayBuffer())
-            return fileBuffer.buffer.slice(
-              fileBuffer.byteOffset,
-              fileBuffer.byteOffset + fileBuffer.byteLength
-            ) as ArrayBuffer
-          }
-        )
-      } catch (error) {
-        console.error(`Failed to fetch VTX file ${vtx.id}:`, error)
-        continue
-      }
-
-      const decoder = new VTXDecoder(vtxArrayBuffer)
-      const header = decoder.getHeader()
-      const recordCount = Number(header.recordCount)
-
-      // Read all records and extract accel_x
-      const recordingStartMs = Number(header.startTimestamp)
-      const startOffset = startTime ? new Date(startTime).getTime() - recordingStartMs : 0
-      const endOffset = endTime
-        ? new Date(endTime).getTime() - recordingStartMs
-        : Number(header.endTimestamp - header.startTimestamp)
-
-      for (let i = 0; i < recordCount; i++) {
-        const record = decoder.readRecord(i)
-        const recordOffset = record.timestamp - recordingStartMs
-
-        // Skip records outside time range (for zoom)
-        if (recordOffset < startOffset || recordOffset > endOffset) {
-          continue
-        }
-
-        allVtxSamples.push({
-          timestamp: new Date(record.timestamp).toISOString(),
-          accel_x: record.accelX
-        })
-      }
-    }
-
-    // Sort VTX samples by timestamp
-    allVtxSamples.sort((a, b) => {
-      return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    const vtxResponse = await fetch(vtxSamplesUrl, {
+      headers: { 'Authorization': `Bearer ${token}` }
     })
 
-    if (allVtxSamples.length === 0) {
+    if (!vtxResponse.ok) {
+      throw new Error('Failed to fetch VTX samples')
+    }
+
+    const { samples: vtxSamples } = await vtxResponse.json()
+
+    if (vtxSamples.length === 0) {
       return NextResponse.json(
         { error: 'No VTX samples found' },
         { status: 404 }
       )
     }
+
+    // Transform VTX samples to expected format (with all 3 axes)
+    const allVtxSamples = vtxSamples.map((s: any) => ({
+      timestamp: s.timestamp,
+      accel_x: s.accel?.x ?? 0,
+      accel_y: s.accel?.y ?? 0,
+      accel_z: s.accel?.z ?? 0
+    }))
 
     // Run pedaling efficiency analysis
     const result = calculatePedalingEfficiency({

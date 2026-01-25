@@ -15,6 +15,7 @@ export interface UPlotBaseProps {
   height?: number
   highlightTime?: number | null // Unix timestamp in seconds
   onZoom?: (start: string, end: string) => void
+  zoomRange?: { start: string; end: string } | null // Current zoom range (null = reset)
   syncKey?: string
   className?: string
 }
@@ -34,6 +35,7 @@ export function UPlotBase({
   height = 400,
   highlightTime,
   onZoom,
+  zoomRange = null,
   syncKey = 'chart-sync',
   className = ''
 }: UPlotBaseProps) {
@@ -205,25 +207,29 @@ export function UPlotBase({
       // Prevent zoom callback from firing during programmatic data updates
       isUserZoomRef.current = false
 
-      // Preserve current zoom state before updating data
-      const currentXScale = uplotRef.current.scales.x
-      const wasZoomed = currentXScale.min !== undefined && currentXScale.max !== undefined
-      const savedMin = currentXScale.min
-      const savedMax = currentXScale.max
-
       uplotRef.current.setData(data)
 
-      // Restore zoom after data update (if was zoomed)
-      if (wasZoomed && savedMin !== undefined && savedMax !== undefined) {
-        // Use requestAnimationFrame to apply zoom after data is rendered
-        requestAnimationFrame(() => {
-          if (uplotRef.current) {
-            uplotRef.current.setScale('x', {
-              min: savedMin,
-              max: savedMax
-            })
-          }
-        })
+      // Only preserve zoom if zoomRange prop is set (not null)
+      // When zoomRange is null, we want to reset to full view
+      if (zoomRange !== null) {
+        // Preserve current zoom state
+        const currentXScale = uplotRef.current.scales.x
+        const wasZoomed = currentXScale.min !== undefined && currentXScale.max !== undefined
+        const savedMin = currentXScale.min
+        const savedMax = currentXScale.max
+
+        // Restore zoom after data update (if was zoomed)
+        if (wasZoomed && savedMin !== undefined && savedMax !== undefined) {
+          // Use requestAnimationFrame to apply zoom after data is rendered
+          requestAnimationFrame(() => {
+            if (uplotRef.current) {
+              uplotRef.current.setScale('x', {
+                min: savedMin,
+                max: savedMax
+              })
+            }
+          })
+        }
       }
     } else {
       uplotRef.current = new uPlot(opts, data, chartRef.current)

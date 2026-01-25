@@ -5,8 +5,11 @@ export const dynamic = 'force-dynamic'
 
 /**
  * DELETE /api/rides/[id]
- * Delete a ride and its associated FIT recording
- * Cascades to ride_recordings junction table
+ * Delete a ride and its associated data
+ * - Deletes the ride record (cascades to ride_recordings junction table)
+ * - Deletes the FIT recording file and database record (one ride = one FIT file)
+ * - Deletes merged VTX file from storage if it exists
+ * - Does NOT delete VTX/IMU recordings (can be reused for other rides)
  * Uses RLS policies to ensure users can only delete their own rides
  */
 export async function DELETE(
@@ -43,12 +46,13 @@ export async function DELETE(
         id,
         name,
         user_id,
+        merged_vtx_path,
         ride_recordings (
           recording_id,
           recordings (
             id,
             storage_path,
-            filename
+            file_type
           )
         )
       `)
@@ -70,32 +74,41 @@ export async function DELETE(
       )
     }
 
-    // Delete associated FIT files from storage
-    const fitRecordings = ride.ride_recordings
-      ?.filter((rr: any) => rr.recordings?.file_type === 'fit' || rr.recordings?.storage_path)
-      .map((rr: any) => rr.recordings) || []
+    // Delete FIT recording (file + database record) - one ride = one FIT file
+    const fitRecording = ride.ride_recordings
+      ?.find((rr: any) => rr.recordings?.file_type === 'fit')?.recordings
 
-    for (const recording of fitRecordings) {
-      if (recording?.storage_path) {
+    if (fitRecording) {
+      // Delete FIT file from storage
+      if (fitRecording.storage_path) {
         const { error: storageError } = await supabase.storage
           .from('recordings')
-          .remove([recording.storage_path])
+          .remove([fitRecording.storage_path])
 
         if (storageError) {
-          console.warn('Storage deletion failed (non-critical):', storageError)
+          console.warn('FIT file deletion failed (non-critical):', storageError)
         }
       }
 
-      // Delete recording from database (this will cascade to ride_recordings via FK)
-      if (recording?.id) {
-        const { error: recError } = await supabase
-          .from('recordings')
-          .delete()
-          .eq('id', recording.id)
+      // Delete FIT recording from database
+      const { error: recError } = await supabase
+        .from('recordings')
+        .delete()
+        .eq('id', fitRecording.id)
 
-        if (recError) {
-          console.warn('Recording deletion failed:', recError)
-        }
+      if (recError) {
+        console.warn('FIT recording deletion failed:', recError)
+      }
+    }
+
+    // Delete merged VTX file from storage if it exists
+    if (ride.merged_vtx_path) {
+      const { error: storageError } = await supabase.storage
+        .from('recordings')
+        .remove([ride.merged_vtx_path])
+
+      if (storageError) {
+        console.warn('Merged VTX deletion failed (non-critical):', storageError)
       }
     }
 

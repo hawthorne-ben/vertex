@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { UPlotBase } from './UPlotBase'
 import { useIMUData, IMUDataType, IMUSample } from './hooks/useIMUData'
 import uPlot from 'uplot'
@@ -12,9 +12,8 @@ export interface VTXRecording {
 }
 
 export interface IMUSensorChartProps {
-  recordings: VTXRecording[]
-  initialSamples?: IMUSample[]
-  originalCount?: number
+  rideId?: string  // Preferred: fetch from ride-level merged VTX endpoint
+  recordings: VTXRecording[]  // Legacy: for backward compatibility
   highlightTime?: number | null
   zoomRange?: { start: string; end: string } | null
   onZoomChange?: (range: { start: string; end: string } | null) => void
@@ -27,9 +26,8 @@ export interface IMUSensorChartProps {
  * Features: Multi-axis display, gap detection, zoom for more detail
  */
 export function IMUSensorChart({
+  rideId,
   recordings,
-  initialSamples,
-  originalCount: initialOriginalCount = 0,
   highlightTime,
   zoomRange = null,
   onZoomChange,
@@ -39,10 +37,10 @@ export function IMUSensorChart({
 
   // Fetch data using hook
   const { samples, loading, error, originalCount } = useIMUData({
+    rideId,
     recordings,
     dataType,
-    timeRange: zoomRange,
-    initialSamples: !zoomRange ? initialSamples : undefined
+    timeRange: zoomRange
   })
 
   // Process data for chart (gap detection, format conversion)
@@ -213,6 +211,13 @@ export function IMUSensorChart({
 
   const hasOrientationData = samples.some(s => s.roll !== null && s.pitch !== null)
 
+  // Auto-switch to accel if orientation data is not available
+  useEffect(() => {
+    if (!loading && samples.length > 0 && !hasOrientationData && (dataType === 'orientation' || dataType === 'trueOrientation')) {
+      setDataType('accel')
+    }
+  }, [loading, samples.length, hasOrientationData, dataType])
+
   return (
     <div className={`space-y-4 ${className}`}>
       {/* Data source selector */}
@@ -251,8 +256,8 @@ export function IMUSensorChart({
       </div>
 
       {/* Chart */}
-      <div className="border border-border rounded-lg p-6 bg-card relative">
-        {/* Loading overlay */}
+      <div className="border border-border rounded-lg p-6 bg-card relative min-h-[400px]">
+        {/* Loading state */}
         {loading && (
           <div className="absolute inset-0 bg-card rounded-lg flex items-center justify-center z-10">
             <div className="text-center">
@@ -269,7 +274,14 @@ export function IMUSensorChart({
           </div>
         )}
 
-        {/* Chart - always render if we have data, overlay handles loading state */}
+        {/* No data state */}
+        {!loading && !error && samples.length === 0 && (
+          <div className="h-[400px] bg-muted/50 rounded-lg flex items-center justify-center">
+            <p className="text-muted-foreground">No data available for selected range</p>
+          </div>
+        )}
+
+        {/* Chart - render when we have data */}
         {!error && samples.length > 0 && (
           <UPlotBase
             data={chartData.data}
@@ -279,6 +291,7 @@ export function IMUSensorChart({
             unit={chartData.yAxisLabel}
             highlightTime={highlightTime}
             onZoom={onZoomChange ? (start, end) => onZoomChange({ start, end }) : undefined}
+            zoomRange={zoomRange}
             syncKey="imu-sensor-sync"
           />
         )}
@@ -298,7 +311,7 @@ export function IMUSensorChart({
             ))}
           </div>
           <div className="mt-2">
-            Displaying {samples.length.toLocaleString()} of {(originalCount || initialOriginalCount).toLocaleString()} samples
+            Displaying {samples.length.toLocaleString()} of {originalCount.toLocaleString()} samples
             {zoomRange && ' (zoomed)'}
           </div>
         </div>

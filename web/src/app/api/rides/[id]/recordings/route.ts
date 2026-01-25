@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import { inngest } from '@/inngest/client'
 
 /**
  * POST /api/rides/[id]/recordings
@@ -109,6 +110,15 @@ export async function POST(
         { status: 500 }
       )
     }
+
+    // Trigger VTX merge job (async - don't wait)
+    inngest.send({
+      name: 'ride/vtx.associated',
+      data: { rideId }
+    }).catch(error => {
+      console.error('Failed to trigger VTX merge job:', error)
+      // Don't fail the request if Inngest trigger fails
+    })
 
     return NextResponse.json({
       success: true,

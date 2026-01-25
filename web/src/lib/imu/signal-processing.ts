@@ -52,6 +52,37 @@ export class LowPassFilter {
 }
 
 /**
+ * High-pass filter for removing DC/constant components (e.g., gravity)
+ * Implemented as: HPF(x) = x - LPF(x)
+ */
+export class HighPassFilter {
+  private lpf: LowPassFilter
+
+  /**
+   * @param cutoffFreq - Cutoff frequency in Hz (frequencies below this are removed)
+   * @param sampleRate - Sample rate in Hz
+   */
+  constructor(cutoffFreq: number, sampleRate: number) {
+    this.lpf = new LowPassFilter(cutoffFreq, sampleRate)
+  }
+
+  /**
+   * Filter a new sample (removes low frequencies, keeps high frequencies)
+   */
+  update(newValue: number): number {
+    const lowFreqComponent = this.lpf.update(newValue)
+    return newValue - lowFreqComponent  // Remove low frequencies
+  }
+
+  /**
+   * Reset filter state
+   */
+  reset() {
+    this.lpf.reset()
+  }
+}
+
+/**
  * 3-axis low-pass filter for vector data (accel, gyro)
  */
 export class VectorLowPassFilter {

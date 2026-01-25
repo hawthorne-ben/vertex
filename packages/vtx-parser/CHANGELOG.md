@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-01-25
+
+### Fixed
+- **VTXMerger Euler Angle Preservation**: Fixed bug where Euler angles (roll, pitch, yaw) were lost during file merging
+- VTXEncoder now supports `includeEuler` option to preserve Euler angle data
+- VTXMerger now detects HAS_EULER flag from source files and preserves Euler data in merged output
+- Encoder correctly writes Euler angles (12 bytes: 3 × float32) when `includeEuler: true`
+
+### Technical Details
+- Added `includeEuler` property to VTXEncoder class
+- Added HAS_EULER flag detection in VTXMerger.merge()
+- Updated record size calculation to include Euler angles (12 bytes)
+- Updated record writing to serialize roll, pitch, yaw after quaternion data
+- Added validation to ensure Euler data is present when `includeEuler: true`
+
+## [0.6.0] - 2026-01-25
+
+### Added
+- **VTXMerger**: New merger utility for combining multiple VTX files into a single file
+- `VTXMerger.merge()` static method to merge ArrayBuffers from multiple VTX files
+- `VTXMerger.validateMergeCompatibility()` to check if files can be safely merged
+- `MergeResult` type with merged buffer, header, metadata, and statistics
+
+### Features
+- Merges multiple VTX recordings into single unified file
+- Automatically sorts records by timestamp across all input files
+- Deduplicates overlapping timestamps (keeps first occurrence)
+- Preserves all sensor data (accel, gyro, mag, quat, GPS) from all files
+- Updates header with merged record count and time range
+- Stores merge provenance in metadata.custom.mergedFrom array
+- Validates sensor compatibility before merging (format, sample rate)
+
+### Use Cases
+- Combine multiple recording sessions into single ride file
+- Merge non-overlapping time segments from same ride
+- Consolidate fragmented recordings for analysis
+- Simplify multi-file handling in applications
+
+### Technical Details
+- Single-file optimization: Returns original buffer unchanged if only one file provided
+- Merge statistics include: input file count, total/output records, deduplication count
+- Compatible with all VTX format versions (v1.0, v1.1)
+- Handles variable record formats (with/without mag, quat, Euler, GPS)
+- Thread-safe: No side effects, pure functional merge
+
+### Example
+```typescript
+import { VTXMerger } from '@vertex-pkg/vtx-parser';
+
+const files = [buffer1, buffer2, buffer3];
+const result = VTXMerger.merge(files);
+// result.buffer - merged ArrayBuffer
+// result.stats.outputRecords - total records after deduplication
+```
+
 ## [0.5.0] - 2025-12-12
 
 ### Added

@@ -13,8 +13,6 @@ export interface RideDataTabsProps {
     start_time: string
     end_time: string
   }>
-  vtxSamples?: IMUSample[]
-  vtxOriginalCount?: number
 
   // Ride data (for derived metrics)
   rideId: string
@@ -32,8 +30,6 @@ export interface RideDataTabsProps {
  */
 export function RideDataTabs({
   vtxRecordings,
-  vtxSamples,
-  vtxOriginalCount,
   rideId,
   fitRecordingId,
   highlightTime,
@@ -113,18 +109,12 @@ export function RideDataTabs({
                 </a>
               )}
             </CardTitle>
-            {vtxOriginalCount && (
-              <div className="text-sm text-muted-foreground">
-                {vtxOriginalCount.toLocaleString()} samples total
-              </div>
-            )}
           </CardHeader>
           <CardContent>
             {hasVtxData ? (
               <IMUSensorChart
+                rideId={rideId}
                 recordings={vtxRecordings}
-                initialSamples={vtxSamples}
-                originalCount={vtxOriginalCount}
                 highlightTime={highlightTime}
                 zoomRange={imuZoomRange}
                 onZoomChange={setImuZoomRange}

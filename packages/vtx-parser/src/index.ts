@@ -4,11 +4,13 @@
  * TypeScript encoder and decoder for VTX binary format
  */
 
-// Export encoder and decoder
+// Export encoder, decoder, and merger
 export { VTXEncoder } from './encoder';
 export { VTXStreamEncoder } from './stream-encoder';
 export type { WriteCallback } from './stream-encoder';
 export { VTXDecoder } from './decoder';
+export { VTXMerger } from './merger';
+export type { MergeResult } from './merger';
 
 // Export types
 export type {

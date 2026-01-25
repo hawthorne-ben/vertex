@@ -17,6 +17,7 @@ export class VTXEncoder {
   private sampleRate: number;
   private includeMag: boolean;
   private includeQuat: boolean;
+  private includeEuler: boolean;
   private includeGPS: boolean;
   private metadata: VTXMetadata;
   private records: IMURecord[] = [];
@@ -28,6 +29,7 @@ export class VTXEncoder {
     this.sampleRate = options.sampleRate;
     this.includeMag = options.includeMag ?? false;
     this.includeQuat = options.includeQuat ?? false;
+    this.includeEuler = options.includeEuler ?? false;
     this.includeGPS = options.includeGPS ?? false;
     this.metadata = options.metadata ?? {};
 
@@ -39,6 +41,9 @@ export class VTXEncoder {
     }
     if (this.includeQuat) {
       this.recordFormat |= RecordFormatFlags.HAS_QUAT;
+    }
+    if (this.includeEuler) {
+      this.recordFormat |= RecordFormatFlags.HAS_EULER;
     }
 
     // Calculate record size based on enabled sensors
@@ -56,6 +61,9 @@ export class VTXEncoder {
     }
     if (this.includeQuat) {
       size += 16; // quat (4 * float32)
+    }
+    if (this.includeEuler) {
+      size += 12; // euler (3 * float32) - roll, pitch, yaw
     }
     return size;
   }
@@ -95,6 +103,16 @@ export class VTXEncoder {
         record.quatZ === undefined
       ) {
         throw new Error('Quaternion data required but missing in record');
+      }
+    }
+
+    if (this.includeEuler) {
+      if (
+        record.roll === undefined ||
+        record.pitch === undefined ||
+        record.yaw === undefined
+      ) {
+        throw new Error('Euler angle data required but missing in record');
       }
     }
 
@@ -358,6 +376,16 @@ export class VTXEncoder {
       view.setFloat32(offset, record.quatY!, true);
       offset += 4;
       view.setFloat32(offset, record.quatZ!, true);
+      offset += 4;
+    }
+
+    // Euler angles (3 * float32) - optional
+    if (this.includeEuler && record.roll !== undefined) {
+      view.setFloat32(offset, record.roll, true);
+      offset += 4;
+      view.setFloat32(offset, record.pitch!, true);
+      offset += 4;
+      view.setFloat32(offset, record.yaw!, true);
       offset += 4;
     }
 

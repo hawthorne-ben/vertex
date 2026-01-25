@@ -58,72 +58,8 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
     ?.filter((rr: any) => rr.recordings?.file_type === 'vtx')
     .map((rr: any) => rr.recordings) || []
 
-  // Fetch IMU samples for each VTX recording (server-side)
-  const vtxRecordingsWithSamples = await Promise.all(
-    vtxRecordings.map(async (vtx: any) => {
-      if (vtx.status !== 'ready') {
-        return { ...vtx, samples: null, originalCount: 0 }
-      }
-
-      try {
-        const { data: { session } } = await supabase.auth.getSession()
-        if (!session) {
-          return { ...vtx, samples: null, originalCount: 0 }
-        }
-
-        const headersList = await headers()
-        const host = headersList.get('host') || 'localhost:3000'
-        const protocol = process.env.NODE_ENV === 'production' ? 'https' : 'http'
-        const apiUrl = `${protocol}://${host}`
-
-        const samplesUrl = `${apiUrl}/api/recordings/${vtx.id}/samples?resolution=1000&downsample=lttb`
-
-        const response = await fetch(samplesUrl, {
-          headers: {
-            'Authorization': `Bearer ${session.access_token}`
-          },
-          cache: 'no-store'
-        })
-
-        if (!response.ok) {
-          console.error(`Failed to fetch samples for ${vtx.id}:`, response.statusText)
-          return { ...vtx, samples: null, originalCount: 0 }
-        }
-
-        const result = await response.json()
-
-        if (!result.samples || result.samples.length === 0) {
-          return { ...vtx, samples: [], originalCount: result.metadata?.total_samples || 0 }
-        }
-
-        // Transform samples to match IMUUPlotCharts expected format
-        const samples = result.samples.map((s: any) => ({
-          timestamp: new Date(s.timestamp).toISOString(),
-          accel_x: s.accel.x,
-          accel_y: s.accel.y,
-          accel_z: s.accel.z,
-          gyro_x: s.gyro.x,
-          gyro_y: s.gyro.y,
-          gyro_z: s.gyro.z,
-          mag_x: s.mag?.x ?? null,
-          mag_y: s.mag?.y ?? null,
-          mag_z: s.mag?.z ?? null,
-          roll: s.euler?.roll ?? null,
-          pitch: s.euler?.pitch ?? null,
-          yaw: s.euler?.yaw ?? null
-        }))
-
-        return {
-          ...vtx,
-          samples,
-          originalCount: result.metadata?.total_samples || samples.length
-        }
-      } catch (error) {
-        console.error(`Error fetching samples for ${vtx.id}:`, error)
-        return { ...vtx, samples: null, originalCount: 0 }
-      }
-    })
-  )
+  // Skip server-side sample fetching - let client fetch on demand with caching
+  // This improves initial page load time and reduces redundant work
 
   const analysis = fitRecording?.analysis_results || {}
 
@@ -225,11 +161,15 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
         rideEndTime={ride.end_time}
         fitRecordingId={fitRecording?.id || null}
         hasGpsData={analysis.has_gps_data || false}
-        vtxRecordings={vtxRecordingsWithSamples}
+        vtxRecordings={vtxRecordings.map((rec: any) => ({
+          id: rec.id,
+          start_time: rec.start_time,
+          end_time: rec.end_time
+        }))}
       />
 
       {/* Add VTX Data Button (if no recordings yet) */}
-      {vtxRecordingsWithSamples.length === 0 && (
+      {vtxRecordings.length === 0 && (
         <Card className="mt-6">
           <CardHeader>
             <CardTitle>Vertex IMU Data</CardTitle>
@@ -242,7 +182,7 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
       )}
 
       {/* Add More VTX Data Button (if recordings exist) */}
-      {vtxRecordingsWithSamples.length > 0 && (
+      {vtxRecordings.length > 0 && (
         <Card className="mt-6">
           <CardHeader>
             <CardTitle>Add More IMU Data</CardTitle>

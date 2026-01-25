@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { createClient } from '@/lib/supabase/client'
 
 export type IMUDataType = 'orientation' | 'accel' | 'gyro' | 'smoothedAccel' | 'smoothedGyro' | 'trueOrientation'
@@ -23,10 +23,10 @@ export interface VTXRecording {
 }
 
 export interface UseIMUDataOptions {
-  recordings: VTXRecording[]  // Changed from recordingIds to include time ranges
+  rideId?: string  // Ride ID for fetching merged VTX data
+  recordings: VTXRecording[]  // Legacy: for backward compatibility
   dataType: IMUDataType
   timeRange?: { start: string; end: string } | null
-  initialSamples?: IMUSample[]
 }
 
 export interface UseIMUDataResult {
@@ -39,32 +39,30 @@ export interface UseIMUDataResult {
 /**
  * Hook to fetch and manage IMU sensor data
  * Handles: VTX file parsing, filtering, smoothing, zoom/time range
+ *
+ * If rideId is provided, fetches from ride-level merged VTX endpoint
+ * Otherwise falls back to individual recording endpoints (legacy)
  */
 export function useIMUData({
+  rideId,
   recordings,
   dataType,
-  timeRange,
-  initialSamples
+  timeRange
 }: UseIMUDataOptions): UseIMUDataResult {
-  const [samples, setSamples] = useState<IMUSample[]>(initialSamples || [])
+  const [samples, setSamples] = useState<IMUSample[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [originalCount, setOriginalCount] = useState(initialSamples?.length || 0)
-  const hasFetchedRef = useRef(false)
+  const [originalCount, setOriginalCount] = useState(0)
+
+  // Stable recording IDs to prevent unnecessary refetches
+  const recordingIds = useMemo(() =>
+    recordings.map(r => r.id).sort().join(','),
+    [recordings]
+  )
 
   useEffect(() => {
-    // If we have initial samples and no time range (not zoomed), use them
-    // This optimization only applies on FIRST LOAD (before any fetch)
-    // After that, we always fetch to ensure we have the right resolution
-    if (initialSamples && !timeRange && !hasFetchedRef.current) {
-      setSamples(initialSamples)
-      setOriginalCount(initialSamples.length)
-      return
-    }
-
-    // Otherwise fetch data (for zoom, data type changes, or zoom reset)
+    // Fetch data on mount and when dependencies change
     const fetchData = async () => {
-      hasFetchedRef.current = true // Mark that we've fetched
       setLoading(true)
       setError(null)
 
@@ -76,44 +74,21 @@ export function useIMUData({
           throw new Error('No session found')
         }
 
-        const allSamples: IMUSample[] = []
-
-        // Filter recordings to only those that overlap with the time range
-        let recordingsToFetch = recordings
-        if (timeRange) {
-          const rangeStartMs = new Date(timeRange.start).getTime()
-          const rangeEndMs = new Date(timeRange.end).getTime()
-
-          recordingsToFetch = recordings.filter(rec => {
-            const recStartMs = new Date(rec.start_time).getTime()
-            const recEndMs = new Date(rec.end_time).getTime()
-            // Check if ranges overlap
-            return recStartMs < rangeEndMs && recEndMs > rangeStartMs
-          })
-
-          console.log(`Zoom: ${recordings.length} total recordings, ${recordingsToFetch.length} overlap with zoom range`)
-        }
-
-        // Fetch all recordings in parallel
-        const fetchPromises = recordingsToFetch.map(async (recording) => {
+        // Use ride-level endpoint if rideId provided (preferred)
+        if (rideId) {
           const params = new URLSearchParams()
           if (timeRange) {
             params.set('start', timeRange.start)
             params.set('end', timeRange.end)
-            params.set('resolution', 'high')
-          }
-
-          // Choose endpoint based on data type
-          let endpoint: string
-          if (dataType === 'trueOrientation') {
-            endpoint = `/api/recordings/${recording.id}/samples/filtered`
-          } else if (dataType === 'smoothedAccel' || dataType === 'smoothedGyro') {
-            endpoint = `/api/recordings/${recording.id}/samples/smoothed`
+            params.set('resolution', '5000')  // Higher resolution for zoomed views
           } else {
-            endpoint = `/api/recordings/${recording.id}/samples`
+            params.set('resolution', '2000')  // Lower resolution for full view
           }
+          params.set('downsample', 'lttb')
 
-          const url = params.toString() ? `${endpoint}?${params}` : endpoint
+          const url = params.toString()
+            ? `/api/rides/${rideId}/vtx-samples?${params}`
+            : `/api/rides/${rideId}/vtx-samples`
 
           const response = await fetch(url, {
             headers: { 'Authorization': `Bearer ${session.access_token}` }
@@ -139,30 +114,97 @@ export function useIMUData({
             yaw: s.euler?.yaw ?? s.yaw ?? null,
           }))
 
-          return {
-            samples: transformed,
-            totalSamples: metadata?.total_samples || 0
+          setSamples(transformed)
+          setOriginalCount(metadata?.total_samples || transformed.length)
+        } else {
+          // Legacy: Fetch from individual recording endpoints
+          const allSamples: IMUSample[] = []
+
+          // Filter recordings to only those that overlap with the time range
+          let recordingsToFetch = recordings
+          if (timeRange) {
+            const rangeStartMs = new Date(timeRange.start).getTime()
+            const rangeEndMs = new Date(timeRange.end).getTime()
+
+            recordingsToFetch = recordings.filter(rec => {
+              const recStartMs = new Date(rec.start_time).getTime()
+              const recEndMs = new Date(rec.end_time).getTime()
+              // Check if ranges overlap
+              return recStartMs < rangeEndMs && recEndMs > rangeStartMs
+            })
+
+            console.log(`Zoom: ${recordings.length} total recordings, ${recordingsToFetch.length} overlap with zoom range`)
           }
-        })
 
-        // Wait for all fetches to complete in parallel
-        const results = await Promise.all(fetchPromises)
+          // Fetch all recordings in parallel
+          const fetchPromises = recordingsToFetch.map(async (recording) => {
+            const params = new URLSearchParams()
+            if (timeRange) {
+              params.set('start', timeRange.start)
+              params.set('end', timeRange.end)
+              params.set('resolution', 'high')
+            }
 
-        // Merge results
-        let totalOriginalCount = 0
-        for (const result of results) {
-          allSamples.push(...result.samples)
-          totalOriginalCount += result.totalSamples
+            // Choose endpoint based on data type
+            let endpoint: string
+            if (dataType === 'trueOrientation') {
+              endpoint = `/api/recordings/${recording.id}/samples/filtered`
+            } else if (dataType === 'smoothedAccel' || dataType === 'smoothedGyro') {
+              endpoint = `/api/recordings/${recording.id}/samples/smoothed`
+            } else {
+              endpoint = `/api/recordings/${recording.id}/samples`
+            }
+
+            const url = params.toString() ? `${endpoint}?${params}` : endpoint
+
+            const response = await fetch(url, {
+              headers: { 'Authorization': `Bearer ${session.access_token}` }
+            })
+
+            if (!response.ok) {
+              throw new Error(`Failed to fetch data: ${response.statusText}`)
+            }
+
+            const { samples: fetchedSamples, metadata } = await response.json()
+
+            // Transform samples to consistent format
+            const transformed = fetchedSamples.map((s: any) => ({
+              timestamp: s.timestamp,
+              accel_x: s.accel?.x ?? s.accel_x ?? 0,
+              accel_y: s.accel?.y ?? s.accel_y ?? 0,
+              accel_z: s.accel?.z ?? s.accel_z ?? 0,
+              gyro_x: s.gyro?.x ?? s.gyro_x ?? 0,
+              gyro_y: s.gyro?.y ?? s.gyro_y ?? 0,
+              gyro_z: s.gyro?.z ?? s.gyro_z ?? 0,
+              roll: s.euler?.roll ?? s.roll ?? null,
+              pitch: s.euler?.pitch ?? s.pitch ?? null,
+              yaw: s.euler?.yaw ?? s.yaw ?? null,
+            }))
+
+            return {
+              samples: transformed,
+              totalSamples: metadata?.total_samples || 0
+            }
+          })
+
+          // Wait for all fetches to complete in parallel
+          const results = await Promise.all(fetchPromises)
+
+          // Merge results
+          let totalOriginalCount = 0
+          for (const result of results) {
+            allSamples.push(...result.samples)
+            totalOriginalCount += result.totalSamples
+          }
+
+          // Sort by timestamp for merged results
+          allSamples.sort((a, b) => {
+            return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+          })
+
+          setSamples(allSamples)
+          setOriginalCount(totalOriginalCount)
         }
-
-        setOriginalCount(totalOriginalCount)
-
-        // Sort by timestamp
-        allSamples.sort((a, b) => {
-          return new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-        })
-
-        setSamples(allSamples)
       } catch (err: any) {
         console.error('Failed to fetch IMU data:', err)
         setError(err.message)
@@ -172,7 +214,7 @@ export function useIMUData({
     }
 
     fetchData()
-  }, [recordings, dataType, timeRange, initialSamples])
+  }, [rideId, recordingIds, dataType, timeRange])
 
   return { samples, loading, error, originalCount }
 }

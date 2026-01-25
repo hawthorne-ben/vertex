@@ -45,37 +45,8 @@ export function RideVisualizationsClient({
     return getVtxTimeRanges(vtxRecordings)
   }, [vtxRecordings])
 
-  // Merge all VTX samples into single unified timeline
-  const mergedImuData = useMemo(() => {
-    if (vtxRecordings.length === 0) return null
-
-    // Collect all samples from all recordings
-    const allSamples: any[] = []
-    let totalOriginalCount = 0
-
-    vtxRecordings.forEach((vtx) => {
-      if (vtx.samples && vtx.samples.length > 0) {
-        allSamples.push(...vtx.samples)
-        totalOriginalCount += vtx.originalCount
-      }
-    })
-
-    if (allSamples.length === 0) return null
-
-    // Sort by timestamp (handles non-overlapping recordings)
-    allSamples.sort((a, b) => {
-      const timeA = new Date(a.timestamp).getTime()
-      const timeB = new Date(b.timestamp).getTime()
-      return timeA - timeB
-    })
-
-    return {
-      samples: allSamples,
-      originalCount: totalOriginalCount,
-      fileCount: vtxRecordings.length,
-      filenames: vtxRecordings.map(v => v.filename).join(', ')
-    }
-  }, [vtxRecordings])
+  // Check if we have VTX data to display
+  const hasVtxData = vtxRecordings.length > 0
 
   return (
     <>
@@ -110,7 +81,7 @@ export function RideVisualizationsClient({
       </div>
 
       {/* Unified IMU Chart & Analytics */}
-      {mergedImuData && (
+      {hasVtxData && (
         <div className="mb-8">
           <RideDataTabs
             vtxRecordings={vtxRecordings.map(vtx => ({
@@ -118,8 +89,6 @@ export function RideVisualizationsClient({
               start_time: vtx.start_time,
               end_time: vtx.end_time
             }))}
-            vtxSamples={mergedImuData.samples}
-            vtxOriginalCount={mergedImuData.originalCount}
             rideId={rideId}
             fitRecordingId={fitRecordingId}
             highlightTime={selectedTime}
