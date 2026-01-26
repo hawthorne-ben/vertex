@@ -92,6 +92,25 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
         const analysisId = analysis.id
 
         // Fetch ride with recordings
+        type RecordingData = {
+          id: string
+          file_type: string
+          storage_path: string
+          start_time: string
+          end_time: string
+        }
+
+        type RideRecordingData = {
+          recording_id: string
+          recordings: RecordingData | null
+        }
+
+        type RideWithRecordings = {
+          id: string
+          merged_vtx_path: string | null
+          ride_recordings: RideRecordingData[] | null
+        }
+
         const { data: ride, error: rideError } = await supabase
           .from('rides')
           .select(`
@@ -109,7 +128,7 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
             )
           `)
           .eq('id', rideId)
-          .single()
+          .single() as { data: RideWithRecordings | null; error: any }
 
         if (rideError || !ride) {
           throw new Error(`Failed to fetch ride: ${rideError?.message || 'Not found'}`)
@@ -117,7 +136,7 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
 
         // Validate required recordings
         const fitRecording = ride.ride_recordings?.find(
-          (rr: any) => rr.recordings?.file_type === 'fit'
+          (rr) => rr.recordings?.file_type === 'fit'
         )?.recordings
 
         const vtxPath = ride.merged_vtx_path

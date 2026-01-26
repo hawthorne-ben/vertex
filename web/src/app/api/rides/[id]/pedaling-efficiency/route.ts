@@ -37,8 +37,6 @@ export async function GET(
     const { id: rideId } = await params
     const searchParams = request.nextUrl.searchParams
 
-    console.log('[Pedaling Efficiency API] Request:', { rideId, params: Object.fromEntries(searchParams) })
-
     // Parse query parameters
     const fieldsParam = searchParams.get('fields')
     const metadataOnly = fieldsParam === 'metadata'
@@ -48,13 +46,9 @@ export async function GET(
 
     // Authenticate user
     const authResult = await withAuth(request)
-    if ('error' in authResult) {
-      console.log('[Pedaling Efficiency API] Auth failed')
-      return authResult.error
-    }
+    if ('error' in authResult) return authResult.error
 
     const { user, supabase } = authResult.data
-    console.log('[Pedaling Efficiency API] Authenticated:', user.id)
 
     // Verify ride ownership
     const { data: ride, error: rideError } = await supabase
@@ -65,11 +59,8 @@ export async function GET(
       .single()
 
     if (rideError || !ride) {
-      console.log('[Pedaling Efficiency API] Ride not found:', rideError)
       return NextResponse.json({ error: 'Ride not found' }, { status: 404 })
     }
-
-    console.log('[Pedaling Efficiency API] Fetching analysis for ride:', rideId)
 
     // Fetch analysis results
     const { data: analysis, error: analysisError } = await supabase
@@ -78,12 +69,6 @@ export async function GET(
       .eq('ride_id', rideId)
       .eq('analysis_type', 'pedaling_efficiency')
       .maybeSingle()
-
-    console.log('[Pedaling Efficiency API] Analysis result:', {
-      found: !!analysis,
-      status: analysis?.status,
-      error: analysisError?.message
-    })
 
     // No analysis exists - computation hasn't been triggered yet
     if (analysisError || !analysis) {

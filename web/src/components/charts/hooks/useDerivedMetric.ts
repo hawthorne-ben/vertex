@@ -20,7 +20,34 @@ export interface UseDerivedMetricResult {
   samples: DerivedMetricSample[]
   loading: boolean
   error: string | null
-  metadata: any | null
+  metadata: PedalingEfficiencyMetadata | null
+}
+
+// API Response types
+interface PedalingEfficiencyMetadata {
+  avgEfficiency: number | null
+  avgEfficiencyPercent: number | null
+  smoothPercent: number
+  roughPercent: number
+  pedalingPercent: number
+  avgConfidence: number
+  avgDetectedCadence: number | null
+  totalSamples: number
+  pedalingSamples: number
+  hasCadence: boolean
+  hasGrade: boolean
+  sampleRate: number | null
+}
+
+interface ApiResponse {
+  status: 'pending' | 'processing' | 'completed' | 'failed' | 'not_started'
+  samples?: any[]
+  metadata?: PedalingEfficiencyMetadata
+  message?: string
+  error?: string
+  computedAt?: string
+  algorithmVersion?: string
+  parameters?: any
 }
 
 /**
@@ -77,7 +104,7 @@ export function useDerivedMetric({
           headers: { 'Authorization': `Bearer ${session.access_token}` }
         })
 
-        const data = await response.json()
+        const data: ApiResponse = await response.json()
 
         // Handle new API response format with processing states
         if (data.status === 'pending' || data.status === 'processing') {
