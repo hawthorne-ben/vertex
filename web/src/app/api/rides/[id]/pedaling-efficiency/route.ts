@@ -1,26 +1,33 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuth } from '@/lib/api/auth'
-import { calculatePedalingEfficiency } from '@/lib/analysis/pedaling-efficiency'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * Get pedaling efficiency analysis for a ride
+ * Get precomputed pedaling efficiency analysis for a ride
  *
- * Requires:
- * - Ride with FIT file (for GPS grade data)
- * - Ride with VTX recording (for IMU accel_x data)
+ * Returns cached results computed by background Inngest job.
+ * Results are computed after VTX files are merged for the ride.
  *
  * Query parameters:
- * - window_size: Smoothness calculation window in seconds (default: 3)
- * - hpf_cutoff: High-pass filter cutoff Hz (default: 0.5)
- * - debug: Include debug statistics (default: false)
- * - start: Start timestamp for time range (optional)
- * - end: End timestamp for time range (optional)
+ * - fields: 'metadata' to return only summary stats (default: all)
+ * - resolution: Max samples to return via downsampling (default: full resolution)
  *
- * Returns:
- * - samples: Time series of efficiency scores
- * - metadata: Summary statistics (includes debug stats if debug=true)
+ * Response states:
+ * - 200: Analysis completed, returns samples + metadata
+ * - 202: Analysis pending or processing, returns status
+ * - 404: Ride not found
+ * - 500: Analysis failed or internal error
+ *
+ * Response format:
+ * {
+ *   status: 'pending' | 'processing' | 'completed' | 'failed',
+ *   samples: PedalingEfficiencyOutput[],  // Empty if not completed
+ *   metadata: PedalingEfficiencyMetadata,  // Null if not completed
+ *   computedAt?: string,                   // ISO timestamp when completed
+ *   algorithmVersion?: string,             // Algorithm version used
+ *   parameters?: object                    // Computation parameters
+ * }
  */
 export async function GET(
   request: NextRequest,
@@ -30,149 +37,153 @@ export async function GET(
     const { id: rideId } = await params
     const searchParams = request.nextUrl.searchParams
 
+    console.log('[Pedaling Efficiency API] Request:', { rideId, params: Object.fromEntries(searchParams) })
+
     // Parse query parameters
-    const windowSize = parseInt(searchParams.get('window_size') || '3')
-    const hpfCutoff = parseFloat(searchParams.get('hpf_cutoff') || '0.5')
-    const includeDebug = searchParams.get('debug') === 'true'
-    const startTime = searchParams.get('start') || undefined
-    const endTime = searchParams.get('end') || undefined
+    const fieldsParam = searchParams.get('fields')
+    const metadataOnly = fieldsParam === 'metadata'
+    const resolution = searchParams.get('resolution')
+      ? parseInt(searchParams.get('resolution')!)
+      : null
 
     // Authenticate user
     const authResult = await withAuth(request)
-    if ('error' in authResult) return authResult.error
+    if ('error' in authResult) {
+      console.log('[Pedaling Efficiency API] Auth failed')
+      return authResult.error
+    }
 
     const { user, supabase } = authResult.data
+    console.log('[Pedaling Efficiency API] Authenticated:', user.id)
 
-    // Get ride with FIT and VTX recordings
+    // Verify ride ownership
     const { data: ride, error: rideError } = await supabase
       .from('rides')
-      .select(`
-        *,
-        ride_recordings (
-          recording_id,
-          recordings (
-            id,
-            filename,
-            file_type,
-            storage_path,
-            status,
-            start_time,
-            end_time
-          )
-        )
-      `)
+      .select('id, user_id')
       .eq('id', rideId)
       .eq('user_id', user.id)
       .single()
 
     if (rideError || !ride) {
+      console.log('[Pedaling Efficiency API] Ride not found:', rideError)
+      return NextResponse.json({ error: 'Ride not found' }, { status: 404 })
+    }
+
+    console.log('[Pedaling Efficiency API] Fetching analysis for ride:', rideId)
+
+    // Fetch analysis results
+    const { data: analysis, error: analysisError } = await supabase
+      .from('ride_analysis')
+      .select('*')
+      .eq('ride_id', rideId)
+      .eq('analysis_type', 'pedaling_efficiency')
+      .maybeSingle()
+
+    console.log('[Pedaling Efficiency API] Analysis result:', {
+      found: !!analysis,
+      status: analysis?.status,
+      error: analysisError?.message
+    })
+
+    // No analysis exists - computation hasn't been triggered yet
+    if (analysisError || !analysis) {
       return NextResponse.json(
-        { error: 'Ride not found' },
-        { status: 404 }
+        {
+          status: 'not_started',
+          message: 'Analysis not yet started. Ensure ride has both FIT and VTX recordings associated.',
+          samples: [],
+          metadata: null,
+        },
+        { status: 202 }
+      ) // 202 Accepted
+    }
+
+    // Analysis is pending or processing
+    if (analysis.status === 'pending' || analysis.status === 'processing') {
+      const estimatedCompletion = analysis.started_at
+        ? new Date(new Date(analysis.started_at).getTime() + 30000).toISOString() // ~30s estimate
+        : null
+
+      return NextResponse.json(
+        {
+          status: analysis.status,
+          message:
+            analysis.status === 'pending'
+              ? 'Analysis queued, will start shortly'
+              : 'Analysis in progress',
+          startedAt: analysis.started_at,
+          estimatedCompletion,
+          samples: [],
+          metadata: null,
+        },
+        { status: 202 }
+      ) // 202 Accepted
+    }
+
+    // Analysis failed
+    if (analysis.status === 'failed') {
+      return NextResponse.json(
+        {
+          status: 'failed',
+          error: analysis.error_message || 'Analysis failed',
+          message: 'Pedaling efficiency calculation failed. You may need to re-associate recordings.',
+          samples: [],
+          metadata: null,
+        },
+        { status: 500 }
       )
     }
 
-    // Find FIT and VTX recordings
-    const fitRecording = ride.ride_recordings?.find(
-      (rr: any) => rr.recordings?.file_type === 'fit'
-    )?.recordings
+    // Analysis completed - return cached results
+    let samples = analysis.samples || []
 
-    const vtxRecordings = ride.ride_recordings
-      ?.filter((rr: any) => rr.recordings?.file_type === 'vtx' && rr.recordings?.status === 'ready')
-      .map((rr: any) => ({
-        id: rr.recordings.id,
-        storage_path: rr.recordings.storage_path
-      })) || []
+    // Downsample if requested and necessary
+    if (resolution && samples.length > resolution) {
+      // Simple LTTB downsampling (can import from lib if needed)
+      // For now, just take evenly spaced samples
+      const stride = Math.ceil(samples.length / resolution)
+      samples = samples.filter((_: any, i: number) => i % stride === 0)
+    }
 
-    if (!fitRecording) {
+    // Return metadata only if requested
+    if (metadataOnly) {
       return NextResponse.json(
-        { error: 'No FIT file associated with this ride' },
-        { status: 404 }
+        {
+          status: 'completed',
+          samples: [],
+          metadata: analysis.metadata,
+          computedAt: analysis.completed_at,
+          algorithmVersion: analysis.algorithm_version,
+          parameters: analysis.parameters,
+        },
+        {
+          headers: {
+            'Cache-Control': 'public, max-age=3600, immutable',
+            'ETag': `"${analysis.id}-${analysis.completed_at}-metadata"`,
+          },
+        }
       )
     }
 
-    if (vtxRecordings.length === 0) {
-      return NextResponse.json(
-        { error: 'No VTX recordings associated with this ride' },
-        { status: 404 }
-      )
-    }
-
-    // Fetch FIT samples using internal API endpoint (reuses caching and parsing logic)
-    const fitSamplesUrl = new URL(`${request.url.split('/pedaling-efficiency')[0]}/samples`, request.url)
-    if (startTime) fitSamplesUrl.searchParams.set('start', startTime)
-    if (endTime) fitSamplesUrl.searchParams.set('end', endTime)
-    fitSamplesUrl.searchParams.set('fields', 'grade,altitude')  // Only need grade and altitude
-
-    const fitResponse = await fetch(fitSamplesUrl, {
-      headers: { 'Authorization': request.headers.get('authorization')! }
-    })
-
-    if (!fitResponse.ok) {
-      throw new Error('Failed to fetch FIT samples')
-    }
-
-    const { samples: fitSamples } = await fitResponse.json()
-
-    // Fetch VTX samples using internal API endpoint (reuses caching, parsing, and merging logic)
-    const vtxSamplesUrl = new URL(`${request.url.split('/pedaling-efficiency')[0]}/vtx-samples`, request.url)
-    if (startTime) vtxSamplesUrl.searchParams.set('start', startTime)
-    if (endTime) vtxSamplesUrl.searchParams.set('end', endTime)
-    vtxSamplesUrl.searchParams.set('fields', 'accel')  // Fetch all 3 axes for magnitude calculation
-    // Note: Must fetch full resolution - pedaling efficiency depends on sub-second acceleration spikes
-    // Downsampling would destroy the high-frequency signal we're analyzing
-    vtxSamplesUrl.searchParams.set('downsample', 'none')
-
-    const vtxResponse = await fetch(vtxSamplesUrl, {
-      headers: { 'Authorization': request.headers.get('authorization')! }
-    })
-
-    if (!vtxResponse.ok) {
-      throw new Error('Failed to fetch VTX samples')
-    }
-
-    const { samples: vtxSamples } = await vtxResponse.json()
-
-    if (vtxSamples.length === 0) {
-      return NextResponse.json(
-        { error: 'No VTX samples found' },
-        { status: 404 }
-      )
-    }
-
-    // Transform VTX samples to expected format (with all 3 axes)
-    const allVtxSamples = vtxSamples.map((s: any) => ({
-      timestamp: s.timestamp,
-      accel_x: s.accel?.x ?? 0,
-      accel_y: s.accel?.y ?? 0,
-      accel_z: s.accel?.z ?? 0
-    }))
-
-    // Run pedaling efficiency analysis
-    const result = calculatePedalingEfficiency({
-      vtxSamples: allVtxSamples,
-      fitSamples: fitSamples.map((s: any) => ({
-        timestamp: s.timestamp,
-        grade: s.grade,
-        altitude: s.altitude
-      })),
-      options: {
-        windowSize,
-        hpfCutoff,
-        includeDebug
-      }
-    })
-
-    return NextResponse.json({
-      samples: result.samples,
-      metadata: result.metadata
-    })
-
-  } catch (error: any) {
-    console.error('Error calculating pedaling efficiency:', error)
+    // Return full results
     return NextResponse.json(
-      { error: error.message || 'Internal server error' },
-      { status: 500 }
+      {
+        status: 'completed',
+        samples,
+        metadata: analysis.metadata,
+        computedAt: analysis.completed_at,
+        algorithmVersion: analysis.algorithm_version,
+        parameters: analysis.parameters,
+      },
+      {
+        headers: {
+          'Cache-Control': 'public, max-age=3600, immutable',
+          'ETag': `"${analysis.id}-${analysis.completed_at}-${resolution || 'full'}"`,
+        },
+      }
     )
+  } catch (error: any) {
+    console.error('Error fetching pedaling efficiency:', error)
+    return NextResponse.json({ error: error.message || 'Internal server error' }, { status: 500 })
   }
 }

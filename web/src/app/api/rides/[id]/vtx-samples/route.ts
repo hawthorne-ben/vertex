@@ -6,6 +6,27 @@ import { downsampleLTTB } from '@/lib/data/downsampling'
 
 export const dynamic = 'force-dynamic'
 
+type RecordingData = {
+  id: string
+  file_type: string
+  storage_path: string
+  start_time: string
+}
+
+type RideRecordingData = {
+  recording_id: string
+  recordings: RecordingData | null
+}
+
+type RideWithVTXData = {
+  id: string
+  user_id: string
+  merged_vtx_path: string | null
+  merged_vtx_file_size_bytes: number | null
+  merged_at: string | null
+  ride_recordings: RideRecordingData[] | null
+}
+
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -85,7 +106,7 @@ export async function GET(
       `)
       .eq('id', rideId)
       .eq('user_id', user.id)
-      .single()
+      .single() as { data: RideWithVTXData | null, error: any }
 
     if (rideError || !ride) {
       return NextResponse.json(
@@ -104,9 +125,9 @@ export async function GET(
     } else {
       // Fallback: use first VTX recording
       const vtxRecording = ride.ride_recordings
-        ?.filter((rr: any) => rr.recordings?.file_type === 'vtx')
-        .sort((a: any, b: any) =>
-          a.recordings.start_time.localeCompare(b.recordings.start_time)
+        ?.filter((rr) => rr.recordings?.file_type === 'vtx')
+        .sort((a, b) =>
+          a.recordings!.start_time.localeCompare(b.recordings!.start_time)
         )[0]?.recordings
 
       if (!vtxRecording) {

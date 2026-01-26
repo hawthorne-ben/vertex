@@ -3,6 +3,25 @@ import { createClient } from '@/lib/supabase/server'
 
 export const dynamic = 'force-dynamic'
 
+type RecordingData = {
+  id: string
+  storage_path: string
+  file_type: string
+}
+
+type RideRecordingData = {
+  recording_id: string
+  recordings: RecordingData | null
+}
+
+type RideWithRecordings = {
+  id: string
+  name: string
+  user_id: string
+  merged_vtx_path: string | null
+  ride_recordings: RideRecordingData[] | null
+}
+
 /**
  * DELETE /api/rides/[id]
  * Delete a ride and its associated data
@@ -57,7 +76,7 @@ export async function DELETE(
         )
       `)
       .eq('id', rideId)
-      .single()
+      .single() as { data: RideWithRecordings | null, error: any }
 
     if (fetchError || !ride) {
       return NextResponse.json(
@@ -76,7 +95,7 @@ export async function DELETE(
 
     // Delete FIT recording (file + database record) - one ride = one FIT file
     const fitRecording = ride.ride_recordings
-      ?.find((rr: any) => rr.recordings?.file_type === 'fit')?.recordings
+      ?.find((rr) => rr.recordings?.file_type === 'fit')?.recordings
 
     if (fitRecording) {
       // Delete FIT file from storage

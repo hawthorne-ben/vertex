@@ -55,17 +55,29 @@ export const mergeRideVTX = inngest.createFunction(
 
       // Step 2: Handle single file case (no merge needed)
       if (vtxRecordings.length === 1) {
-        await step.run('reference-single-file', async () => {
-          const recording = vtxRecordings[0]
+        const recording = await step.run('reference-single-file', async () => {
+          const rec = vtxRecordings[0]
 
           await supabase
             .from('rides')
             .update({
-              merged_vtx_path: recording.storage_path,
-              merged_vtx_file_size_bytes: recording.file_size_bytes,
+              merged_vtx_path: rec.storage_path,
+              merged_vtx_file_size_bytes: rec.file_size_bytes,
               merged_at: new Date().toISOString()
             })
             .eq('id', rideId)
+
+          return rec
+        })
+
+        // Send event to trigger pedaling efficiency calculation
+        await step.sendEvent('trigger-pedaling-efficiency', {
+          name: 'ride/vtx.merged',
+          data: {
+            rideId,
+            mergedPath: recording.storage_path,
+            mergedSizeBytes: recording.file_size_bytes
+          }
         })
 
         return {
@@ -144,6 +156,16 @@ export const mergeRideVTX = inngest.createFunction(
 
         if (error) {
           throw new Error(`Failed to update ride record: ${error.message}`)
+        }
+      })
+
+      // Send event to trigger pedaling efficiency calculation
+      await step.sendEvent('trigger-pedaling-efficiency', {
+        name: 'ride/vtx.merged',
+        data: {
+          rideId,
+          mergedPath,
+          mergedSizeBytes: mergeStats.bufferSize
         }
       })
 
