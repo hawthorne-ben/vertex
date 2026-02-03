@@ -171,7 +171,7 @@ export function UPlotBase({
         ...(onZoom ? [{
           hooks: {
             init: [
-              (u) => {
+              (u: uPlot) => {
                 const over = u.over
                 // Double-click to reset zoom
                 over.addEventListener('dblclick', () => {
@@ -187,7 +187,7 @@ export function UPlotBase({
               }
             ],
             setScale: [
-              (u) => {
+              (u: uPlot) => {
                 if (!isUserZoomRef.current) return
 
                 const xScale = u.scales?.x

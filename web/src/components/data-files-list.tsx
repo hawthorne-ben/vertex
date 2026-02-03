@@ -8,7 +8,7 @@ import { ConfirmationModal } from '@/components/ui/confirmation-modal'
 import { BatchOperationModal } from '@/components/ui/batch-operation-modal'
 import { Tooltip } from '@/components/ui/tooltip'
 import { formatDurationFromTimestamps } from '@/lib/utils/format-duration'
-import { generateMergedFilename } from '@/lib/vtx/merge-validation'
+import { generateMergedFilename } from '@/lib/vtx/filename-utils'
 
 // Client-side component for dynamic time display to prevent hydration issues
 function ProcessingTimeDisplay({ uploadedAt }: { uploadedAt: string }) {

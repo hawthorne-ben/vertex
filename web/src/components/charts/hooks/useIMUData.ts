@@ -222,7 +222,7 @@ export function useIMUData({
     }
 
     fetchData()
-  }, [rideId, recordingIds, dataType, timeRange, skip])
+  }, [rideId, recordingIds, dataType, timeRange, skip, recordings])
 
   return { samples, loading, error, originalCount }
 }
