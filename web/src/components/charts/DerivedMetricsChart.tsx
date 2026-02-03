@@ -49,8 +49,34 @@ export function DerivedMetricsChart({
       }
     }
 
-    const timestamps = samples.map(s => new Date(s.timestamp).getTime() / 1000)
-    const values = samples.map(s => s.value)
+    // Detect gaps (10+ second gaps should break the line)
+    const GAP_THRESHOLD_MS = 10000 // 10 seconds
+
+    const samplesWithGaps: (typeof samples[0] | null)[] = []
+    for (let i = 0; i < samples.length; i++) {
+      samplesWithGaps.push(samples[i])
+      if (i < samples.length - 1) {
+        const gap = new Date(samples[i + 1].timestamp).getTime() - new Date(samples[i].timestamp).getTime()
+        if (gap > GAP_THRESHOLD_MS) {
+          samplesWithGaps.push(null)
+        }
+      }
+    }
+
+    // Convert to uPlot format
+    const timestamps: number[] = []
+    const values: (number | null)[] = []
+
+    for (const sample of samplesWithGaps) {
+      if (sample) {
+        timestamps.push(new Date(sample.timestamp).getTime() / 1000)
+        values.push(sample.value)
+      } else if (timestamps.length > 0) {
+        // Insert a tiny timestamp gap to maintain alignment
+        timestamps.push(timestamps[timestamps.length - 1] + 0.001)
+        values.push(null)
+      }
+    }
 
     const data: uPlot.AlignedData = [timestamps, values] as uPlot.AlignedData
     const series: uPlot.Series[] = [

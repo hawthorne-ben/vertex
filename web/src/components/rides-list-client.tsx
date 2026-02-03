@@ -2,11 +2,11 @@
 
 import { useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Bike, Clock, MapPin, TrendingUp, Trash2, Download, Loader2 } from 'lucide-react'
+import { Bike, Clock, MapPin, TrendingUp, Trash2, Download, Loader2, Check } from 'lucide-react'
 import Link from 'next/link'
 import { createClient } from '@/lib/supabase/client'
 import { useToast } from '@/components/ui/toast-context'
-import { ConfirmationModal } from '@/components/ui/confirmation-modal'
+import { BatchOperationModal } from '@/components/ui/batch-operation-modal'
 import { formatDurationFromSeconds } from '@/lib/utils/format-duration'
 
 interface Ride {
@@ -30,8 +30,10 @@ interface RidesListClientProps {
 
 export function RidesListClient({ rides: initialRides }: RidesListClientProps) {
   const [rides, setRides] = useState(initialRides)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [deleting, setDeleting] = useState<string | null>(null)
   const [downloading, setDownloading] = useState<string | null>(null)
+  const [batchOperating, setBatchOperating] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [rideToDelete, setRideToDelete] = useState<Ride | null>(null)
   const { addToast } = useToast()
@@ -107,6 +109,119 @@ export function RidesListClient({ rides: initialRides }: RidesListClientProps) {
     setRideToDelete(null)
   }
 
+  // Selection handlers
+  const toggleSelection = (id: string, event: React.MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    const newSelected = new Set(selectedIds)
+    if (newSelected.has(id)) {
+      newSelected.delete(id)
+    } else {
+      newSelected.add(id)
+    }
+    setSelectedIds(newSelected)
+  }
+
+  // Batch operations
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0 || batchOperating) return
+
+    setBatchOperating(true)
+
+    try {
+      const response = await fetch('/api/rides/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rideIds: Array.from(selectedIds) })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Delete failed')
+      }
+
+      const result = await response.json()
+
+      setRides(prev => prev.filter(r => !selectedIds.has(r.id)))
+      setSelectedIds(new Set())
+
+      addToast({
+        type: 'success',
+        title: 'Rides deleted',
+        message: result.message
+      })
+    } catch (err) {
+      console.error('Batch delete error:', err)
+      addToast({
+        type: 'error',
+        title: 'Delete failed',
+        message: err instanceof Error ? err.message : 'Unknown error'
+      })
+    } finally {
+      setBatchOperating(false)
+      setShowDeleteModal(false)
+    }
+  }
+
+  const handleBatchDownload = async () => {
+    if (selectedIds.size === 0 || batchOperating) return
+
+    setBatchOperating(true)
+
+    try {
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!session) {
+        throw new Error('Not authenticated')
+      }
+
+      const response = await fetch('/api/rides/batch-download', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ rideIds: Array.from(selectedIds) })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Download failed')
+      }
+
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = response.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') || 'rides.zip'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+
+      setSelectedIds(new Set())
+
+      addToast({
+        type: 'success',
+        title: 'Download started',
+        message: `Downloading ${selectedIds.size} ride${selectedIds.size > 1 ? 's' : ''}`
+      })
+    } catch (err) {
+      console.error('Batch download error:', err)
+      addToast({
+        type: 'error',
+        title: 'Download failed',
+        message: err instanceof Error ? err.message : 'Unknown error'
+      })
+    } finally {
+      setBatchOperating(false)
+    }
+  }
+
+  const selectedRides = rides.filter(r => selectedIds.has(r.id))
+
   const handleDownload = async (ride: Ride, event: React.MouseEvent) => {
     event.preventDefault()
 
@@ -153,53 +268,91 @@ export function RidesListClient({ rides: initialRides }: RidesListClientProps) {
 
   return (
     <>
+      {/* Page header with sticky selection bar */}
+      <div className="sticky top-[100px] z-40 -mx-4 md:-mx-6 px-4 md:px-6 pt-4 pb-4 mb-4 glass-header">
+        <div className="max-w-6xl mx-auto">
+          <h1 className="text-3xl font-normal text-primary mb-2">Rides</h1>
+
+          {/* Selection bar or subtitle */}
+          {selectedIds.size > 0 ? (
+            <div className="flex items-center justify-between gap-4">
+              <div className="text-sm text-secondary">
+                {selectedIds.size} ride{selectedIds.size !== 1 ? 's' : ''} selected
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={handleBatchDownload}
+                  disabled={batchOperating}
+                  className="px-3 py-1.5 bg-background hover:bg-muted transition-colors rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-none"
+                >
+                  <Download className="w-4 h-4" />
+                  Download ({selectedIds.size})
+                </button>
+                <button
+                  onClick={() => setShowDeleteModal(true)}
+                  disabled={batchOperating}
+                  className="px-3 py-1.5 bg-background hover:bg-error/10 hover:text-error transition-colors rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-none"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete ({selectedIds.size})
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-secondary">
+              View and analyze your cycling activities from FIT files
+            </p>
+          )}
+        </div>
+      </div>
+
       {rides && rides.length > 0 ? (
         <div className="grid gap-6">
           {rides.map((ride) => (
-            <Card key={ride.id} className="hover:shadow-lg transition-shadow">
-              <Link href={`/rides/${ride.id}`}>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1">
-                      <CardTitle className="flex items-center">
-                        <Bike className="h-5 w-5 mr-2" />
-                        {ride.name}
-                      </CardTitle>
-                      <CardDescription>
-                        {formatDate(ride.start_time)}
-                      </CardDescription>
+            <div key={ride.id} className="relative group">
+              {/* Checkbox overlay */}
+              <div
+                className={`absolute top-4 right-4 z-10 transition-opacity ${
+                  selectedIds.has(ride.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                }`}
+              >
+                <button
+                  onClick={(e) => toggleSelection(ride.id, e)}
+                  className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-all ${
+                    selectedIds.has(ride.id)
+                      ? 'bg-primary border-primary'
+                      : 'bg-background border-border hover:border-primary'
+                  }`}
+                >
+                  {selectedIds.has(ride.id) && (
+                    <Check className="w-4 h-4 text-primary-foreground" />
+                  )}
+                </button>
+              </div>
+
+              <Card className="hover:shadow-lg transition-shadow">
+                <Link
+                  href={`/rides/${ride.id}`}
+                  onClick={(e) => {
+                    if (selectedIds.size > 0) {
+                      e.preventDefault()
+                    }
+                  }}
+                >
+                  <CardHeader>
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <CardTitle className="flex items-center">
+                          <Bike className="h-5 w-5 mr-2" />
+                          {ride.name}
+                        </CardTitle>
+                        <CardDescription>
+                          {formatDate(ride.start_time)}
+                        </CardDescription>
+                      </div>
                     </div>
-                    <div className="flex gap-2" onClick={(e) => e.preventDefault()}>
-                      {ride.fit_storage_path && (
-                        <button
-                          onClick={(e) => handleDownload(ride, e)}
-                          disabled={downloading === ride.id}
-                          className="p-2 text-secondary hover:text-primary hover:bg-primary/10 transition-colors rounded-md disabled:opacity-50 flex-shrink-0"
-                          title="Download FIT file"
-                        >
-                          {downloading === ride.id ? (
-                            <Loader2 className="h-5 w-5 animate-spin" />
-                          ) : (
-                            <Download className="h-5 w-5" />
-                          )}
-                        </button>
-                      )}
-                      <button
-                        onClick={(e) => handleDeleteClick(ride, e)}
-                        disabled={deleting === ride.id}
-                        className="p-2 text-secondary hover:text-error hover:bg-error/10 transition-colors rounded-md disabled:opacity-50 flex-shrink-0"
-                        title="Delete ride"
-                      >
-                        {deleting === ride.id ? (
-                          <Loader2 className="h-5 w-5 animate-spin" />
-                        ) : (
-                          <Trash2 className="h-5 w-5" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </CardHeader>
-              </Link>
+                  </CardHeader>
+                </Link>
               <CardContent>
                 {/* Ride Metrics */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -242,6 +395,7 @@ export function RidesListClient({ rides: initialRides }: RidesListClientProps) {
                 )}
               </CardContent>
             </Card>
+          </div>
           ))}
         </div>
       ) : (
@@ -261,14 +415,20 @@ export function RidesListClient({ rides: initialRides }: RidesListClientProps) {
         </Card>
       )}
 
-      <ConfirmationModal
-        isOpen={showDeleteModal}
-        onClose={handleDeleteCancel}
-        onConfirm={handleDeleteConfirm}
-        type="delete"
-        title="Delete Ride"
-        message={rideToDelete ? `Are you sure you want to delete "${rideToDelete.name}"? This will permanently delete the ride and its associated FIT file from storage.` : ''}
-        confirmText="Delete Ride"
+      {/* Batch Operation Modal */}
+      <BatchOperationModal
+        isOpen={showDeleteModal && selectedIds.size > 0}
+        onClose={() => setShowDeleteModal(false)}
+        onConfirm={handleBatchDelete}
+        files={selectedRides.map(r => ({
+          id: r.id,
+          filename: r.name,
+          start_time: r.start_time,
+          end_time: r.end_time,
+          file_size_bytes: 0
+        }))}
+        operation="delete"
+        isLoading={batchOperating}
       />
     </>
   )

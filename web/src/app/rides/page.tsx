@@ -52,17 +52,8 @@ export default async function RidesPage() {
   })
 
   return (
-    <div className="container mx-auto py-8 px-4">
-      <div className="max-w-6xl mx-auto">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold mb-2">Your Rides</h1>
-          <p className="text-gray-600">
-            View and analyze your cycling activities from FIT files.
-          </p>
-        </div>
-
-        <RidesListClient rides={ridesWithRecordings} />
-      </div>
+    <div className="container mx-auto px-4 md:px-6 max-w-6xl">
+      <RidesListClient rides={ridesWithRecordings} />
     </div>
   )
 }

@@ -39,27 +39,32 @@ export function IMUSensorChart({
 }: IMUSensorChartProps) {
   const [dataType, setDataType] = useState<IMUDataType>('orientation')
 
-  // Fetch data using hook (skip if initialSamples provided)
+  // Fetch data using hook
+  // Skip fetching if initialSamples are provided (recording detail page)
+  // initialSamples contain ALL sensor data (accel, gyro, orientation), so we can use them for all data types
+  const shouldSkip = !!initialSamples
+
   const { samples: fetchedSamples, loading: fetchedLoading, error: fetchedError, originalCount: fetchedOriginalCount } = useIMUData({
     rideId,
     recordings,
     dataType,
     timeRange: zoomRange,
-    skip: !!initialSamples  // Skip fetch if initialSamples provided
+    skip: shouldSkip
   })
 
-  // Use initialSamples if provided, otherwise use fetched data
-  const samples = initialSamples ?? fetchedSamples
+  // Use initialSamples if provided (they contain all data types)
+  const samples = initialSamples || fetchedSamples
   const loading = initialSamples ? false : fetchedLoading
   const error = initialSamples ? null : fetchedError
-  const originalCount = propOriginalCount ?? fetchedOriginalCount
+  const originalCount = initialSamples ? (propOriginalCount ?? 0) : fetchedOriginalCount
 
   // Process data for chart (gap detection, format conversion)
   const chartData = useMemo((): { data: uPlot.AlignedData; series: uPlot.Series[]; yAxisLabel: string; scales: Record<string, uPlot.Scale> } => {
-    if (samples.length === 0) {
+    if (!samples || samples.length === 0) {
+      // Return minimal valid data structure that won't be rendered
       return {
-        data: [[0], [null]] as uPlot.AlignedData,
-        series: [],
+        data: [[], []] as uPlot.AlignedData,
+        series: [{}],
         yAxisLabel: '',
         scales: { x: {}, y: {} }
       }
@@ -161,6 +166,9 @@ export function IMUSensorChart({
       y: {
         auto: true,
         range: (u, dataMin, dataMax) => {
+          if (dataMin === dataMax) {
+            return [dataMin - 1, dataMax + 1]
+          }
           const padding = (dataMax - dataMin) * 0.1
           return [dataMin - padding, dataMax + padding]
         }

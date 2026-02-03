@@ -158,39 +158,44 @@ export function UPlotBase({
       width: chartRef.current.clientWidth,
       height,
       series,
-      scales: scales || { x: {}, y: {} },
+      scales: scales,
       axes: axes || defaultAxes,
       cursor: {
         sync: { key: syncKey },
         drag: { x: true, y: false },
       },
       plugins: [
-        highlightPlugin,
-        {
+        // Highlight plugin - only include if highlightTime prop is provided
+        ...(highlightTime !== null && highlightTime !== undefined ? [highlightPlugin] : []),
+        // Zoom plugin - only include if onZoom callback is provided
+        ...(onZoom ? [{
           hooks: {
             init: [
               (u) => {
                 const over = u.over
+                // Double-click to reset zoom
                 over.addEventListener('dblclick', () => {
                   const timestamps = data[0] as number[]
-                  u.setScale('x', { min: timestamps[0], max: timestamps[timestamps.length - 1] })
+                  if (timestamps && timestamps.length > 0) {
+                    u.setScale('x', { min: timestamps[0], max: timestamps[timestamps.length - 1] })
+                  }
                 })
-                if (onZoom) {
-                  over.addEventListener('mousedown', () => {
-                    isUserZoomRef.current = true
-                  })
-                }
+                // Track when user starts dragging for zoom
+                over.addEventListener('mousedown', () => {
+                  isUserZoomRef.current = true
+                })
               }
             ],
-            setScale: onZoom ? [
+            setScale: [
               (u) => {
                 if (!isUserZoomRef.current) return
 
-                const xScale = u.scales.x
-                if (xScale.min !== undefined && xScale.max !== undefined) {
+                const xScale = u.scales?.x
+                if (xScale && xScale.min !== undefined && xScale.max !== undefined) {
                   const start = new Date(xScale.min * 1000).toISOString()
                   const end = new Date(xScale.max * 1000).toISOString()
 
+                  // Debounce to avoid multiple calls
                   if (lastZoomRef.current) {
                     const prevStart = new Date(lastZoomRef.current.start).getTime()
                     const prevEnd = new Date(lastZoomRef.current.end).getTime()
@@ -212,9 +217,9 @@ export function UPlotBase({
 
                 isUserZoomRef.current = false
               }
-            ] : undefined
+            ]
           }
-        }
+        }] : [])
       ]
     }
 

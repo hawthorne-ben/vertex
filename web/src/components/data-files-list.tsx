@@ -1,12 +1,14 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { FileText, CheckCircle2, AlertCircle, Loader2, Trash2, Clock, Download } from 'lucide-react'
+import { FileText, CheckCircle2, AlertCircle, Loader2, Trash2, Clock, Download, Check } from 'lucide-react'
 import { createClient } from '@/lib/supabase/client'
 import { useToast } from '@/components/ui/toast-context'
 import { ConfirmationModal } from '@/components/ui/confirmation-modal'
+import { BatchOperationModal } from '@/components/ui/batch-operation-modal'
 import { Tooltip } from '@/components/ui/tooltip'
 import { formatDurationFromTimestamps } from '@/lib/utils/format-duration'
+import { generateMergedFilename } from '@/lib/vtx/merge-validation'
 
 // Client-side component for dynamic time display to prevent hydration issues
 function ProcessingTimeDisplay({ uploadedAt }: { uploadedAt: string }) {
@@ -114,14 +116,20 @@ interface IMUDataFile {
 interface DataFilesListProps {
   files: IMUDataFile[]
   onDataChange?: () => void
+  onSelectionChange?: (selectedIds: Set<string>, selectedFiles: IMUDataFile[]) => void
 }
 
 export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesListProps) {
   const [files, setFiles] = useState(initialFiles)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [deleting, setDeleting] = useState<string | null>(null)
   const [downloading, setDownloading] = useState<string | null>(null)
+  const [batchOperating, setBatchOperating] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [fileToDelete, setFileToDelete] = useState<IMUDataFile | null>(null)
+  const [showMergeModal, setShowMergeModal] = useState(false)
+  const [mergeFilename, setMergeFilename] = useState('')
+  const [merging, setMerging] = useState(false)
   const timeEstimatesRef = useRef<Record<string, number[]>>({}) // Use ref to avoid render-time state updates
   const { addToast } = useToast()
 
@@ -247,6 +255,244 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
     setFileToDelete(null)
   }
 
+  // Selection handlers
+  const toggleSelection = (id: string, event: React.MouseEvent) => {
+    event.preventDefault()
+    event.stopPropagation()
+
+    const newSelected = new Set(selectedIds)
+    if (newSelected.has(id)) {
+      newSelected.delete(id)
+    } else {
+      newSelected.add(id)
+    }
+    setSelectedIds(newSelected)
+  }
+
+  // Batch operations
+  const handleBatchDelete = async () => {
+    if (selectedIds.size === 0 || batchOperating) return
+
+    setBatchOperating(true)
+
+    try {
+      const response = await fetch('/api/recordings/batch-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recordingIds: Array.from(selectedIds) })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Delete failed')
+      }
+
+      const result = await response.json()
+
+      // Remove deleted files from UI
+      setFiles(prev => prev.filter(f => !selectedIds.has(f.id)))
+      setSelectedIds(new Set())
+
+      addToast({
+        type: 'success',
+        title: 'Files deleted',
+        message: result.message
+      })
+
+      if (onDataChange) {
+        onDataChange()
+      }
+    } catch (err) {
+      console.error('Batch delete error:', err)
+      addToast({
+        type: 'error',
+        title: 'Delete failed',
+        message: err instanceof Error ? err.message : 'Unknown error'
+      })
+    } finally {
+      setBatchOperating(false)
+      setShowDeleteModal(false)
+    }
+  }
+
+  const handleBatchDownload = async () => {
+    if (selectedIds.size === 0 || batchOperating) return
+
+    setBatchOperating(true)
+
+    try {
+      const supabase = createClient()
+      const { data: { session } } = await supabase.auth.getSession()
+
+      if (!session) {
+        throw new Error('Not authenticated')
+      }
+
+      const response = await fetch('/api/recordings/batch-download', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`
+        },
+        body: JSON.stringify({ recordingIds: Array.from(selectedIds) })
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Download failed')
+      }
+
+      // Create download link from blob
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = response.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') || 'recordings.zip'
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+
+      setSelectedIds(new Set())
+
+      addToast({
+        type: 'success',
+        title: 'Download started',
+        message: `Downloading ${selectedIds.size} recording${selectedIds.size > 1 ? 's' : ''}`
+      })
+    } catch (err) {
+      console.error('Batch download error:', err)
+      addToast({
+        type: 'error',
+        title: 'Download failed',
+        message: err instanceof Error ? err.message : 'Unknown error'
+      })
+    } finally {
+      setBatchOperating(false)
+    }
+  }
+
+  const handleMerge = async () => {
+    if (selectedIds.size === 0 || !mergeFilename.trim() || merging) return
+
+    setMerging(true)
+
+    try {
+      const response = await fetch('/api/recordings/merge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recordingIds: Array.from(selectedIds),
+          newFilename: mergeFilename.trim()
+        })
+      })
+
+      const result = await response.json()
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Merge failed')
+      }
+
+      // Show warnings if any
+      if (result.warnings && result.warnings.length > 0) {
+        console.warn('Merge warnings:', result.warnings)
+      }
+
+      addToast({
+        type: 'info',
+        title: 'Merge started',
+        message: 'Files are being merged in the background. Page will refresh when complete.'
+      })
+
+      // Start polling for completion (every 3 seconds)
+      const pollInterval = setInterval(async () => {
+        if (onDataChange) {
+          onDataChange()
+        }
+
+        // Check if merge is complete by looking for the new file
+        const supabase = createClient()
+        const { data } = await supabase
+          .from('recordings')
+          .select('id')
+          .eq('filename', result.filename)
+          .maybeSingle()
+
+        if (data) {
+          // Merge complete, stop polling and refresh
+          clearInterval(pollInterval)
+          setMerging(false)
+          setShowMergeModal(false)
+          setSelectedIds(new Set())
+          setMergeFilename('')
+
+          addToast({
+            type: 'success',
+            title: 'Merge complete',
+            message: `Created ${result.filename}`
+          })
+
+          // Refresh page to show new merged file
+          window.location.reload()
+        }
+      }, 3000)
+
+      // Stop polling after 5 minutes (timeout)
+      setTimeout(() => {
+        clearInterval(pollInterval)
+        if (merging) {
+          setMerging(false)
+          addToast({
+            type: 'warning',
+            title: 'Merge timeout',
+            message: 'Merge is taking longer than expected. Please refresh the page.'
+          })
+        }
+      }, 300000)
+
+    } catch (err) {
+      console.error('Merge error:', err)
+      addToast({
+        type: 'error',
+        title: 'Merge failed',
+        message: err instanceof Error ? err.message : 'Unknown error'
+      })
+      setMerging(false)
+      setShowMergeModal(false)
+    }
+  }
+
+  // Get selected files for modal
+  const selectedFiles = files.filter(f => selectedIds.has(f.id))
+
+  // Check if merge is available (all selected are VTX and ready)
+  const canMerge = selectedIds.size >= 2 &&
+    selectedIds.size <= 10 &&
+    selectedFiles.every(f => f.status === 'ready') &&
+    files.every(f => !selectedIds.has(f.id) || f.status === 'ready')
+
+  // Show merge modal with auto-generated filename
+  const showMergeModalHandler = () => {
+    if (selectedFiles.length < 2) return
+
+    // Sort by start time
+    const sorted = [...selectedFiles].sort((a, b) =>
+      (a.start_time || '').localeCompare(b.start_time || '')
+    )
+
+    const firstStart = sorted[0].start_time
+    const lastEnd = sorted[sorted.length - 1].end_time
+
+    if (firstStart && lastEnd) {
+      const suggestedName = generateMergedFilename(firstStart, lastEnd)
+      setMergeFilename(suggestedName.replace('.vtx', '')) // Remove extension for input
+    } else {
+      setMergeFilename('merged')
+    }
+
+    setShowMergeModal(true)
+  }
+
   const handleDownload = async (file: IMUDataFile, event: React.MouseEvent) => {
     event.preventDefault() // Prevent navigation to detail page
 
@@ -329,16 +575,92 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
 
   return (
     <>
+      {/* Page header with sticky selection bar - liquid glass always on */}
+      <div className="sticky top-[100px] z-40 -mx-4 md:-mx-6 px-4 md:px-6 pt-4 pb-4 mb-4 glass-header">
+        <div className="max-w-6xl mx-auto">
+          <h1 className="text-3xl font-normal text-primary mb-2">Recordings</h1>
+
+          {/* Selection bar or subtitle */}
+          {selectedIds.size > 0 ? (
+            <div className="flex items-center justify-between gap-4">
+              <div className="text-sm text-secondary">
+                {selectedIds.size} file{selectedIds.size !== 1 ? 's' : ''} selected
+              </div>
+              <div className="flex gap-2 flex-wrap">
+                {canMerge && (
+                  <button
+                    onClick={showMergeModalHandler}
+                    disabled={batchOperating || merging}
+                    className="px-3 py-1.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-none"
+                  >
+                    <FileText className="w-4 h-4" />
+                    Merge Recordings
+                  </button>
+                )}
+                <button
+                  onClick={handleBatchDownload}
+                  disabled={batchOperating || selectedFiles.some(f => f.status !== 'ready')}
+                  className="px-3 py-1.5 bg-background hover:bg-muted transition-colors rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-none"
+                >
+                  <Download className="w-4 h-4" />
+                  Download ({selectedIds.size})
+                </button>
+                <button
+                  onClick={() => setShowDeleteModal(true)}
+                  disabled={batchOperating}
+                  className="px-3 py-1.5 bg-background hover:bg-error/10 hover:text-error transition-colors rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-none"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  Delete ({selectedIds.size})
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="text-secondary">
+              View and analyze your Vertex IMU sensor recordings
+            </p>
+          )}
+        </div>
+      </div>
+
       <div className="space-y-4">
         {files.map((file) => (
-        <a
+        <div
           key={file.id}
-          href={`/recordings/${file.id}`}
-          className="card-interactive block p-6 rounded-lg"
+          className="card-interactive relative p-6 rounded-lg group"
         >
-          <div className="flex items-start gap-4">
-            {/* Status icon with tooltip */}
-            <div className="flex-shrink-0 mt-1">
+          {/* Checkbox overlay (visible on hover or when selected) */}
+          <div
+            className={`absolute top-4 right-4 z-10 transition-opacity ${
+              selectedIds.has(file.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+            }`}
+          >
+            <button
+              onClick={(e) => toggleSelection(file.id, e)}
+              className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-all ${
+                selectedIds.has(file.id)
+                  ? 'bg-primary border-primary'
+                  : 'bg-background border-border hover:border-primary'
+              }`}
+            >
+              {selectedIds.has(file.id) && (
+                <Check className="w-4 h-4 text-primary-foreground" />
+              )}
+            </button>
+          </div>
+
+          <a
+            href={`/recordings/${file.id}`}
+            className="block"
+            onClick={(e) => {
+              if (selectedIds.size > 0) {
+                e.preventDefault() // Prevent navigation when in selection mode
+              }
+            }}
+          >
+            <div className="flex items-start gap-4">
+              {/* Status icon with tooltip */}
+              <div className="flex-shrink-0 mt-1">
               {file.status === 'parsing' && (
                 <Tooltip content="Parsing" side="right">
                   <Loader2 className="w-6 h-6 text-info animate-spin" />
@@ -405,37 +727,6 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
                     <span className="text-secondary">Processing...</span>
                   )}
                 </h3>
-                <div className="flex gap-2">
-                  {file.status === 'ready' && (
-                    <button
-                      onClick={(e) => handleDownload(file, e)}
-                      disabled={downloading === file.id}
-                      className="p-2 text-secondary hover:text-primary hover:bg-primary/10 transition-colors rounded-md disabled:opacity-50 flex-shrink-0"
-                      title="Download file"
-                    >
-                      {downloading === file.id ? (
-                        <Loader2 className="w-5 h-5 animate-spin" />
-                      ) : (
-                        <Download className="w-5 h-5" />
-                      )}
-                    </button>
-                  )}
-                  <button
-                    onClick={(e) => {
-                      e.preventDefault()
-                      handleDeleteClick(file)
-                    }}
-                    disabled={deleting === file.id}
-                    className="p-2 text-secondary hover:text-error hover:bg-error/10 transition-colors rounded-md disabled:opacity-50 flex-shrink-0"
-                    title="Delete segment"
-                  >
-                    {deleting === file.id ? (
-                      <Loader2 className="w-5 h-5 animate-spin" />
-                    ) : (
-                      <Trash2 className="w-5 h-5" />
-                    )}
-                  </button>
-                </div>
               </div>
 
               {/* Metadata grid - only show for completed files */}
@@ -582,45 +873,32 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
             </div>
           </div>
         </a>
+        </div>
       ))}
       </div>
       
-      {/* Confirmation Modal */}
-      <ConfirmationModal
-        isOpen={showDeleteModal}
-        onClose={handleDeleteCancel}
-        onConfirm={handleDeleteConfirm}
-        type="delete"
-        title="Delete Data Segment"
-        message={fileToDelete ? (() => {
-          if (fileToDelete.start_time && fileToDelete.end_time) {
-            const startDate = new Date(fileToDelete.start_time)
-            const endDate = new Date(fileToDelete.end_time)
-            
-            const dateStr = startDate.toLocaleDateString(undefined, {
-              month: 'short',
-              day: 'numeric',
-              year: 'numeric'
-            })
-            const startTimeStr = startDate.toLocaleTimeString(undefined, {
-              hour: 'numeric',
-              minute: '2-digit',
-              hour12: true
-            })
-            const endTimeStr = endDate.toLocaleTimeString(undefined, {
-              hour: 'numeric',
-              minute: '2-digit',
-              hour12: true
-            })
-            
-            return `Are you sure you want to delete sensor data from ${dateStr}, ${startTimeStr} → ${endTimeStr}? This will permanently remove all samples in this time range.`
-          } else {
-            return `Are you sure you want to delete this sensor data? This will permanently remove all samples.`
-          }
-        })() : ''}
-        confirmText="Delete"
-        cancelText="Cancel"
-        isLoading={deleting === fileToDelete?.id}
+      {/* Batch Operation Modals */}
+      <BatchOperationModal
+        isOpen={showDeleteModal && selectedIds.size > 0}
+        onClose={() => setShowDeleteModal(false)}
+        onConfirm={handleBatchDelete}
+        files={selectedFiles}
+        operation="delete"
+        isLoading={batchOperating}
+      />
+
+      <BatchOperationModal
+        isOpen={showMergeModal}
+        onClose={() => {
+          setShowMergeModal(false)
+          setMergeFilename('')
+        }}
+        onConfirm={handleMerge}
+        files={selectedFiles}
+        operation="merge"
+        isLoading={merging}
+        filename={mergeFilename}
+        onFilenameChange={setMergeFilename}
       />
     </>
   )
