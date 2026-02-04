@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef, useMemo } from 'react'
-import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap } from 'react-leaflet'
+import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap, ZoomControl } from 'react-leaflet'
 import L from 'leaflet'
 import { Home } from 'lucide-react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -316,14 +316,17 @@ export function RideMap({
         center={[centerLat, centerLon]}
         zoom={15}
         style={{ height: 400, width: '100%', borderRadius: '0.5rem', position: 'relative', zIndex: 1 }}
-        scrollWheelZoom={true}
-        zoomControl={false} // Remove default zoom control
+        scrollWheelZoom={false}
+        zoomControl={false}
       >
         {/* Minimal theme-aware tiles (no labels, just roads and topo) */}
         <TileLayer
           attribution={tileAttribution}
           url={tileUrl}
         />
+
+        {/* Custom styled zoom control in top-right */}
+        <ZoomControl position="topright" />
 
         <FitBounds positions={positions} />
 

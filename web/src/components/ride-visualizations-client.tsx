@@ -40,17 +40,32 @@ export function RideVisualizationsClient({
   vtxRecordings
 }: RideVisualizationsClientProps) {
   const [selectedTime, setSelectedTime] = useState<number | null>(null)
+  const [imuCoverageRanges, setImuCoverageRanges] = useState<Array<{ start: number; end: number }>>([])
+  const [sharedZoomRange, setSharedZoomRange] = useState<{ start: string; end: string } | null>(null)
 
   // Fetch ride samples once - shared between map and charts
   const { samples, loading, error } = useRideSamples(rideId, fitRecordingId)
 
-  // Calculate IMU time ranges for GPS color coding (using shared sync library)
+  // Calculate IMU time ranges for GPS color coding
+  // Use coverage ranges from VTX data if available, otherwise fall back to full recording ranges
   const imuTimeRanges = useMemo(() => {
+    if (imuCoverageRanges.length > 0) {
+      return imuCoverageRanges
+    }
     return getVtxTimeRanges(vtxRecordings)
-  }, [vtxRecordings])
+  }, [imuCoverageRanges, vtxRecordings])
 
   // Check if we have VTX data to display
   const hasVtxData = vtxRecordings.length > 0
+
+  // Memoize the mapped vtx recordings to avoid recreating on every render
+  const vtxRecordingsForChart = useMemo(() => {
+    return vtxRecordings.map(vtx => ({
+      id: vtx.id,
+      start_time: vtx.start_time,
+      end_time: vtx.end_time
+    }))
+  }, [vtxRecordings])
 
   return (
     <>
@@ -91,14 +106,13 @@ export function RideVisualizationsClient({
       {hasVtxData && (
         <div className="mb-8">
           <RideDataTabs
-            vtxRecordings={vtxRecordings.map(vtx => ({
-              id: vtx.id,
-              start_time: vtx.start_time,
-              end_time: vtx.end_time
-            }))}
+            vtxRecordings={vtxRecordingsForChart}
             rideId={rideId}
             fitRecordingId={fitRecordingId}
             highlightTime={selectedTime}
+            onCoverageUpdate={setImuCoverageRanges}
+            zoomRange={sharedZoomRange}
+            onZoomChange={setSharedZoomRange}
           />
         </div>
       )}
@@ -113,6 +127,8 @@ export function RideVisualizationsClient({
             samples={samples}
             loading={loading}
             error={error}
+            zoomRange={sharedZoomRange}
+            onZoomChange={setSharedZoomRange}
           />
         </div>
       )}

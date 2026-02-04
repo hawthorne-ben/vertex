@@ -87,14 +87,16 @@ export function useDerivedMetric({
             if (!fitRecordingId) {
               throw new Error('Pedaling efficiency requires GPS data from FIT file')
             }
-            url = `/api/rides/${rideId}/pedaling-efficiency`
+
+            const params = new URLSearchParams()
+            // If zoomed, fetch only the selected range (server determines resolution)
             if (timeRange) {
-              const params = new URLSearchParams({
-                start: timeRange.start,
-                end: timeRange.end
-              })
-              url += `?${params}`
+              params.set('start', timeRange.start)
+              params.set('end', timeRange.end)
             }
+            // Otherwise fetch full ride (server auto-downsamples to ~1000 points)
+
+            url = `/api/rides/${rideId}/pedaling-efficiency${params.toString() ? `?${params}` : ''}`
             break
           default:
             throw new Error(`Unknown metric: ${metric}`)
@@ -139,21 +141,12 @@ export function useDerivedMetric({
         const metricMetadata = data.metadata || null
 
         // Transform to common format
-        let transformed = metricSamples.map((s: any) => ({
+        // Server handles time range filtering and downsampling
+        const transformed = metricSamples.map((s: any) => ({
           timestamp: s.timestamp,
           value: s.efficiencyPercent ?? s.value, // Normalize to 'value' field
           ...s // Keep all original fields
         }))
-
-        // Client-side time range filtering (API returns full cached dataset)
-        if (timeRange) {
-          const startTime = new Date(timeRange.start).getTime()
-          const endTime = new Date(timeRange.end).getTime()
-          transformed = transformed.filter((s: any) => {
-            const sampleTime = new Date(s.timestamp).getTime()
-            return sampleTime >= startTime && sampleTime <= endTime
-          })
-        }
 
         setSamples(transformed)
         setMetadata(metricMetadata)

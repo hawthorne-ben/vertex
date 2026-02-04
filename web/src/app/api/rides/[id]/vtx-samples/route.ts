@@ -3,6 +3,13 @@ import { createClient } from '@supabase/supabase-js'
 import { VTXDecoder } from '@vertex-pkg/vtx-parser'
 import { fileCache } from '@/lib/cache/file-cache'
 import { downsampleLTTB } from '@/lib/data/downsampling'
+import { LRUCache } from 'lru-cache'
+
+// Cache for coverage ranges (computed once per file, keyed by storage path)
+const coverageCache = new LRUCache<string, Array<{ start: number; end: number }>>({
+  max: 100, // Cache up to 100 rides
+  ttl: 1000 * 60 * 60, // 1 hour TTL
+})
 
 export const dynamic = 'force-dynamic'
 
@@ -39,10 +46,13 @@ const supabase = createClient(
  * Query parameters:
  * - start: ISO timestamp to filter from (optional)
  * - end: ISO timestamp to filter to (optional)
- * - resolution: Target number of samples (default: 2000, max: 10000)
  * - downsample: Downsampling method - 'lttb' or 'none' (default: 'lttb')
  * - fields: Comma-separated list of fields to include (optional, e.g., 'accel_x,accel_y')
  *   Available fields: accel, gyro, mag, quat, euler, accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z
+ *
+ * Resolution is determined server-side based on time range:
+ * - Full ride (no start/end): ~1000 samples
+ * - Zoomed range: up to 5000 samples based on duration and 25Hz sample rate
  */
 export async function GET(
   request: NextRequest,
@@ -55,10 +65,6 @@ export async function GET(
     // Parse query parameters
     const startTime = searchParams.get('start') || undefined
     const endTime = searchParams.get('end') || undefined
-    const resolution = Math.min(
-      parseInt(searchParams.get('resolution') || '2000'),
-      10000
-    )
     const downsample = searchParams.get('downsample') || 'lttb'
     const fieldsParam = searchParams.get('fields')
     const requestedFields = fieldsParam ? new Set(fieldsParam.split(',').map(f => f.trim())) : null
@@ -158,17 +164,80 @@ export async function GET(
       }
     )
 
-    // Decode VTX file
-    const decoder = new VTXDecoder(arrayBuffer)
+    // Decode VTX file header
+    let decoder = new VTXDecoder(arrayBuffer)
     const header = decoder.getHeader()
 
     // Parse start/end times if provided
     const startOffset = startTime ? new Date(startTime).getTime() : null
     const endOffset = endTime ? new Date(endTime).getTime() : null
 
+    // Determine resolution based on time range (server-side logic)
+    const recordCount = Number(header.recordCount)
+    let resolution: number
+
+    if (startOffset === null || endOffset === null) {
+      // Full ride overview: ~1000 samples
+      resolution = 1000
+    } else {
+      // Zoomed view: calculate based on duration and 25Hz sample rate
+      const durationSeconds = (endOffset - startOffset) / 1000
+      const sampleRate = header.sampleRate || 25
+      const totalSamplesInRange = durationSeconds * sampleRate
+      // Cap at 5000 points for performance
+      resolution = Math.min(Math.ceil(totalSamplesInRange), 5000)
+    }
+
+    // Get coverage ranges from cache or compute once (before filtering)
+    let coverageRanges = coverageCache.get(storagePath)
+    let needsDecoderRecreation = false
+
+    if (!coverageRanges) {
+      // Compute coverage gaps once (10+ second gaps between samples)
+      // This is expensive (O(n)), so we cache it and compute on FULL dataset
+      const GAP_THRESHOLD_MS = 10000
+      coverageRanges = []
+
+      // Read timestamps only for coverage calculation (minimal memory)
+      const timestamps: number[] = []
+      for (let i = 0; i < recordCount; i++) {
+        const record = decoder.readRecord(i)
+        timestamps.push(record.timestamp)
+      }
+
+      if (timestamps.length > 0) {
+        let rangeStart = timestamps[0]
+        let rangeEnd = rangeStart
+
+        for (let i = 1; i < timestamps.length; i++) {
+          const gap = timestamps[i] - rangeEnd
+
+          if (gap > GAP_THRESHOLD_MS) {
+            coverageRanges.push({ start: rangeStart, end: rangeEnd })
+            rangeStart = timestamps[i]
+          }
+
+          rangeEnd = timestamps[i]
+        }
+
+        coverageRanges.push({ start: rangeStart, end: rangeEnd })
+      }
+
+      // Cache the computed coverage
+      coverageCache.set(storagePath, coverageRanges)
+
+      // Mark that we need to recreate decoder for sample reading
+      needsDecoderRecreation = true
+    }
+
+    // Recreate decoder if coverage was just computed (no reset method available)
+    if (needsDecoderRecreation) {
+      decoder = new VTXDecoder(arrayBuffer)
+      decoder.getHeader() // Must read header before reading records
+    }
+
     // Collect samples
     const samples = []
-    const recordCount = Number(header.recordCount)
 
     // Optimization: When no time filtering and downsampling requested, use stride to reduce iterations
     // This works because LTTB will handle the proper downsampling, we just need enough samples
@@ -283,7 +352,8 @@ export async function GET(
           end: samples[samples.length - 1].timestamp
         } : null,
         merged_at: ride.merged_at || null
-      }
+      },
+      coverage: coverageRanges
     })
 
   } catch (error) {

@@ -94,7 +94,15 @@ export function DerivedMetricsChart({
 
     // Build scales
     const scales: Record<string, uPlot.Scale> = {
-      x: {},
+      x: {
+        // If zoomed, use the zoom range; otherwise let it auto-fit
+        ...(zoomRange ? {
+          range: [
+            new Date(zoomRange.start).getTime() / 1000,
+            new Date(zoomRange.end).getTime() / 1000
+          ]
+        } : {})
+      },
       y: {
         auto: true,
         range: (u, dataMin, dataMax) => {
@@ -105,7 +113,7 @@ export function DerivedMetricsChart({
     }
 
     return { data, series, yAxisLabel, scales }
-  }, [samples, metric])
+  }, [samples, metric, zoomRange])
 
   const getTitle = () => {
     switch (metric) {
@@ -141,15 +149,6 @@ export function DerivedMetricsChart({
         </div>
 
         {loading && <span className="text-xs text-muted-foreground animate-pulse">Calculating...</span>}
-
-        {zoomRange && onZoomChange && (
-          <button
-            onClick={() => onZoomChange(null)}
-            className="ml-auto px-3 py-2 text-sm rounded-md bg-muted text-foreground hover:bg-muted/80 border border-border"
-          >
-            Reset Zoom
-          </button>
-        )}
       </div>
 
       {/* Loading state */}

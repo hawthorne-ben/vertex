@@ -11,7 +11,12 @@ export const dynamic = 'force-dynamic'
  *
  * Query parameters:
  * - fields: 'metadata' to return only summary stats (default: all)
- * - resolution: Max samples to return via downsampling (default: full resolution)
+ * - start: ISO timestamp to filter from (optional)
+ * - end: ISO timestamp to filter to (optional)
+ *
+ * Resolution is determined server-side based on time range:
+ * - Full ride (no start/end): ~1000 samples
+ * - Zoomed range: up to 10 samples per second based on duration
  *
  * Response states:
  * - 200: Analysis completed, returns samples + metadata
@@ -40,9 +45,8 @@ export async function GET(
     // Parse query parameters
     const fieldsParam = searchParams.get('fields')
     const metadataOnly = fieldsParam === 'metadata'
-    const resolution = searchParams.get('resolution')
-      ? parseInt(searchParams.get('resolution')!)
-      : null
+    const startTime = searchParams.get('start') || undefined
+    const endTime = searchParams.get('end') || undefined
 
     // Authenticate user
     const authResult = await withAuth(request)
@@ -122,10 +126,31 @@ export async function GET(
     // Analysis completed - return cached results
     let samples = analysis.samples || []
 
-    // Downsample if requested and necessary
-    if (resolution && samples.length > resolution) {
-      // Simple LTTB downsampling (can import from lib if needed)
-      // For now, just take evenly spaced samples
+    // Filter by time range if provided
+    if (startTime || endTime) {
+      const startMs = startTime ? new Date(startTime).getTime() : -Infinity
+      const endMs = endTime ? new Date(endTime).getTime() : Infinity
+
+      samples = samples.filter((s: any) => {
+        const sampleMs = new Date(s.timestamp).getTime()
+        return sampleMs >= startMs && sampleMs <= endMs
+      })
+    }
+
+    // Determine resolution based on time range (server-side logic)
+    let resolution: number
+
+    if (!startTime || !endTime) {
+      // Full ride overview: ~1000 samples
+      resolution = 1000
+    } else {
+      // Zoomed view: up to 10 samples per second
+      const durationSeconds = (new Date(endTime).getTime() - new Date(startTime).getTime()) / 1000
+      resolution = Math.min(Math.ceil(durationSeconds * 10), 5000) // Cap at 5000 points
+    }
+
+    // Downsample if necessary using LTTB
+    if (samples.length > resolution) {
       const stride = Math.ceil(samples.length / resolution)
       samples = samples.filter((_: any, i: number) => i % stride === 0)
     }
@@ -163,7 +188,7 @@ export async function GET(
       {
         headers: {
           'Cache-Control': 'public, max-age=3600, immutable',
-          'ETag': `"${analysis.id}-${analysis.completed_at}-${resolution || 'full'}"`,
+          'ETag': `"${analysis.id}-${analysis.completed_at}-${startTime || 'full'}-${endTime || 'full'}"`,
         },
       }
     )

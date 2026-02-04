@@ -31,6 +31,8 @@ interface RideChartsClientProps {
   samples?: Sample[]
   loading?: boolean
   error?: string | null
+  zoomRange?: { start: string; end: string } | null
+  onZoomChange?: (range: { start: string; end: string } | null) => void
 }
 
 interface Sample {
@@ -54,7 +56,9 @@ export function RideChartsClient({
   highlightTime,
   samples: propSamples,
   loading: propLoading,
-  error: propError
+  error: propError,
+  zoomRange,
+  onZoomChange
 }: RideChartsClientProps) {
   const [fetchedSamples, setFetchedSamples] = useState<Sample[]>([])
   const [fetchedLoading, setFetchedLoading] = useState(true)
@@ -66,15 +70,28 @@ export function RideChartsClient({
   const loading = propLoading ?? fetchedLoading
   const error = propError ?? fetchedError
 
-  // Convert highlightTime to sample index (using shared sync library)
+  // Filter samples by zoom range if provided (MUST be before highlightIndex calculation)
+  const filteredSamples = useMemo(() => {
+    if (!zoomRange) return samples
+
+    const startMs = new Date(zoomRange.start).getTime()
+    const endMs = new Date(zoomRange.end).getTime()
+
+    return samples.filter(s => {
+      const sampleMs = new Date(s.timestamp).getTime()
+      return sampleMs >= startMs && sampleMs <= endMs
+    })
+  }, [samples, zoomRange])
+
+  // Convert highlightTime to sample index in FILTERED samples (using shared sync library)
   const highlightIndex = useMemo(() => {
-    if (highlightTime === null || highlightTime === undefined || samples.length === 0) {
+    if (highlightTime === null || highlightTime === undefined || filteredSamples.length === 0) {
       return null
     }
 
-    const result = findClosestByTime(samples, highlightTime)
+    const result = findClosestByTime(filteredSamples, highlightTime)
     return result?.index ?? null
-  }, [highlightTime, samples])
+  }, [highlightTime, filteredSamples])
 
   // Use highlightIndex if set, otherwise use hoverIndex
   const activeIndex = highlightIndex !== null && highlightIndex !== -1 ? highlightIndex : hoverIndex
@@ -193,10 +210,10 @@ export function RideChartsClient({
   }
 
   // Prepare data for individual charts
-  const powerData = samples.map(s => ({ timestamp: s.timestamp, value: s.power_watts ?? null }))
-  const hrData = samples.map(s => ({ timestamp: s.timestamp, value: s.heart_rate ?? null }))
-  const cadenceData = samples.map(s => ({ timestamp: s.timestamp, value: s.cadence ?? null }))
-  const speedData = samples.map(s => ({ timestamp: s.timestamp, value: s.speed_ms ? s.speed_ms * 2.23694 : null })) // m/s to mph
+  const powerData = filteredSamples.map(s => ({ timestamp: s.timestamp, value: s.power_watts ?? null }))
+  const hrData = filteredSamples.map(s => ({ timestamp: s.timestamp, value: s.heart_rate ?? null }))
+  const cadenceData = filteredSamples.map(s => ({ timestamp: s.timestamp, value: s.cadence ?? null }))
+  const speedData = filteredSamples.map(s => ({ timestamp: s.timestamp, value: s.speed_ms ? s.speed_ms * 2.23694 : null })) // m/s to mph
 
   // Prepare GPS track for map
   const gpsTrack = samples
@@ -346,7 +363,9 @@ export function RideChartsClient({
             <ElevationProfile
               samples={samples}
               onHover={setHoverIndex}
-              highlightIndex={activeIndex}
+              highlightTime={highlightTime}
+              zoomRange={zoomRange}
+              onZoom={onZoomChange ? (start, end) => onZoomChange({ start, end }) : undefined}
               syncKey="ride-sync"
               className="w-full"
             />

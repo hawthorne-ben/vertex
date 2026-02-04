@@ -117,6 +117,16 @@ export function SingleMetricChart({
       padding: [8, 8, 0, 0],
       plugins: [highlightPlugin],
       series,
+      cursor: {
+        drag: {
+          x: false,
+          y: false
+        },
+        points: {
+          size: 12,
+          width: 2
+        }
+      },
       scales: {
         x: {},
         y: {

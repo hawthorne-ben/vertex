@@ -21,6 +21,13 @@ export interface RideDataTabsProps {
   // Time sync
   highlightTime?: number | null
 
+  // Coverage callback
+  onCoverageUpdate?: (coverage: Array<{ start: number; end: number }>) => void
+
+  // Shared zoom state (synced with FIT charts)
+  zoomRange?: { start: string; end: string } | null
+  onZoomChange?: (range: { start: string; end: string } | null) => void
+
   className?: string
 }
 
@@ -33,14 +40,16 @@ export function RideDataTabs({
   rideId,
   fitRecordingId,
   highlightTime,
+  onCoverageUpdate,
+  zoomRange: sharedZoomRange,
+  onZoomChange: sharedZoomChange,
   className = ''
 }: RideDataTabsProps) {
   const [activeTab, setActiveTab] = useState<'imu' | 'analytics'>('imu')
   const [isTransitioning, setIsTransitioning] = useState(false)
 
-  // Lift zoom state to parent - prevents race conditions
-  const [imuZoomRange, setImuZoomRange] = useState<{ start: string; end: string } | null>(null)
-  const [analyticsZoomRange, setAnalyticsZoomRange] = useState<{ start: string; end: string } | null>(null)
+  // Use shared zoom range for both tabs (synced)
+  const currentZoomRange = sharedZoomRange
 
   const hasVtxData = vtxRecordings.length > 0
   const hasFitData = !!fitRecordingId
@@ -55,36 +64,48 @@ export function RideDataTabs({
 
   return (
     <div className={`space-y-4 ${className}`}>
-      {/* Tab selector */}
-      <div className="flex gap-2 border-b border-border">
-        <button
-          onClick={() => handleTabChange('imu')}
-          className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-            activeTab === 'imu'
-              ? 'text-primary'
-              : 'text-muted-foreground hover:text-foreground'
-          }`}
-          disabled={isTransitioning}
-        >
-          IMU Data
-          {activeTab === 'imu' && (
-            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-          )}
-        </button>
-        <button
-          onClick={() => handleTabChange('analytics')}
-          className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-            activeTab === 'analytics'
-              ? 'text-primary'
-              : 'text-muted-foreground hover:text-foreground'
-          }`}
-          disabled={!hasFitData || isTransitioning}
-        >
-          Analytics
-          {activeTab === 'analytics' && (
-            <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-          )}
-        </button>
+      {/* Tab selector with reset zoom button */}
+      <div className="flex items-center justify-between border-b border-border">
+        <div className="flex gap-2">
+          <button
+            onClick={() => handleTabChange('imu')}
+            className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+              activeTab === 'imu'
+                ? 'text-primary'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+            disabled={isTransitioning}
+          >
+            IMU Data
+            {activeTab === 'imu' && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+            )}
+          </button>
+          <button
+            onClick={() => handleTabChange('analytics')}
+            className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+              activeTab === 'analytics'
+                ? 'text-primary'
+                : 'text-muted-foreground hover:text-foreground'
+            }`}
+            disabled={!hasFitData || isTransitioning}
+          >
+            Analytics
+            {activeTab === 'analytics' && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+            )}
+          </button>
+        </div>
+
+        {/* Reset zoom button */}
+        {currentZoomRange && sharedZoomChange && (
+          <button
+            onClick={() => sharedZoomChange(null)}
+            className="px-3 py-1.5 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-950/30 rounded-md transition-colors"
+          >
+            Reset Zoom
+          </button>
+        )}
       </div>
 
       {/* Tab content - Only mount active tab to prevent race conditions */}
@@ -116,8 +137,9 @@ export function RideDataTabs({
                 rideId={rideId}
                 recordings={vtxRecordings}
                 highlightTime={highlightTime}
-                zoomRange={imuZoomRange}
-                onZoomChange={setImuZoomRange}
+                zoomRange={currentZoomRange}
+                onZoomChange={sharedZoomChange}
+                onCoverageUpdate={onCoverageUpdate}
               />
             ) : (
               <div className="h-[400px] bg-muted rounded-lg flex items-center justify-center">
@@ -140,8 +162,8 @@ export function RideDataTabs({
                 rideId={rideId}
                 fitRecordingId={fitRecordingId}
                 highlightTime={highlightTime}
-                zoomRange={analyticsZoomRange}
-                onZoomChange={setAnalyticsZoomRange}
+                zoomRange={currentZoomRange}
+                onZoomChange={sharedZoomChange}
               />
             ) : (
               <div className="h-[400px] bg-muted rounded-lg flex items-center justify-center">

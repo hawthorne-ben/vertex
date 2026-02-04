@@ -11,6 +11,9 @@ interface ElevationProfileProps {
   }>
   onHover?: (index: number | null) => void
   highlightIndex?: number | null // Externally controlled highlight
+  highlightTime?: number | null // Unix timestamp in seconds
+  zoomRange?: { start: string; end: string } | null
+  onZoom?: (start: string, end: string) => void
   syncKey?: string
   resetTrigger?: number
   className?: string
@@ -20,18 +23,21 @@ export function ElevationProfile({
   samples,
   onHover,
   highlightIndex,
+  highlightTime,
+  zoomRange,
+  onZoom,
   syncKey = 'ride-charts',
   resetTrigger = 0,
   className = ''
 }: ElevationProfileProps) {
   const chartRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
-  const highlightIndexRef = useRef<number | null>(highlightIndex || null)
+  const highlightTimeRef = useRef<number | null>(highlightTime || null)
 
   // Keep ref in sync
   useEffect(() => {
-    highlightIndexRef.current = highlightIndex || null
-  }, [highlightIndex])
+    highlightTimeRef.current = highlightTime || null
+  }, [highlightTime])
 
   useEffect(() => {
     if (!chartRef.current || samples.length === 0) return
@@ -119,30 +125,44 @@ export function ElevationProfile({
       }
     ]
 
-    // Plugin to draw vertical highlight line
+    // Plugin to draw vertical highlight line (using time, not index)
     const highlightPlugin: uPlot.Plugin = {
       hooks: {
         draw: [
           (u) => {
-            const idx = highlightIndexRef.current
-            if (idx === null || idx === undefined) return
+            const ht = highlightTimeRef.current
+            if (ht === null || ht === undefined) return
 
-            const data = u.data
-            if (!data || !data[0] || data[0].length === 0) return
-            if (idx < 0 || idx >= data[0].length) return
+            const ctx = u.ctx
+            const plotData = u.data
+            if (!plotData || !plotData[0] || plotData[0].length === 0) return
 
-            const timestamps = data[0] as number[]
-            const x = Math.round(u.valToPos(timestamps[idx], 'x', true))
+            const timestamps = plotData[0] as number[]
+
+            // Find closest timestamp
+            let closestIdx = 0
+            let minDiff = Math.abs(timestamps[0] - ht)
+            for (let i = 1; i < timestamps.length; i++) {
+              const diff = Math.abs(timestamps[i] - ht)
+              if (diff < minDiff) {
+                minDiff = diff
+                closestIdx = i
+              }
+            }
+
+            // Get pixel position
+            const x = u.valToPos(timestamps[closestIdx], 'x', true)
+            const plotTop = u.bbox.top
+            const plotBottom = u.bbox.top + u.bbox.height
 
             // Draw vertical line
-            const ctx = u.ctx
             ctx.save()
-            ctx.strokeStyle = '#3b82f6'
+            ctx.strokeStyle = 'rgba(59, 130, 246, 0.6)' // Blue
             ctx.lineWidth = 2
             ctx.setLineDash([5, 5])
             ctx.beginPath()
-            ctx.moveTo(x, u.bbox.top)
-            ctx.lineTo(x, u.bbox.top + u.bbox.height)
+            ctx.moveTo(x, plotTop)
+            ctx.lineTo(x, plotBottom)
             ctx.stroke()
             ctx.restore()
           }
@@ -154,10 +174,54 @@ export function ElevationProfile({
       width: chartRef.current.clientWidth,
       height: 250,
       padding: [8, 8, 0, 0],
-      plugins: [highlightPlugin],
+      plugins: [
+        highlightPlugin,
+        // Zoom plugin - only include if onZoom callback is provided
+        ...(onZoom ? [{
+          hooks: {
+            setSelect: [
+              (u: uPlot) => {
+                // setSelect is called when user completes a drag selection
+                const select = u.select
+                if (!select || select.left == null || select.width == null) return
+
+                // Ignore if selection is being cleared (width is 0)
+                if (select.width === 0) return
+
+                // Convert pixel coordinates to data values
+                const left = select.left
+                const width = select.width
+                const startVal = u.posToVal(left, 'x')
+                const endVal = u.posToVal(left + width, 'x')
+
+                const start = new Date(startVal * 1000).toISOString()
+                const end = new Date(endVal * 1000).toISOString()
+
+                // Clear selection (this will trigger setSelect again but width will be 0)
+                u.setSelect({ left: 0, top: 0, width: 0, height: 0 })
+
+                // Trigger zoom callback
+                onZoom(start, end)
+              }
+            ]
+          }
+        }] : [])
+      ],
       series,
+      cursor: {
+        sync: { key: syncKey },
+        drag: { x: true, y: false },
+      },
       scales: {
-        x: {},
+        x: {
+          // If zoomed, use the zoom range; otherwise let it auto-fit
+          ...(zoomRange ? {
+            range: [
+              new Date(zoomRange.start).getTime() / 1000,
+              new Date(zoomRange.end).getTime() / 1000
+            ]
+          } : {})
+        },
         elevation: {
           auto: true,
           range: (u, dataMin, dataMax) => {
@@ -249,10 +313,9 @@ export function ElevationProfile({
     }
   }, [samples, onHover, syncKey])
 
-  // Trigger redraw only when highlightIndex is actually set (not null/undefined)
+  // Trigger redraw when highlightTime changes
   useEffect(() => {
-    if (highlightIndex !== null && highlightIndex !== undefined && plotRef.current) {
-      // Use RAF to batch redraws across multiple charts
+    if (plotRef.current && highlightTime !== null && highlightTime !== undefined) {
       requestAnimationFrame(() => {
         if (plotRef.current) {
           const currentData = plotRef.current.data
@@ -260,7 +323,7 @@ export function ElevationProfile({
         }
       })
     }
-  }, [highlightIndex])
+  }, [highlightTime])
 
   if (samples.length === 0 || !samples.some(s => s.altitude !== null)) {
     return (

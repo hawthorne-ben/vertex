@@ -17,6 +17,7 @@ export interface IMUSensorChartProps {
   highlightTime?: number | null
   zoomRange?: { start: string; end: string } | null
   onZoomChange?: (range: { start: string; end: string } | null) => void
+  onCoverageUpdate?: (coverage: Array<{ start: number; end: number }>) => void  // Callback when coverage data is loaded
   className?: string
   initialSamples?: IMUSample[]  // Optional: server-fetched samples (recording detail page)
   originalCount?: number  // Optional: total sample count when initialSamples provided
@@ -33,6 +34,7 @@ export function IMUSensorChart({
   highlightTime,
   zoomRange = null,
   onZoomChange,
+  onCoverageUpdate,
   className = '',
   initialSamples,
   originalCount: propOriginalCount
@@ -44,7 +46,7 @@ export function IMUSensorChart({
   // initialSamples contain ALL sensor data (accel, gyro, orientation), so we can use them for all data types
   const shouldSkip = !!initialSamples
 
-  const { samples: fetchedSamples, loading: fetchedLoading, error: fetchedError, originalCount: fetchedOriginalCount } = useIMUData({
+  const { samples: fetchedSamples, loading: fetchedLoading, error: fetchedError, originalCount: fetchedOriginalCount, coverageRanges } = useIMUData({
     rideId,
     recordings,
     dataType,
@@ -57,6 +59,13 @@ export function IMUSensorChart({
   const loading = initialSamples ? false : fetchedLoading
   const error = initialSamples ? null : fetchedError
   const originalCount = initialSamples ? (propOriginalCount ?? 0) : fetchedOriginalCount
+
+  // Notify parent when coverage data is available
+  useEffect(() => {
+    if (onCoverageUpdate && coverageRanges.length > 0) {
+      onCoverageUpdate(coverageRanges)
+    }
+  }, [coverageRanges, onCoverageUpdate])
 
   // Process data for chart (gap detection, format conversion)
   const chartData = useMemo((): { data: uPlot.AlignedData; series: uPlot.Series[]; yAxisLabel: string; scales: Record<string, uPlot.Scale> } => {
@@ -162,7 +171,15 @@ export function IMUSensorChart({
 
     // Build scales for proper axis configuration
     const scales: Record<string, uPlot.Scale> = {
-      x: {},
+      x: {
+        // If zoomed, use the zoom range; otherwise let it auto-fit
+        ...(zoomRange ? {
+          range: [
+            new Date(zoomRange.start).getTime() / 1000,
+            new Date(zoomRange.end).getTime() / 1000
+          ]
+        } : {})
+      },
       y: {
         auto: true,
         range: (u, dataMin, dataMax) => {
@@ -176,7 +193,7 @@ export function IMUSensorChart({
     }
 
     return { data, series, yAxisLabel, scales }
-  }, [samples, dataType])
+  }, [samples, dataType, zoomRange])
 
   // Calculate stats
   const stats = useMemo(() => {
@@ -263,15 +280,6 @@ export function IMUSensorChart({
         </div>
 
         {loading && <span className="text-xs text-muted-foreground animate-pulse">Loading...</span>}
-
-        {zoomRange && onZoomChange && (
-          <button
-            onClick={() => onZoomChange(null)}
-            className="ml-auto px-3 py-2 text-sm rounded-md bg-muted text-foreground hover:bg-muted/80 border border-border"
-          >
-            Reset Zoom
-          </button>
-        )}
       </div>
 
       {/* Chart */}
@@ -310,7 +318,6 @@ export function IMUSensorChart({
             unit={chartData.yAxisLabel}
             highlightTime={highlightTime}
             onZoom={onZoomChange ? (start, end) => onZoomChange({ start, end }) : undefined}
-            zoomRange={zoomRange}
             syncKey="imu-sensor-sync"
           />
         )}

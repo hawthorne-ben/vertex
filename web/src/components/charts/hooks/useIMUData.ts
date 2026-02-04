@@ -35,6 +35,7 @@ export interface UseIMUDataResult {
   loading: boolean
   error: string | null
   originalCount: number
+  coverageRanges: Array<{ start: number; end: number }>
 }
 
 /**
@@ -55,6 +56,7 @@ export function useIMUData({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [originalCount, setOriginalCount] = useState(0)
+  const [coverageRanges, setCoverageRanges] = useState<Array<{ start: number; end: number }>>([])
 
   // Stable recording IDs to prevent unnecessary refetches
   const recordingIds = useMemo(() =>
@@ -85,14 +87,14 @@ export function useIMUData({
         // Use ride-level endpoint if rideId provided (preferred)
         if (rideId) {
           const params = new URLSearchParams()
+          params.set('downsample', 'lttb')
+
+          // If zoomed, fetch only the selected range (server determines resolution)
           if (timeRange) {
             params.set('start', timeRange.start)
             params.set('end', timeRange.end)
-            params.set('resolution', '5000')  // Higher resolution for zoomed views
-          } else {
-            params.set('resolution', '2000')  // Lower resolution for full view
           }
-          params.set('downsample', 'lttb')
+          // Otherwise fetch full ride (server auto-downsamples to ~1000 points)
 
           const url = params.toString()
             ? `/api/rides/${rideId}/vtx-samples?${params}`
@@ -106,7 +108,7 @@ export function useIMUData({
             throw new Error(`Failed to fetch data: ${response.statusText}`)
           }
 
-          const { samples: fetchedSamples, metadata } = await response.json()
+          const { samples: fetchedSamples, metadata, coverage } = await response.json()
 
           // Transform samples to consistent format
           const transformed = fetchedSamples.map((s: any) => ({
@@ -124,6 +126,7 @@ export function useIMUData({
 
           setSamples(transformed)
           setOriginalCount(metadata?.total_samples || transformed.length)
+          setCoverageRanges(coverage || [])
         } else {
           // Legacy: Fetch from individual recording endpoints
           const allSamples: IMUSample[] = []
@@ -222,7 +225,8 @@ export function useIMUData({
     }
 
     fetchData()
-  }, [rideId, recordingIds, dataType, timeRange, skip, recordings])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rideId, recordingIds, dataType, timeRange, skip])
 
-  return { samples, loading, error, originalCount }
+  return { samples, loading, error, originalCount, coverageRanges }
 }
