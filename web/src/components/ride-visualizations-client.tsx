@@ -9,6 +9,7 @@ import { Card, CardHeader, CardTitle, CardContent } from './ui/card'
 import { MapErrorBoundary } from './map-error-boundary'
 import { getVtxTimeRanges } from '@/lib/sync/fit-vtx-sync'
 import { useRideSamples } from './hooks/useRideSamples'
+import { useDerivedMetric } from './charts/hooks/useDerivedMetric'
 
 interface VTXRecordingWithSamples {
   id: string
@@ -42,9 +43,21 @@ export function RideVisualizationsClient({
   const [selectedTime, setSelectedTime] = useState<number | null>(null)
   const [imuCoverageRanges, setImuCoverageRanges] = useState<Array<{ start: number; end: number }>>([])
   const [sharedZoomRange, setSharedZoomRange] = useState<{ start: string; end: string } | null>(null)
+  const [activeDataTab, setActiveDataTab] = useState<'imu' | 'analytics'>('imu')
 
   // Fetch ride samples once - shared between map and charts
   const { samples, loading, error } = useRideSamples(rideId, fitRecordingId)
+
+  // Fetch pedaling efficiency data for map overlay (always fetch full ride for map)
+  const {
+    samples: efficiencySamples,
+    loading: efficiencyLoading
+  } = useDerivedMetric({
+    rideId,
+    metric: 'pedalingEfficiency',
+    timeRange: null, // Always fetch full ride for map
+    fitRecordingId
+  })
 
   // Calculate IMU time ranges for GPS color coding
   // Use coverage ranges from VTX data if available, otherwise fall back to full recording ranges
@@ -81,6 +94,8 @@ export function RideVisualizationsClient({
               samples={samples}
               loading={loading}
               error={error}
+              mapMode={activeDataTab === 'analytics' ? 'efficiency' : 'vtx'}
+              efficiencySamples={efficiencySamples}
             />
           </MapErrorBoundary>
         ) : (
@@ -113,6 +128,7 @@ export function RideVisualizationsClient({
             onCoverageUpdate={setImuCoverageRanges}
             zoomRange={sharedZoomRange}
             onZoomChange={setSharedZoomRange}
+            onTabChange={setActiveDataTab}
           />
         </div>
       )}

@@ -23,6 +23,11 @@ interface Sample {
   speed_ms?: number | null
 }
 
+interface EfficiencySample {
+  timestamp: string
+  value: number
+}
+
 interface RideMapClientProps {
   rideId: string
   fitRecordingId: string | null
@@ -31,9 +36,21 @@ interface RideMapClientProps {
   samples: Sample[]
   loading: boolean
   error: string | null
+  mapMode?: 'vtx' | 'efficiency' // Map overlay mode
+  efficiencySamples?: EfficiencySample[] // Pedaling efficiency data for heatmap
 }
 
-export function RideMapClient({ rideId, fitRecordingId, highlightTime, imuTimeRanges = [], samples, loading, error }: RideMapClientProps) {
+export function RideMapClient({
+  rideId,
+  fitRecordingId,
+  highlightTime,
+  imuTimeRanges = [],
+  samples,
+  loading,
+  error,
+  mapMode = 'vtx',
+  efficiencySamples = []
+}: RideMapClientProps) {
 
   // Process samples into GPS track format
   const gpsTrack = useMemo(() => {
@@ -88,7 +105,8 @@ export function RideMapClient({ rideId, fitRecordingId, highlightTime, imuTimeRa
       gpsTrack={gpsTrack}
       hoverIndex={highlightIndex !== null && highlightIndex !== -1 ? highlightIndex : null}
       className="w-full"
-      imuTimeRanges={imuTimeRanges}
+      imuTimeRanges={mapMode === 'vtx' ? imuTimeRanges : []}
+      efficiencySamples={mapMode === 'efficiency' ? efficiencySamples : undefined}
     />
   )
 }

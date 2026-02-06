@@ -67,6 +67,42 @@ const startIcon = createHomeIcon('#22c55e') // Green for start
 const endIcon = createHomeIcon('#ef4444')   // Red for end
 const hoverIcon = createHoverIcon()         // Blue pulsing marker
 
+// Helper: Map efficiency value (0-100%) to simple 3-color scheme
+const getEfficiencyColor = (efficiency: number): string => {
+  if (efficiency >= 60) {
+    return '#22c55e' // Green (good)
+  } else if (efficiency >= 30) {
+    return '#eab308' // Yellow (moderate)
+  } else {
+    return '#ef4444' // Red (poor)
+  }
+}
+
+// Helper: Calculate average efficiency for a time range
+const getAverageEfficiency = (
+  startTime: number,
+  endTime: number,
+  samples: EfficiencySample[]
+): number | null => {
+  if (samples.length === 0) return null
+
+  let sum = 0
+  let count = 0
+
+  // Find all samples within the time range
+  for (const sample of samples) {
+    const sampleTime = new Date(sample.timestamp).getTime()
+    if (sampleTime >= startTime && sampleTime <= endTime) {
+      sum += sample.value
+      count++
+    }
+    // Stop early if we've passed the end time (samples are sorted)
+    if (sampleTime > endTime) break
+  }
+
+  return count > 0 ? sum / count : null
+}
+
 interface GPSPoint {
   lat: number
   lon: number
@@ -82,6 +118,11 @@ interface IMUTimeRange {
   end: number // Unix timestamp in ms
 }
 
+interface EfficiencySample {
+  timestamp: string
+  value: number
+}
+
 interface RideMapProps {
   gpsTrack: GPSPoint[]
   hoverIndex?: number | null
@@ -89,6 +130,7 @@ interface RideMapProps {
   colorBy?: 'speed' | 'elevation' | 'none'
   className?: string
   imuTimeRanges?: IMUTimeRange[] // Time ranges where IMU data exists
+  efficiencySamples?: EfficiencySample[] // Pedaling efficiency samples for heatmap overlay
 }
 
 // Component to fit bounds only on initial mount
@@ -114,12 +156,14 @@ function DynamicPolylines({
   fullTrack,
   imuTimeRanges,
   defaultColor,
-  imuColor
+  imuColor,
+  efficiencySamples
 }: {
   fullTrack: GPSPoint[]
   imuTimeRanges: IMUTimeRange[]
   defaultColor: string
   imuColor: string
+  efficiencySamples?: EfficiencySample[]
 }) {
   const map = useMap()
   const [zoom, setZoom] = useState(map.getZoom())
@@ -155,52 +199,145 @@ function DynamicPolylines({
     return simplifyGPSTrack(fullTrack, epsilon).simplified
   }, [fullTrack, zoom])
 
-  // Split into IMU segments
-  const segments = useMemo(() => {
-    const hasIMUData = (timestamp: string): boolean => {
-      if (imuTimeRanges.length === 0) return false
-      const pointTime = new Date(timestamp).getTime()
-      return imuTimeRanges.some(range => pointTime >= range.start && pointTime <= range.end)
-    }
+  // Build segments based on overlay mode
+  const { baseSegment, overlaySegments } = useMemo(() => {
+    const allPositions: [number, number][] = simplifiedTrack.map(p => [p.lat, p.lon])
 
-    const segs: { positions: [number, number][]; hasIMU: boolean }[] = []
-    let currentSegment: [number, number][] = []
-    let currentHasIMU = false
+    // Mode 1: Efficiency overlay - show full route + colored efficiency segments
+    if (efficiencySamples && efficiencySamples.length > 0) {
+      const overlays: { positions: [number, number][]; color: string }[] = []
 
-    simplifiedTrack.forEach((point, idx) => {
-      const pointHasIMU = point.timestamp ? hasIMUData(point.timestamp) : false
+      let currentSegment: [number, number][] = []
+      let currentColor: string | null = null
 
-      if (idx === 0) {
-        currentHasIMU = pointHasIMU
-        currentSegment.push([point.lat, point.lon])
-      } else if (pointHasIMU === currentHasIMU) {
-        currentSegment.push([point.lat, point.lon])
-      } else {
-        if (currentSegment.length > 0) {
-          segs.push({ positions: [...currentSegment], hasIMU: currentHasIMU })
+      for (let idx = 0; idx < simplifiedTrack.length; idx++) {
+        const point = simplifiedTrack[idx]
+        if (!point.timestamp) continue
+
+        const pointTime = new Date(point.timestamp).getTime()
+
+        // Calculate average efficiency in a 5-second window around this point
+        const windowStart = pointTime - 2500
+        const windowEnd = pointTime + 2500
+        const avgEfficiency = getAverageEfficiency(windowStart, windowEnd, efficiencySamples)
+
+        if (avgEfficiency !== null) {
+          const pointColor = getEfficiencyColor(avgEfficiency)
+
+          // Same color as current segment - add to it
+          if (pointColor === currentColor) {
+            currentSegment.push([point.lat, point.lon])
+          } else {
+            // Color changed - save current segment and start new one
+            if (currentSegment.length > 1) {
+              overlays.push({
+                positions: [...currentSegment],
+                color: currentColor!
+              })
+            }
+            // Start new segment (with previous point for continuity if available)
+            currentSegment = currentSegment.length > 0
+              ? [currentSegment[currentSegment.length - 1], [point.lat, point.lon]]
+              : [[point.lat, point.lon]]
+            currentColor = pointColor
+          }
+        } else {
+          // No efficiency data - end current segment
+          if (currentSegment.length > 1) {
+            overlays.push({
+              positions: [...currentSegment],
+              color: currentColor!
+            })
+          }
+          currentSegment = []
+          currentColor = null
         }
-        currentSegment = [[simplifiedTrack[idx - 1].lat, simplifiedTrack[idx - 1].lon], [point.lat, point.lon]]
-        currentHasIMU = pointHasIMU
       }
-    })
 
-    if (currentSegment.length > 0) {
-      segs.push({ positions: currentSegment, hasIMU: currentHasIMU })
+      // Save final segment
+      if (currentSegment.length > 1 && currentColor) {
+        overlays.push({
+          positions: currentSegment,
+          color: currentColor
+        })
+      }
+
+      return {
+        baseSegment: { positions: allPositions, color: defaultColor },
+        overlaySegments: overlays
+      }
     }
 
-    return segs
-  }, [simplifiedTrack, imuTimeRanges])
+    // Mode 2: VTX overlay - show full route + green IMU segments
+    if (imuTimeRanges.length > 0) {
+      const overlays: { positions: [number, number][]; color: string }[] = []
+      let currentSegment: GPSPoint[] = []
+      let inIMURange = false
+
+      simplifiedTrack.forEach((point) => {
+        if (!point.timestamp) return
+
+        const pointTime = new Date(point.timestamp).getTime()
+        const hasIMU = imuTimeRanges.some(range => pointTime >= range.start && pointTime <= range.end)
+
+        if (hasIMU) {
+          currentSegment.push(point)
+          inIMURange = true
+        } else {
+          if (inIMURange && currentSegment.length > 0) {
+            overlays.push({
+              positions: currentSegment.map(p => [p.lat, p.lon]),
+              color: imuColor
+            })
+            currentSegment = []
+          }
+          inIMURange = false
+        }
+      })
+
+      // Save final segment
+      if (currentSegment.length > 0) {
+        overlays.push({
+          positions: currentSegment.map(p => [p.lat, p.lon]),
+          color: imuColor
+        })
+      }
+
+      return {
+        baseSegment: { positions: allPositions, color: defaultColor },
+        overlaySegments: overlays
+      }
+    }
+
+    // No overlay - just show default route
+    return {
+      baseSegment: { positions: allPositions, color: defaultColor },
+      overlaySegments: []
+    }
+  }, [simplifiedTrack, imuTimeRanges, efficiencySamples, defaultColor, imuColor])
 
   return (
     <>
-      {segments.map((segment, idx) => (
+      {/* Base layer - always shows full route */}
+      <Polyline
+        key={`base-zoom-${zoom}`}
+        positions={baseSegment.positions}
+        pathOptions={{
+          color: baseSegment.color,
+          weight: 3,
+          opacity: 0.8,
+        }}
+      />
+
+      {/* Overlay layer - shows colored segments on top */}
+      {overlaySegments.map((segment, idx) => (
         <Polyline
-          key={`segment-${idx}-zoom-${zoom}`}
+          key={`overlay-${idx}-zoom-${zoom}`}
           positions={segment.positions}
           pathOptions={{
-            color: segment.hasIMU ? imuColor : defaultColor,
-            weight: 3,
-            opacity: 0.8,
+            color: segment.color,
+            weight: 4, // Slightly thicker to show on top
+            opacity: 0.9,
           }}
         />
       ))}
@@ -214,7 +351,8 @@ export function RideMap({
   onPointClick,
   colorBy = 'speed',
   className = '',
-  imuTimeRanges = []
+  imuTimeRanges = [],
+  efficiencySamples
 }: RideMapProps) {
   const [mounted, setMounted] = useState(false)
   const [isDark, setIsDark] = useState(false)
@@ -336,6 +474,7 @@ export function RideMap({
           imuTimeRanges={imuTimeRanges}
           defaultColor={defaultRouteColor}
           imuColor={imuRouteColor}
+          efficiencySamples={efficiencySamples}
         />
 
         {/* Hover marker - zIndex 1000 */}

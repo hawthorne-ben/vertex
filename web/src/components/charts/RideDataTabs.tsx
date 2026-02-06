@@ -28,6 +28,9 @@ export interface RideDataTabsProps {
   zoomRange?: { start: string; end: string } | null
   onZoomChange?: (range: { start: string; end: string } | null) => void
 
+  // Tab change callback (for map overlay sync)
+  onTabChange?: (tab: 'imu' | 'analytics') => void
+
   className?: string
 }
 
@@ -43,6 +46,7 @@ export function RideDataTabs({
   onCoverageUpdate,
   zoomRange: sharedZoomRange,
   onZoomChange: sharedZoomChange,
+  onTabChange,
   className = ''
 }: RideDataTabsProps) {
   const [activeTab, setActiveTab] = useState<'imu' | 'analytics'>('imu')
@@ -58,6 +62,7 @@ export function RideDataTabs({
     if (tab === activeTab) return
     setIsTransitioning(true)
     setActiveTab(tab)
+    onTabChange?.(tab) // Notify parent for map overlay sync
     // Clear transition state after animation
     setTimeout(() => setIsTransitioning(false), 100)
   }
