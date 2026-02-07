@@ -3,7 +3,7 @@
  * Separates riding periods from stationary periods based on speed thresholds
  */
 
-import { formatDurationFromSeconds } from '@/lib/utils/format-duration'
+import { formatDurationFromSeconds } from '@/lib/utils/formatting'
 
 export interface FitDataPoint {
   timestamp: string

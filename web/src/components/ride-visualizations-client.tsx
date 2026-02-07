@@ -19,7 +19,11 @@ interface VTXRecordingWithSamples {
   duration_ms: number
   file_size_bytes: number
   status: string
-  samples: any[] | null
+  samples: Array<{
+    id: string
+    timestamp: string
+    [key: string]: unknown
+  }> | null
   originalCount: number
 }
 

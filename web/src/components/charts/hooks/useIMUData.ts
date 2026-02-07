@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { useAuthFetch } from '@/hooks/useAuthFetch'
 
 export type IMUDataType = 'orientation' | 'accel' | 'gyro' | 'smoothedAccel' | 'smoothedGyro' | 'trueOrientation'
 
@@ -57,6 +57,7 @@ export function useIMUData({
   const [error, setError] = useState<string | null>(null)
   const [originalCount, setOriginalCount] = useState(0)
   const [coverageRanges, setCoverageRanges] = useState<Array<{ start: number; end: number }>>([])
+  const { authFetch } = useAuthFetch()
 
   // Stable recording IDs to prevent unnecessary refetches
   const recordingIds = useMemo(() =>
@@ -77,13 +78,6 @@ export function useIMUData({
       setError(null)
 
       try {
-        const supabase = createClient()
-        const { data: { session } } = await supabase.auth.getSession()
-
-        if (!session) {
-          throw new Error('No session found')
-        }
-
         // Use ride-level endpoint if rideId provided (preferred)
         if (rideId) {
           const params = new URLSearchParams()
@@ -100,9 +94,7 @@ export function useIMUData({
             ? `/api/rides/${rideId}/vtx-samples?${params}`
             : `/api/rides/${rideId}/vtx-samples`
 
-          const response = await fetch(url, {
-            headers: { 'Authorization': `Bearer ${session.access_token}` }
-          })
+          const response = await authFetch(url)
 
           if (!response.ok) {
             throw new Error(`Failed to fetch data: ${response.statusText}`)
@@ -168,9 +160,7 @@ export function useIMUData({
 
             const url = params.toString() ? `${endpoint}?${params}` : endpoint
 
-            const response = await fetch(url, {
-              headers: { 'Authorization': `Bearer ${session.access_token}` }
-            })
+            const response = await authFetch(url)
 
             if (!response.ok) {
               throw new Error(`Failed to fetch data: ${response.statusText}`)
@@ -226,7 +216,7 @@ export function useIMUData({
 
     fetchData()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rideId, recordingIds, dataType, timeRange, skip])
+  }, [rideId, recordingIds, dataType, timeRange, skip, authFetch])
 
   return { samples, loading, error, originalCount, coverageRanges }
 }

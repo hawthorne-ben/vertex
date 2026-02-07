@@ -6,7 +6,7 @@ import { createClient } from '@/lib/supabase/client'
 import { useToast } from '@/components/ui/toast-context'
 import { ConfirmationModal } from '@/components/ui/confirmation-modal'
 import { Tooltip } from '@/components/ui/tooltip'
-import { formatDurationFromSeconds } from '@/lib/utils/format-duration'
+import { formatDurationFromSeconds } from '@/lib/utils/formatting'
 
 interface FitFile {
   id: string

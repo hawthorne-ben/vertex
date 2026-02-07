@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { UPlotBase } from './UPlotBase'
 import { useIMUData, IMUDataType, IMUSample } from './hooks/useIMUData'
-import uPlot from 'uplot'
+import { processIMUChartData, calculateIMUStats } from '@/lib/charts/processing'
 
 export interface VTXRecording {
   id: string
@@ -67,171 +67,14 @@ export function IMUSensorChart({
     }
   }, [coverageRanges, onCoverageUpdate])
 
-  // Process data for chart (gap detection, format conversion)
-  const chartData = useMemo((): { data: uPlot.AlignedData; series: uPlot.Series[]; yAxisLabel: string; scales: Record<string, uPlot.Scale> } => {
-    if (!samples || samples.length === 0) {
-      // Return minimal valid data structure that won't be rendered
-      return {
-        data: [[], []] as uPlot.AlignedData,
-        series: [{}],
-        yAxisLabel: '',
-        scales: { x: {}, y: {} }
-      }
-    }
-
-    // Detect gaps
-    const firstTime = new Date(samples[0].timestamp).getTime()
-    const lastTime = new Date(samples[samples.length - 1].timestamp).getTime()
-    const totalDuration = lastTime - firstTime
-    const expectedSpacing = totalDuration / samples.length
-    const GAP_THRESHOLD_MS = Math.max(5000, expectedSpacing * 10)
-
-    const samplesWithGaps: (IMUSample | null)[] = []
-    for (let i = 0; i < samples.length; i++) {
-      samplesWithGaps.push(samples[i])
-      if (i < samples.length - 1) {
-        const gap = new Date(samples[i + 1].timestamp).getTime() - new Date(samples[i].timestamp).getTime()
-        if (gap > GAP_THRESHOLD_MS) {
-          samplesWithGaps.push(null)
-        }
-      }
-    }
-
-    // Convert to uPlot format
-    const timestamps: number[] = []
-    const finalSamples: (IMUSample | null)[] = []
-
-    for (const sample of samplesWithGaps) {
-      if (sample) {
-        timestamps.push(new Date(sample.timestamp).getTime() / 1000)
-        finalSamples.push(sample)
-      } else if (timestamps.length > 0) {
-        timestamps.push(timestamps[timestamps.length - 1] + 0.001)
-        finalSamples.push(null)
-      }
-    }
-
-    // Build data arrays based on type
-    let data: uPlot.AlignedData
-    let series: uPlot.Series[]
-    let yAxisLabel: string
-
-    switch (dataType) {
-      case 'orientation':
-      case 'trueOrientation':
-        data = [
-          timestamps,
-          finalSamples.map(s => s?.roll ?? null),
-          finalSamples.map(s => s?.pitch ?? null),
-          finalSamples.map(s => s?.yaw ?? null)
-        ]
-        series = [
-          {},
-          { label: 'Roll', stroke: 'hsl(220, 70%, 50%)', width: 2, spanGaps: false, points: { show: false } },
-          { label: 'Pitch', stroke: 'hsl(145, 60%, 45%)', width: 2, spanGaps: false, points: { show: false } },
-          { label: 'Yaw', stroke: 'hsl(10, 70%, 50%)', width: 2, spanGaps: false, points: { show: false } }
-        ]
-        yAxisLabel = '°'
-        break
-
-      case 'accel':
-      case 'smoothedAccel':
-        data = [
-          timestamps,
-          finalSamples.map(s => s?.accel_x ?? null),
-          finalSamples.map(s => s?.accel_y ?? null),
-          finalSamples.map(s => s?.accel_z ?? null)
-        ]
-        series = [
-          {},
-          { label: 'X', stroke: 'hsl(10, 49%, 53%)', width: 2, spanGaps: false, points: { show: false } },
-          { label: 'Y', stroke: 'hsl(145, 50%, 54%)', width: 2, spanGaps: false, points: { show: false } },
-          { label: 'Z', stroke: 'hsl(205, 60%, 71%)', width: 2, spanGaps: false, points: { show: false } }
-        ]
-        yAxisLabel = 'm/s²'
-        break
-
-      case 'gyro':
-      case 'smoothedGyro':
-        data = [
-          timestamps,
-          finalSamples.map(s => s?.gyro_x ?? null),
-          finalSamples.map(s => s?.gyro_y ?? null),
-          finalSamples.map(s => s?.gyro_z ?? null)
-        ]
-        series = [
-          {},
-          { label: 'X', stroke: 'hsl(10, 49%, 53%)', width: 2, spanGaps: false, points: { show: false } },
-          { label: 'Y', stroke: 'hsl(145, 50%, 54%)', width: 2, spanGaps: false, points: { show: false } },
-          { label: 'Z', stroke: 'hsl(205, 60%, 71%)', width: 2, spanGaps: false, points: { show: false } }
-        ]
-        yAxisLabel = 'rad/s'
-        break
-    }
-
-    // Build scales for proper axis configuration
-    const scales: Record<string, uPlot.Scale> = {
-      x: {
-        // If zoomed, use the zoom range; otherwise let it auto-fit
-        ...(zoomRange ? {
-          range: [
-            new Date(zoomRange.start).getTime() / 1000,
-            new Date(zoomRange.end).getTime() / 1000
-          ]
-        } : {})
-      },
-      y: {
-        auto: true,
-        range: (u, dataMin, dataMax) => {
-          if (dataMin === dataMax) {
-            return [dataMin - 1, dataMax + 1]
-          }
-          const padding = (dataMax - dataMin) * 0.1
-          return [dataMin - padding, dataMax + padding]
-        }
-      }
-    }
-
-    return { data, series, yAxisLabel, scales }
+  // Process data for chart using pure function
+  const chartData = useMemo(() => {
+    return processIMUChartData(samples, dataType, zoomRange)
   }, [samples, dataType, zoomRange])
 
-  // Calculate stats
+  // Calculate stats using pure function
   const stats = useMemo(() => {
-    if (samples.length === 0) return []
-
-    const getValues = () => {
-      switch (dataType) {
-        case 'orientation':
-        case 'trueOrientation':
-          return {
-            'Roll': samples.map(s => s.roll ?? 0),
-            'Pitch': samples.map(s => s.pitch ?? 0),
-            'Yaw': samples.map(s => s.yaw ?? 0)
-          }
-        case 'accel':
-        case 'smoothedAccel':
-          return {
-            'X': samples.map(s => s.accel_x),
-            'Y': samples.map(s => s.accel_y),
-            'Z': samples.map(s => s.accel_z)
-          }
-        case 'gyro':
-        case 'smoothedGyro':
-          return {
-            'X': samples.map(s => s.gyro_x),
-            'Y': samples.map(s => s.gyro_y),
-            'Z': samples.map(s => s.gyro_z)
-          }
-      }
-    }
-
-    const values = getValues()
-    return Object.entries(values).map(([axis, vals]) => ({
-      axis,
-      min: Math.min(...vals),
-      max: Math.max(...vals),
-      mean: vals.reduce((a: number, b: number) => a + b, 0) / vals.length
-    }))
+    return calculateIMUStats(samples, dataType)
   }, [samples, dataType])
 
   const getTitle = () => {

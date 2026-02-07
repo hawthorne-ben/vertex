@@ -1,6 +1,6 @@
 'use client'
 
-import { formatDurationFromTimestamps } from '@/lib/utils/format-duration'
+import { formatDurationFromTimestamps } from '@/lib/utils/formatting'
 
 interface DataDetailHeaderProps {
   startTime: string

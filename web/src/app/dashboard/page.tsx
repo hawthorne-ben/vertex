@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { redirect } from 'next/navigation'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { createClient } from '@/lib/supabase/server'
-import { formatDurationFromTimestamps as formatDurationFromTimestampsUtil, formatDurationFromSeconds } from '@/lib/utils/format-duration'
+import { formatDurationFromTimestamps as formatDurationFromTimestampsUtil, formatDurationFromSeconds } from '@/lib/utils/formatting'
 
 export default async function DashboardPage() {
   const supabase = await createClient()

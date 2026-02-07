@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { useAuthFetch } from '@/hooks/useAuthFetch'
 
 export type DerivedMetricType = 'pedalingEfficiency' // | 'corneringScore' | 'jumpHeight' (future)
 
@@ -64,6 +64,7 @@ export function useDerivedMetric({
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [metadata, setMetadata] = useState<any | null>(null)
+  const { authFetch } = useAuthFetch()
 
   useEffect(() => {
     let pollingInterval: NodeJS.Timeout | null = null
@@ -73,13 +74,6 @@ export function useDerivedMetric({
       setError(null)
 
       try {
-        const supabase = createClient()
-        const { data: { session } } = await supabase.auth.getSession()
-
-        if (!session) {
-          throw new Error('Not authenticated')
-        }
-
         // Build URL based on metric type
         let url: string
         switch (metric) {
@@ -102,9 +96,7 @@ export function useDerivedMetric({
             throw new Error(`Unknown metric: ${metric}`)
         }
 
-        const response = await fetch(url, {
-          headers: { 'Authorization': `Bearer ${session.access_token}` }
-        })
+        const response = await authFetch(url)
 
         const data: ApiResponse = await response.json()
 
@@ -178,7 +170,7 @@ export function useDerivedMetric({
         clearInterval(pollingInterval)
       }
     }
-  }, [rideId, metric, timeRange, fitRecordingId])
+  }, [rideId, metric, timeRange, fitRecordingId, authFetch])
 
   return { samples, loading, error, metadata }
 }

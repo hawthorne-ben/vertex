@@ -2,7 +2,7 @@
 
 import { Button } from '@/components/ui/button'
 import { Loader2 } from 'lucide-react'
-import { formatDurationFromTimestamps } from '@/lib/utils/format-duration'
+import { formatDurationFromTimestamps } from '@/lib/utils/formatting'
 
 interface ModalFile {
   id: string

@@ -5,7 +5,7 @@ import { createClient } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { Loader2, Plus, CheckCircle } from 'lucide-react'
 import { useToast } from '@/components/ui/toast-context'
-import { formatDurationFromMilliseconds } from '@/lib/utils/format-duration'
+import { formatDurationFromMilliseconds } from '@/lib/utils/formatting'
 
 interface VtxRecording {
   id: string

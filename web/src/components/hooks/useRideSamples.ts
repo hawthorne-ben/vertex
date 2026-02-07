@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { useAuthFetch } from '@/hooks/useAuthFetch'
 
 export interface RideSample {
   timestamp: string
@@ -28,6 +28,7 @@ export function useRideSamples(rideId: string, fitRecordingId: string | null): U
   const [samples, setSamples] = useState<RideSample[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const { authFetch } = useAuthFetch()
 
   useEffect(() => {
     async function loadSamples() {
@@ -38,23 +39,7 @@ export function useRideSamples(rideId: string, fitRecordingId: string | null): U
       }
 
       try {
-        const supabase = createClient()
-        const { data: { session } } = await supabase.auth.getSession()
-
-        if (!session) {
-          setError('Not authenticated')
-          setLoading(false)
-          return
-        }
-
-        const response = await fetch(
-          `/api/rides/${rideId}/samples`,
-          {
-            headers: {
-              'Authorization': `Bearer ${session.access_token}`
-            }
-          }
-        )
+        const response = await authFetch(`/api/rides/${rideId}/samples`)
 
         if (!response.ok) {
           const errorData = await response.json()
@@ -72,7 +57,7 @@ export function useRideSamples(rideId: string, fitRecordingId: string | null): U
     }
 
     loadSamples()
-  }, [rideId, fitRecordingId])
+  }, [rideId, fitRecordingId, authFetch])
 
   return { samples, loading, error }
 }

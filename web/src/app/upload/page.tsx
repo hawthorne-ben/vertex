@@ -8,6 +8,7 @@ import { Upload, FileText } from 'lucide-react'
 import { ConfirmationModal, UploadProgressModal } from '@/components/upload-modals'
 import { TusUploader } from '@/lib/upload/tus-uploader'
 import { useToast } from '@/components/ui/toast-context'
+import { authFetch } from '@/lib/api/auth-headers'
 
 interface FileToUpload {
   file: File
@@ -140,17 +141,10 @@ export default function UploadPage() {
         }
 
         // Notify server to create DB record and parse metadata (90-100% of this file's range)
-        const { data: { session } } = await supabase.auth.getSession()
-
-        if (!session) {
-          throw new Error('Not authenticated')
-        }
-
-        const response = await fetch('/api/upload/recording', {
+        const response = await authFetch('/api/upload/recording', {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`
+            'Content-Type': 'application/json'
           },
           body: JSON.stringify({
             fileName: file?.name || 'unknown',

@@ -1,297 +1,57 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { FileText, CheckCircle2, AlertCircle, Loader2, Trash2, Clock, Download, Check } from 'lucide-react'
-import { createClient } from '@/lib/supabase/client'
+import { useState, useCallback } from 'react'
+import { FileText } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Recording } from '@/types/recordings'
+import { useSelection } from '@/hooks/useSelection'
+import { useRecordingsPolling } from '@/hooks/useRecordingsPolling'
+import { recordingsApi } from '@/lib/api/recordings'
 import { useToast } from '@/components/ui/toast-context'
 import { ConfirmationModal } from '@/components/ui/confirmation-modal'
 import { BatchOperationModal } from '@/components/ui/batch-operation-modal'
-import { Tooltip } from '@/components/ui/tooltip'
-import { formatDurationFromTimestamps } from '@/lib/utils/format-duration'
+import { RecordingCard } from '@/components/recordings/RecordingCard'
+import { RecordingsHeader } from '@/components/recordings/RecordingsHeader'
 import { generateMergedFilename } from '@/lib/vtx/filename-utils'
-
-// Client-side component for dynamic time display to prevent hydration issues
-function ProcessingTimeDisplay({ uploadedAt }: { uploadedAt: string }) {
-  const [timeElapsed, setTimeElapsed] = useState('Processing...')
-
-  useEffect(() => {
-    const updateTime = () => {
-      try {
-        const uploadTime = new Date(uploadedAt)
-        const processingTime = new Date().getTime() - uploadTime.getTime()
-        const minutes = Math.floor(processingTime / 60000)
-        const seconds = Math.floor((processingTime % 60000) / 1000)
-        setTimeElapsed(`Processing... (${minutes}m ${seconds}s)`)
-      } catch (error) {
-        setTimeElapsed('Processing...')
-      }
-    }
-
-    // Update immediately
-    updateTime()
-    
-    // Update every second
-    const interval = setInterval(updateTime, 1000)
-    
-    return () => clearInterval(interval)
-  }, [uploadedAt])
-
-  return <span className="text-info">{timeElapsed}</span>
-}
-
-// Client-side component for progress bar time display
-function ProgressTimeDisplay({ uploadedAt }: { uploadedAt: string }) {
-  const [timeElapsed, setTimeElapsed] = useState('Processing...')
-
-  useEffect(() => {
-    const updateTime = () => {
-      try {
-        const uploadTime = new Date(uploadedAt)
-        const processingTime = new Date().getTime() - uploadTime.getTime()
-        const minutes = Math.floor(processingTime / 60000)
-        setTimeElapsed(`${minutes}m elapsed`)
-      } catch (error) {
-        setTimeElapsed('Processing...')
-      }
-    }
-
-    // Update immediately
-    updateTime()
-    
-    // Update every second
-    const interval = setInterval(updateTime, 1000)
-    
-    return () => clearInterval(interval)
-  }, [uploadedAt])
-
-  return <span className="text-info">{timeElapsed}</span>
-}
-
-// Client-side component for elapsed time display (prevents hydration mismatch)
-function ElapsedTimeDisplay({ startTime }: { startTime: string }) {
-  const [elapsed, setElapsed] = useState('Downloading and parsing CSV...')
-
-  useEffect(() => {
-    const updateElapsed = () => {
-      try {
-        const start = new Date(startTime).getTime()
-        const elapsedSeconds = Math.floor((Date.now() - start) / 1000)
-        setElapsed(`Downloading and parsing CSV... (${elapsedSeconds}s elapsed)`)
-      } catch (error) {
-        setElapsed('Downloading and parsing CSV...')
-      }
-    }
-
-    // Update immediately
-    updateElapsed()
-    
-    // Update every second
-    const interval = setInterval(updateElapsed, 1000)
-    
-    return () => clearInterval(interval)
-  }, [startTime])
-
-  return <span>{elapsed}</span>
-}
-
-interface IMUDataFile {
-  id: string
-  user_id: string
-  filename: string
-  file_size_bytes: number
-  storage_path: string
-  start_time: string | null
-  end_time: string | null
-  sample_rate: number | null
-  sample_count: number | null
-  status: 'uploaded' | 'parsing' | 'ready' | 'failed'
-  error_message: string | null
-  uploaded_at: string
-  parsed_at: string | null
-  samples_processed: number | null
-  last_checkpoint_at: string | null
-  processing_started_at: string | null
-}
+import { ErrorBoundary, RecordingCardError } from '@/components/ui/error-boundary'
 
 interface DataFilesListProps {
-  files: IMUDataFile[]
+  files: Recording[]
   onDataChange?: () => void
-  onSelectionChange?: (selectedIds: Set<string>, selectedFiles: IMUDataFile[]) => void
 }
 
 export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesListProps) {
-  const [files, setFiles] = useState(initialFiles)
-  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [deleting, setDeleting] = useState<string | null>(null)
-  const [downloading, setDownloading] = useState<string | null>(null)
+  const router = useRouter()
+  const { addToast } = useToast()
+
+  // Use polling hook to keep processing files updated
+  const files = useRecordingsPolling(initialFiles)
+
+  // Use selection hook
+  const selection = useSelection(files)
+
+  // Operation states
   const [batchOperating, setBatchOperating] = useState(false)
   const [showDeleteModal, setShowDeleteModal] = useState(false)
-  const [fileToDelete, setFileToDelete] = useState<IMUDataFile | null>(null)
   const [showMergeModal, setShowMergeModal] = useState(false)
   const [mergeFilename, setMergeFilename] = useState('')
   const [merging, setMerging] = useState(false)
-  const timeEstimatesRef = useRef<Record<string, number[]>>({}) // Use ref to avoid render-time state updates
-  const { addToast } = useToast()
 
-  // Poll for status updates on processing files
-  useEffect(() => {
-    // Check if there are any files currently processing
-    const hasProcessingFiles = files.some(f => f.status === 'uploaded' || f.status === 'parsing')
-    
-    if (!hasProcessingFiles) {
-      // No files processing, don't start polling
-      return
-    }
+  // Navigation handler
+  const handleNavigate = useCallback((id: string) => {
+    router.push(`/recordings/${id}`)
+  }, [router])
 
-    // Poll continuously while any files are processing
-    const interval = setInterval(async () => {
-      const supabase = createClient()
-      
-      // Get current list of processing files using latest state
-      setFiles(currentFiles => {
-        const processingFileIds = currentFiles
-          .filter(f => f.status === 'uploaded' || f.status === 'parsing')
-          .map(f => f.id)
-        
-        if (processingFileIds.length === 0) return currentFiles
-
-        // Fetch updates asynchronously
-        supabase
-          .from('imu_data_files')
-          .select('*')
-          .in('id', processingFileIds)
-          .then(({ data: updatedFiles, error }) => {
-            if (error) {
-              console.error('Failed to poll file status:', error)
-              return
-            }
-
-            if (updatedFiles) {
-              setFiles(prev => prev.map(file => {
-                const updated = updatedFiles.find(f => f.id === file.id)
-                if (updated) {
-                  // Log status changes
-                  if (updated.status !== file.status) {
-                    console.log(`📊 File ${file.filename} status changed: ${file.status} → ${updated.status}`)
-                    if (updated.status === 'failed' && updated.error_message) {
-                      console.error(`❌ File ${file.filename} failed: ${updated.error_message}`)
-                    }
-                  }
-                  // Log progress updates
-                  if (updated.samples_processed !== file.samples_processed && updated.samples_processed) {
-                    console.log(`📈 File ${file.filename} progress: ${updated.samples_processed.toLocaleString()} samples`)
-                  }
-                }
-                return updated || file
-              }))
-            }
-          })
-        
-        return currentFiles
-      })
-    }, 2000) // Poll every 2 seconds for more responsive progress updates
-
-    return () => clearInterval(interval)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [files.length, files.some(f => f.status === 'uploaded' || f.status === 'parsing')]) // Restart when files are added or processing status changes
-
-  const handleDeleteClick = (file: IMUDataFile) => {
-    setFileToDelete(file)
-    setShowDeleteModal(true)
-  }
-
-  const handleDeleteConfirm = async () => {
-    if (!fileToDelete || deleting) return
-
-    setDeleting(fileToDelete.id)
-    setShowDeleteModal(false)
-
-    try {
-      // Use the recordings API endpoint with proper authentication
-      const response = await fetch(`/api/recordings/${fileToDelete.id}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' }
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Delete failed')
-      }
-
-      const result = await response.json()
-      console.log('Delete successful:', result.message)
-
-      // Remove from UI
-      setFiles(prev => prev.filter(f => f.id !== fileToDelete.id))
-      
-      // Notify parent component to refresh data
-      if (onDataChange) {
-        onDataChange()
-      }
-      
-      // Show success toast
-      addToast({
-        type: 'success',
-        title: 'File deleted',
-        message: `${fileToDelete.filename} has been successfully deleted.`
-      })
-    } catch (err) {
-      console.error('Delete error:', err)
-      
-      // Show error toast
-      addToast({
-        type: 'error',
-        title: 'Delete failed',
-        message: `Failed to delete file: ${err instanceof Error ? err.message : 'Unknown error'}`
-      })
-    } finally {
-      setDeleting(null)
-      setFileToDelete(null)
-    }
-  }
-
-  const handleDeleteCancel = () => {
-    setShowDeleteModal(false)
-    setFileToDelete(null)
-  }
-
-  // Selection handlers
-  const toggleSelection = (id: string, event: React.MouseEvent) => {
-    event.preventDefault()
-    event.stopPropagation()
-
-    const newSelected = new Set(selectedIds)
-    if (newSelected.has(id)) {
-      newSelected.delete(id)
-    } else {
-      newSelected.add(id)
-    }
-    setSelectedIds(newSelected)
-  }
-
-  // Batch operations
-  const handleBatchDelete = async () => {
-    if (selectedIds.size === 0 || batchOperating) return
+  // Batch delete handler
+  const handleBatchDelete = useCallback(async () => {
+    if (selection.count === 0 || batchOperating) return
 
     setBatchOperating(true)
 
     try {
-      const response = await fetch('/api/recordings/batch-delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ recordingIds: Array.from(selectedIds) })
-      })
+      const result = await recordingsApi.batchDelete(Array.from(selection.selectedIds))
 
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Delete failed')
-      }
-
-      const result = await response.json()
-
-      // Remove deleted files from UI
-      setFiles(prev => prev.filter(f => !selectedIds.has(f.id)))
-      setSelectedIds(new Set())
+      selection.clear()
 
       addToast({
         type: 'success',
@@ -313,52 +73,33 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
       setBatchOperating(false)
       setShowDeleteModal(false)
     }
-  }
+  }, [selection, batchOperating, addToast, onDataChange])
 
-  const handleBatchDownload = async () => {
-    if (selectedIds.size === 0 || batchOperating) return
+  // Batch download handler
+  const handleBatchDownload = useCallback(async () => {
+    if (selection.count === 0 || batchOperating) return
 
     setBatchOperating(true)
 
     try {
-      const supabase = createClient()
-      const { data: { session } } = await supabase.auth.getSession()
+      const { blob, filename } = await recordingsApi.batchDownload(Array.from(selection.selectedIds))
 
-      if (!session) {
-        throw new Error('Not authenticated')
-      }
-
-      const response = await fetch('/api/recordings/batch-download', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${session.access_token}`
-        },
-        body: JSON.stringify({ recordingIds: Array.from(selectedIds) })
-      })
-
-      if (!response.ok) {
-        const errorData = await response.json()
-        throw new Error(errorData.error || 'Download failed')
-      }
-
-      // Create download link from blob
-      const blob = await response.blob()
+      // Create download link
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = response.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') || 'recordings.zip'
+      a.download = filename
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
 
-      setSelectedIds(new Set())
+      selection.clear()
 
       addToast({
         type: 'success',
         title: 'Download started',
-        message: `Downloading ${selectedIds.size} recording${selectedIds.size > 1 ? 's' : ''}`
+        message: `Downloading ${selection.count} recording${selection.count > 1 ? 's' : ''}`
       })
     } catch (err) {
       console.error('Batch download error:', err)
@@ -370,28 +111,19 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
     } finally {
       setBatchOperating(false)
     }
-  }
+  }, [selection, batchOperating, addToast])
 
-  const handleMerge = async () => {
-    if (selectedIds.size === 0 || !mergeFilename.trim() || merging) return
+  // Merge handler
+  const handleMerge = useCallback(async () => {
+    if (selection.count === 0 || !mergeFilename.trim() || merging) return
 
     setMerging(true)
 
     try {
-      const response = await fetch('/api/recordings/merge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          recordingIds: Array.from(selectedIds),
-          newFilename: mergeFilename.trim()
-        })
-      })
-
-      const result = await response.json()
-
-      if (!response.ok) {
-        throw new Error(result.error || 'Merge failed')
-      }
+      const result = await recordingsApi.merge(
+        Array.from(selection.selectedIds),
+        mergeFilename.trim()
+      )
 
       // Show warnings if any
       if (result.warnings && result.warnings.length > 0) {
@@ -410,20 +142,15 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
           onDataChange()
         }
 
-        // Check if merge is complete by looking for the new file
-        const supabase = createClient()
-        const { data } = await supabase
-          .from('recordings')
-          .select('id')
-          .eq('filename', result.filename)
-          .maybeSingle()
+        // Check if merge is complete
+        const isComplete = await recordingsApi.checkMergeComplete(result.filename)
 
-        if (data) {
+        if (isComplete) {
           // Merge complete, stop polling and refresh
           clearInterval(pollInterval)
           setMerging(false)
           setShowMergeModal(false)
-          setSelectedIds(new Set())
+          selection.clear()
           setMergeFilename('')
 
           addToast({
@@ -460,23 +187,14 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
       setMerging(false)
       setShowMergeModal(false)
     }
-  }
-
-  // Get selected files for modal
-  const selectedFiles = files.filter(f => selectedIds.has(f.id))
-
-  // Check if merge is available (all selected are VTX and ready)
-  const canMerge = selectedIds.size >= 2 &&
-    selectedIds.size <= 10 &&
-    selectedFiles.every(f => f.status === 'ready') &&
-    files.every(f => !selectedIds.has(f.id) || f.status === 'ready')
+  }, [selection, mergeFilename, merging, addToast, onDataChange])
 
   // Show merge modal with auto-generated filename
-  const showMergeModalHandler = () => {
-    if (selectedFiles.length < 2) return
+  const showMergeModalHandler = useCallback(() => {
+    if (selection.selected.length < 2) return
 
     // Sort by start time
-    const sorted = [...selectedFiles].sort((a, b) =>
+    const sorted = [...selection.selected].sort((a, b) =>
       (a.start_time || '').localeCompare(b.start_time || '')
     )
 
@@ -491,72 +209,14 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
     }
 
     setShowMergeModal(true)
-  }
+  }, [selection.selected])
 
-  const handleDownload = async (file: IMUDataFile, event: React.MouseEvent) => {
-    event.preventDefault() // Prevent navigation to detail page
+  // Check if merge is available (all selected are VTX and ready)
+  const canMerge = selection.count >= 2 &&
+    selection.count <= 10 &&
+    selection.selected.every(f => f.status === 'ready')
 
-    if (downloading || file.status !== 'ready') return
-
-    setDownloading(file.id)
-
-    try {
-      const supabase = createClient()
-
-      // Download file from storage
-      const { data, error } = await supabase.storage
-        .from('recordings')
-        .download(file.storage_path)
-
-      if (error || !data) {
-        throw new Error(error?.message || 'Failed to download file')
-      }
-
-      // Create download link
-      const url = URL.createObjectURL(data)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = file.filename
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      URL.revokeObjectURL(url)
-
-      addToast({
-        type: 'success',
-        title: 'Download started',
-        message: `Downloading ${file.filename}`
-      })
-    } catch (err) {
-      console.error('Download error:', err)
-      addToast({
-        type: 'error',
-        title: 'Download failed',
-        message: `Failed to download file: ${err instanceof Error ? err.message : 'Unknown error'}`
-      })
-    } finally {
-      setDownloading(null)
-    }
-  }
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit'
-    })
-  }
-
-  const formatDuration = formatDurationFromTimestamps
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  }
-
+  // Empty state
   if (files.length === 0) {
     return (
       <div className="text-center py-12 border-2 border-dashed border-border rounded-lg">
@@ -575,314 +235,45 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
 
   return (
     <>
-      {/* Page header with sticky selection bar - liquid glass always on */}
-      <div className="sticky top-[100px] z-40 -mx-4 md:-mx-6 px-4 md:px-6 pt-4 pb-4 mb-4 glass-header">
-        <div className="max-w-6xl mx-auto">
-          <h1 className="text-3xl font-normal text-primary mb-2">Recordings</h1>
+      {/* Header with selection state and batch actions */}
+      <RecordingsHeader
+        selectedCount={selection.count}
+        selectedFiles={selection.selected}
+        canMerge={canMerge}
+        batchOperating={batchOperating}
+        merging={merging}
+        onBatchDownload={handleBatchDownload}
+        onBatchDelete={() => setShowDeleteModal(true)}
+        onMerge={showMergeModalHandler}
+      />
 
-          {/* Selection bar or subtitle */}
-          {selectedIds.size > 0 ? (
-            <div className="flex items-center justify-between gap-4">
-              <div className="text-sm text-secondary">
-                {selectedIds.size} file{selectedIds.size !== 1 ? 's' : ''} selected
-              </div>
-              <div className="flex gap-2 flex-wrap">
-                {canMerge && (
-                  <button
-                    onClick={showMergeModalHandler}
-                    disabled={batchOperating || merging}
-                    className="px-3 py-1.5 bg-primary text-primary-foreground hover:bg-primary/90 transition-colors rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-none"
-                  >
-                    <FileText className="w-4 h-4" />
-                    Merge Recordings
-                  </button>
-                )}
-                <button
-                  onClick={handleBatchDownload}
-                  disabled={batchOperating || selectedFiles.some(f => f.status !== 'ready')}
-                  className="px-3 py-1.5 bg-background hover:bg-muted transition-colors rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-none"
-                >
-                  <Download className="w-4 h-4" />
-                  Download ({selectedIds.size})
-                </button>
-                <button
-                  onClick={() => setShowDeleteModal(true)}
-                  disabled={batchOperating}
-                  className="px-3 py-1.5 bg-background hover:bg-error/10 hover:text-error transition-colors rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 shadow-none"
-                >
-                  <Trash2 className="w-4 h-4" />
-                  Delete ({selectedIds.size})
-                </button>
-              </div>
-            </div>
-          ) : (
-            <p className="text-secondary">
-              View and analyze your Vertex IMU sensor recordings
-            </p>
-          )}
-        </div>
-      </div>
-
+      {/* List of recording cards */}
       <div className="space-y-4">
         {files.map((file) => (
-        <div
-          key={file.id}
-          className="card-interactive relative p-6 rounded-lg group"
-        >
-          {/* Checkbox overlay (visible on hover or when selected) */}
-          <div
-            className={`absolute top-4 right-4 z-10 transition-opacity ${
-              selectedIds.has(file.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
-            }`}
-          >
-            <button
-              onClick={(e) => toggleSelection(file.id, e)}
-              className={`w-6 h-6 rounded border-2 flex items-center justify-center transition-all ${
-                selectedIds.has(file.id)
-                  ? 'bg-primary border-primary'
-                  : 'bg-background border-border hover:border-primary'
-              }`}
-            >
-              {selectedIds.has(file.id) && (
-                <Check className="w-4 h-4 text-primary-foreground" />
-              )}
-            </button>
-          </div>
-
-          <a
-            href={`/recordings/${file.id}`}
-            className="block"
-            onClick={(e) => {
-              if (selectedIds.size > 0) {
-                e.preventDefault() // Prevent navigation when in selection mode
-              }
-            }}
-          >
-            <div className="flex items-start gap-4">
-              {/* Status icon with tooltip */}
-              <div className="flex-shrink-0 mt-1">
-              {file.status === 'parsing' && (
-                <Tooltip content="Parsing" side="right">
-                  <Loader2 className="w-6 h-6 text-info animate-spin" />
-                </Tooltip>
-              )}
-              {file.status === 'ready' && (
-                <Tooltip content="Ready" side="right">
-                  <CheckCircle2 className="w-6 h-6 text-success" />
-                </Tooltip>
-              )}
-              {file.status === 'failed' && (
-                <Tooltip content="Failed" side="right">
-                  <AlertCircle className="w-6 h-6 text-error" />
-                </Tooltip>
-              )}
-              {file.status === 'uploaded' && (
-                <Tooltip content="Uploaded" side="right">
-                  <Clock className="w-6 h-6 text-secondary" />
-                </Tooltip>
-              )}
-            </div>
-
-            {/* Data segment info */}
-            <div className="flex-grow min-w-0">
-              <div className="flex items-start justify-between mb-2 gap-3">
-                <h3 className="text-lg font-medium text-primary">
-                  {file.start_time && file.end_time ? (
-                    <>
-                      {(() => {
-                        try {
-                          const startDate = new Date(file.start_time)
-                          const endDate = new Date(file.end_time)
-                          
-                          // Format: "Oct 24, 7:02 PM → 7:06 PM"
-                          const dateStr = startDate.toLocaleDateString(undefined, { 
-                            month: 'short', 
-                            day: 'numeric'
-                          })
-                          const startTimeStr = startDate.toLocaleTimeString(undefined, {
-                            hour: 'numeric',
-                            minute: '2-digit',
-                            hour12: true
-                          })
-                          const endTimeStr = endDate.toLocaleTimeString(undefined, {
-                            hour: 'numeric',
-                            minute: '2-digit',
-                            hour12: true
-                          })
-                          
-                          return `${dateStr}, ${startTimeStr} → ${endTimeStr}`
-                        } catch (error) {
-                          return 'Invalid Date'
-                        }
-                      })()}
-                    </>
-                  ) : file.status === 'parsing' ? (
-                    // For small files, show simple processing text (detailed progress shown below)
-                    file.file_size_bytes && file.file_size_bytes <= 10 * 1024 * 1024 ? (
-                      <span className="text-secondary">Processing...</span>
-                    ) : (
-                      <ProcessingTimeDisplay uploadedAt={file.uploaded_at} />
-                    )
-                  ) : (
-                    <span className="text-secondary">Processing...</span>
-                  )}
-                </h3>
-              </div>
-
-              {/* Metadata grid - only show for completed files */}
-              {file.status === 'ready' && (
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-                  {file.sample_count && (
-                    <div>
-                      <span className="text-secondary block">Samples</span>
-                      <span className="text-primary">
-                        {file.sample_count.toLocaleString()}
-                      </span>
-                    </div>
-                  )}
-
-                  {file.sample_rate && (
-                    <div>
-                      <span className="text-secondary block">Sample Rate</span>
-                      <span className="text-primary">
-                        {file.sample_rate} Hz
-                      </span>
-                    </div>
-                  )}
-
-                  {file.start_time && file.end_time && (
-                    <div>
-                      <span className="text-secondary block">Duration</span>
-                      <span className="text-primary">
-                        {formatDuration(file.start_time, file.end_time)}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Source file (de-emphasized) */}
-              {file.filename && (
-                <div className="mt-3 text-xs text-secondary">
-                  Source: {file.filename} ({formatFileSize(file.file_size_bytes)})
-                </div>
-              )}
-
-              {/* Processing progress indicator */}
-              {file.status === 'parsing' && (
-                <div className="mt-4">
-                  {file.samples_processed != null && file.samples_processed > 0 && file.sample_count && file.sample_count > 0 ? (
-                    // Real progress tracking available (batch processing has started)
-                    <>
-                      <div className="flex justify-between items-center text-sm mb-2">
-                        <span className="text-secondary">Processing samples...</span>
-                        <span className="text-primary font-mono font-semibold">
-                          {Math.min(100, Math.round((file.samples_processed / file.sample_count) * 100))}%
-                        </span>
-                      </div>
-                      <div className="w-full bg-muted rounded-full h-2.5 mb-2">
-                        <div 
-                          className="bg-info h-2.5 rounded-full transition-all duration-500"
-                          style={{ 
-                            width: `${Math.min(100, (file.samples_processed / file.sample_count) * 100)}%` 
-                          }}
-                        />
-                      </div>
-                      <div className="flex justify-between text-xs text-secondary">
-                        <span>
-                          {file.samples_processed.toLocaleString()} / {file.sample_count.toLocaleString()} samples
-                        </span>
-                        {file.processing_started_at && (
-                          <span className="font-mono">
-                            {(() => {
-                              try {
-                                const startTime = new Date(file.processing_started_at).getTime()
-                                const now = Date.now()
-                                const elapsedSeconds = (now - startTime) / 1000
-                                
-                                // Calculate actual processing rate (samples per second)
-                                const samplesPerSecond = file.samples_processed / elapsedSeconds
-                                
-                                // Calculate remaining based on actual samples left
-                                const remainingSamples = file.sample_count - file.samples_processed
-                                const estimatedSecondsRemaining = remainingSamples / samplesPerSecond
-                                
-                                // Buffer estimates for smoothing using ref (no state update during render)
-                                const currentEstimates = timeEstimatesRef.current[file.id] || []
-                                const updatedEstimates = [...currentEstimates, estimatedSecondsRemaining].slice(-4) // Keep last 4 estimates
-                                timeEstimatesRef.current[file.id] = updatedEstimates
-                                
-                                // Wait for at least 3 updates before showing estimate
-                                if (updatedEstimates.length < 3) {
-                                  return 'Computing time remaining...'
-                                }
-                                
-                                // Use average of buffered estimates for smoothing
-                                const avgEstimate = updatedEstimates.reduce((a, b) => a + b, 0) / updatedEstimates.length
-                                
-                                if (avgEstimate < 60) {
-                                  return `~${Math.round(avgEstimate)}s remaining`
-                                } else {
-                                  const minutes = Math.round(avgEstimate / 60)
-                                  return `~${minutes}m remaining`
-                                }
-                              } catch (error) {
-                                return 'Calculating...'
-                              }
-                            })()}
-                          </span>
-                        )}
-                      </div>
-                    </>
-                  ) : file.processing_started_at ? (
-                    // Processing has started but no batch progress yet (downloading/parsing CSV)
-                    <>
-                      <div className="text-sm text-secondary mb-2">
-                        <strong className="text-info">Processing started...</strong>
-                      </div>
-                      <div className="w-full bg-muted rounded-full h-2.5 mb-2 overflow-hidden">
-                        <div 
-                          className="bg-info h-2.5 rounded-full transition-all duration-1000 animate-pulse"
-                          style={{ width: '100%' }}
-                        />
-                      </div>
-                      <div className="text-xs text-secondary">
-                        <ElapsedTimeDisplay startTime={file.processing_started_at} />
-                      </div>
-                    </>
-                  ) : (
-                    // Queued but not started yet
-                    <div className="text-sm text-secondary">
-                      <div className="mb-2">
-                        <strong className="text-info">Queued for processing...</strong>
-                      </div>
-                      <div className="text-xs text-secondary">
-                        Job will start momentarily
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Error message */}
-              {file.status === 'failed' && file.error_message && (
-                <div className="mt-3 p-3 bg-error text-error border-error rounded text-sm">
-                  {file.error_message}
-                </div>
-              )}
-            </div>
-          </div>
-        </a>
-        </div>
-      ))}
+          <ErrorBoundary key={file.id} fallback={<RecordingCardError />}>
+            <RecordingCard
+              recording={file}
+              isSelected={selection.isSelected(file.id)}
+              onToggleSelection={selection.toggle}
+              onNavigate={handleNavigate}
+              inSelectionMode={selection.count > 0}
+            />
+          </ErrorBoundary>
+        ))}
       </div>
-      
+
       {/* Batch Operation Modals */}
       <BatchOperationModal
-        isOpen={showDeleteModal && selectedIds.size > 0}
+        isOpen={showDeleteModal && selection.count > 0}
         onClose={() => setShowDeleteModal(false)}
         onConfirm={handleBatchDelete}
-        files={selectedFiles}
+        files={selection.selected.map(f => ({
+          id: f.id,
+          filename: f.filename,
+          start_time: f.start_time,
+          end_time: f.end_time,
+          file_size_bytes: f.file_size_bytes
+        }))}
         operation="delete"
         isLoading={batchOperating}
       />
@@ -894,7 +285,13 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
           setMergeFilename('')
         }}
         onConfirm={handleMerge}
-        files={selectedFiles}
+        files={selection.selected.map(f => ({
+          id: f.id,
+          filename: f.filename,
+          start_time: f.start_time,
+          end_time: f.end_time,
+          file_size_bytes: f.file_size_bytes
+        }))}
         operation="merge"
         isLoading={merging}
         filename={mergeFilename}
@@ -903,4 +300,3 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
     </>
   )
 }
-

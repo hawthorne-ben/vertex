@@ -84,6 +84,8 @@ export class TusUploader {
         retryDelays: this.RETRY_DELAYS,
 
         // Authentication and headers
+        // NOTE: TUS protocol requires direct token access for storage uploads
+        // This is an acceptable exception to the "no session tokens in components" rule
         headers: {
           authorization: `Bearer ${session.access_token}`,
           'x-upsert': 'false', // Don't overwrite existing files

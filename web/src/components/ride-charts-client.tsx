@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState, useMemo } from 'react'
-import { createClient } from '@/lib/supabase/client'
+import { useAuthFetch } from '@/hooks/useAuthFetch'
 import dynamic from 'next/dynamic'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { findClosestByTime } from '@/lib/sync/fit-vtx-sync'
@@ -64,6 +64,7 @@ export function RideChartsClient({
   const [fetchedLoading, setFetchedLoading] = useState(true)
   const [fetchedError, setFetchedError] = useState<string | null>(null)
   const [hoverIndex, setHoverIndex] = useState<number | null>(null)
+  const { authFetch } = useAuthFetch()
 
   // Use props if provided, otherwise use fetched state
   const samples = propSamples ?? fetchedSamples
@@ -111,23 +112,7 @@ export function RideChartsClient({
       }
 
       try {
-        const supabase = createClient()
-        const { data: { session } } = await supabase.auth.getSession()
-
-        if (!session) {
-          setFetchedError('Not authenticated')
-          setFetchedLoading(false)
-          return
-        }
-
-        const response = await fetch(
-          `/api/rides/${rideId}/samples`,
-          {
-            headers: {
-              'Authorization': `Bearer ${session.access_token}`
-            }
-          }
-        )
+        const response = await authFetch(`/api/rides/${rideId}/samples`)
 
         if (!response.ok) {
           const errorData = await response.json()
@@ -145,7 +130,7 @@ export function RideChartsClient({
     }
 
     loadSamples()
-  }, [rideId, fitRecordingId, propSamples])
+  }, [rideId, fitRecordingId, propSamples, authFetch])
 
   // Check what data we have (must be before any returns for hooks rules)
   const hasPower = samples.some(s => s.power_watts !== null && s.power_watts !== undefined)

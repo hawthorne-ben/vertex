@@ -5,7 +5,7 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Bike, Clock, MapPin, TrendingUp, Zap, Heart, Activity } from 'lucide-react'
 import { AddVtxDataButton } from '@/components/add-vtx-data-button'
 import { RideVisualizationsClient } from '@/components/ride-visualizations-client'
-import { formatDurationFromSeconds } from '@/lib/utils/format-duration'
+import { formatDurationFromSeconds } from '@/lib/utils/formatting'
 
 export default async function RideDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
