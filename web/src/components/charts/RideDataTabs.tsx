@@ -16,6 +16,7 @@ export interface RideDataTabsProps {
 
   // Ride data (for derived metrics)
   rideId: string
+  rideName?: string
   fitRecordingId?: string | null
 
   // Time sync
@@ -41,6 +42,7 @@ export interface RideDataTabsProps {
 export function RideDataTabs({
   vtxRecordings,
   rideId,
+  rideName,
   fitRecordingId,
   highlightTime,
   onCoverageUpdate,
@@ -165,6 +167,7 @@ export function RideDataTabs({
             {hasFitData ? (
               <DerivedMetricsChart
                 rideId={rideId}
+                rideName={rideName}
                 fitRecordingId={fitRecordingId}
                 highlightTime={highlightTime}
                 zoomRange={currentZoomRange}

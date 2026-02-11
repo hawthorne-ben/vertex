@@ -14,6 +14,7 @@ export interface UseDerivedMetricOptions {
   metric: DerivedMetricType
   timeRange?: { start: string; end: string } | null
   fitRecordingId?: string | null
+  resolution?: number // Samples per second (e.g. 1 for GPS frequency)
 }
 
 export interface UseDerivedMetricResult {
@@ -58,7 +59,8 @@ export function useDerivedMetric({
   rideId,
   metric,
   timeRange,
-  fitRecordingId
+  fitRecordingId,
+  resolution
 }: UseDerivedMetricOptions): UseDerivedMetricResult {
   const [samples, setSamples] = useState<DerivedMetricSample[]>([])
   const [loading, setLoading] = useState(false)
@@ -87,6 +89,10 @@ export function useDerivedMetric({
             if (timeRange) {
               params.set('start', timeRange.start)
               params.set('end', timeRange.end)
+            }
+            // If custom resolution specified (for map at GPS frequency)
+            if (resolution !== undefined) {
+              params.set('resolution', resolution.toString())
             }
             // Otherwise fetch full ride (server auto-downsamples to ~1000 points)
 
@@ -136,7 +142,7 @@ export function useDerivedMetric({
         // Server handles time range filtering and downsampling
         const transformed = metricSamples.map((s: any) => ({
           timestamp: s.timestamp,
-          value: s.efficiencyPercent ?? s.value, // Normalize to 'value' field
+          value: s.efficiencyPercent ?? (s.efficiency !== null && s.efficiency !== undefined ? s.efficiency * 100 : null), // Normalize to 'value' field as percentage
           ...s // Keep all original fields
         }))
 
@@ -170,7 +176,7 @@ export function useDerivedMetric({
         clearInterval(pollingInterval)
       }
     }
-  }, [rideId, metric, timeRange, fitRecordingId, authFetch])
+  }, [rideId, metric, timeRange, fitRecordingId, resolution, authFetch])
 
   return { samples, loading, error, metadata }
 }

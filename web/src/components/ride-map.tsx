@@ -5,7 +5,6 @@ import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap, ZoomControl }
 import L from 'leaflet'
 import { Home } from 'lucide-react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { simplifyGPSTrack } from '@/lib/geo/douglas-peucker'
 import 'leaflet/dist/leaflet.css'
 
 // Create custom home icon for start/end markers
@@ -67,40 +66,83 @@ const startIcon = createHomeIcon('#22c55e') // Green for start
 const endIcon = createHomeIcon('#ef4444')   // Red for end
 const hoverIcon = createHoverIcon()         // Blue pulsing marker
 
-// Helper: Map efficiency value (0-100%) to simple 3-color scheme
+// Helper: Check if there's a significant GPS gap (tunnel/dropout)
+// Use time-based detection since distance varies with speed
+const hasGpsGap = (point1: GPSPoint, point2: GPSPoint): boolean => {
+  if (!point1.timestamp || !point2.timestamp) return false
+
+  const timeDiff = Math.abs(
+    new Date(point2.timestamp).getTime() - new Date(point1.timestamp).getTime()
+  )
+
+  // Gap > 10 seconds indicates tunnel or GPS dropout
+  // (Garmin records at 1 Hz, so 10s = significant gap)
+  return timeDiff > 10000
+}
+
+// Helper: Map efficiency value (0-100%) to gradient matching the chart
+// Green (70%+) → Yellow/Orange (40-69%) → Red (0-39%)
 const getEfficiencyColor = (efficiency: number): string => {
-  if (efficiency >= 60) {
-    return '#22c55e' // Green (good)
-  } else if (efficiency >= 30) {
-    return '#eab308' // Yellow (moderate)
+  if (efficiency >= 70) {
+    return '#22c55e' // Green - hsl(145, 70%, 50%)
+  } else if (efficiency >= 65) {
+    return '#4ade80' // Light green
+  } else if (efficiency >= 60) {
+    return '#84cc16' // Lime
+  } else if (efficiency >= 55) {
+    return '#eab308' // Yellow
+  } else if (efficiency >= 50) {
+    return '#f59e0b' // Amber
+  } else if (efficiency >= 45) {
+    return '#f97316' // Orange
+  } else if (efficiency >= 40) {
+    return '#fb923c' // Light orange
+  } else if (efficiency >= 35) {
+    return '#ef4444' // Red
   } else {
-    return '#ef4444' // Red (poor)
+    return '#dc2626' // Dark red
   }
 }
 
-// Helper: Calculate average efficiency for a time range
-const getAverageEfficiency = (
-  startTime: number,
-  endTime: number,
-  samples: EfficiencySample[]
-): number | null => {
-  if (samples.length === 0) return null
+// Helper: Build efficiency lookup map (O(1) lookups instead of O(n) linear search)
+const buildEfficiencyMap = (samples: EfficiencySample[]): Map<number, number> => {
+  const map = new Map<number, number>()
 
-  let sum = 0
-  let count = 0
-
-  // Find all samples within the time range
   for (const sample of samples) {
-    const sampleTime = new Date(sample.timestamp).getTime()
-    if (sampleTime >= startTime && sampleTime <= endTime) {
-      sum += sample.value
-      count++
+    const timestamp = new Date(sample.timestamp).getTime()
+    if (sample.value !== null && sample.value !== undefined) {
+      // Round to nearest second for bucketing
+      const bucket = Math.round(timestamp / 1000) * 1000
+      map.set(bucket, sample.value)
     }
-    // Stop early if we've passed the end time (samples are sorted)
-    if (sampleTime > endTime) break
   }
 
-  return count > 0 ? sum / count : null
+  return map
+}
+
+// Helper: Find efficiency value using pre-built map
+const getEfficiencyFromMap = (
+  targetTime: number,
+  efficiencyMap: Map<number, number>,
+  maxWindowMs: number = 1000
+): number | null => {
+  // Try exact second match first
+  const targetBucket = Math.round(targetTime / 1000) * 1000
+  if (efficiencyMap.has(targetBucket)) {
+    return efficiencyMap.get(targetBucket)!
+  }
+
+  // Try adjacent seconds
+  for (let offset = 1000; offset <= maxWindowMs; offset += 1000) {
+    if (efficiencyMap.has(targetBucket + offset)) {
+      return efficiencyMap.get(targetBucket + offset)!
+    }
+    if (efficiencyMap.has(targetBucket - offset)) {
+      return efficiencyMap.get(targetBucket - offset)!
+    }
+  }
+
+  return null
 }
 
 interface GPSPoint {
@@ -151,8 +193,8 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
   return null
 }
 
-// Component to dynamically adjust polyline detail based on zoom level
-function DynamicPolylines({
+// Component to render polylines with gap detection
+function RoutePolylines({
   fullTrack,
   imuTimeRanges,
   defaultColor,
@@ -165,64 +207,58 @@ function DynamicPolylines({
   imuColor: string
   efficiencySamples?: EfficiencySample[]
 }) {
-  const map = useMap()
-  const [zoom, setZoom] = useState(map.getZoom())
-
-  useEffect(() => {
-    const handleZoom = () => {
-      setZoom(map.getZoom())
-    }
-
-    map.on('zoomend', handleZoom)
-    return () => {
-      map.off('zoomend', handleZoom)
-    }
-  }, [map])
-
-  // Adjust simplification based on zoom level
-  const simplifiedTrack = useMemo(() => {
-    // More detail at higher zoom levels
-    // Zoom 10 (city level): 0.0005 (~55m)
-    // Zoom 13 (neighborhood): 0.0002 (~22m)
-    // Zoom 15+ (street level): 0.00005 (~5m)
-    let epsilon: number
-    if (zoom >= 15) {
-      epsilon = 0.00005 // High detail
-    } else if (zoom >= 13) {
-      epsilon = 0.0001 // Medium detail
-    } else if (zoom >= 11) {
-      epsilon = 0.0002 // Low detail
-    } else {
-      epsilon = 0.0005 // Very low detail
-    }
-
-    return simplifyGPSTrack(fullTrack, epsilon).simplified
-  }, [fullTrack, zoom])
+  // Use full GPS track (1 Hz, ~6000 points for 2-hour ride)
+  const gpsTrack = fullTrack
 
   // Build segments based on overlay mode
-  const { baseSegment, overlaySegments } = useMemo(() => {
-    const allPositions: [number, number][] = simplifiedTrack.map(p => [p.lat, p.lon])
+  const { baseSegments, overlaySegments } = useMemo(() => {
+    // Build base segments with gap detection (breaks line at tunnels)
+    const baseSegs: { positions: [number, number][]; color: string }[] = []
+    let currentBase: [number, number][] = []
+
+    for (let i = 0; i < gpsTrack.length; i++) {
+      const point = gpsTrack[i]
+      const hasGap = i > 0 && hasGpsGap(gpsTrack[i - 1], point)
+
+      if (hasGap && currentBase.length > 1) {
+        // Save segment before gap
+        baseSegs.push({ positions: currentBase, color: defaultColor })
+        currentBase = []
+      }
+
+      currentBase.push([point.lat, point.lon])
+    }
+
+    // Save final base segment
+    if (currentBase.length > 1) {
+      baseSegs.push({ positions: currentBase, color: defaultColor })
+    }
 
     // Mode 1: Efficiency overlay - show full route + colored efficiency segments
     if (efficiencySamples && efficiencySamples.length > 0) {
       const overlays: { positions: [number, number][]; color: string }[] = []
 
+      // Build efficiency lookup map once (O(n) instead of O(n²))
+      const efficiencyMap = buildEfficiencyMap(efficiencySamples)
+
       let currentSegment: [number, number][] = []
       let currentColor: string | null = null
+      let matchedCount = 0
+      let totalCount = 0
 
-      for (let idx = 0; idx < simplifiedTrack.length; idx++) {
-        const point = simplifiedTrack[idx]
+      for (let idx = 0; idx < gpsTrack.length; idx++) {
+        const point = gpsTrack[idx]
         if (!point.timestamp) continue
 
+        totalCount++
         const pointTime = new Date(point.timestamp).getTime()
 
-        // Calculate average efficiency in a 5-second window around this point
-        const windowStart = pointTime - 2500
-        const windowEnd = pointTime + 2500
-        const avgEfficiency = getAverageEfficiency(windowStart, windowEnd, efficiencySamples)
+        // Lookup efficiency from pre-built map (O(1))
+        const efficiency = getEfficiencyFromMap(pointTime, efficiencyMap, 1000)
 
-        if (avgEfficiency !== null) {
-          const pointColor = getEfficiencyColor(avgEfficiency)
+        if (efficiency !== null) {
+          matchedCount++
+          const pointColor = getEfficiencyColor(efficiency)
 
           // Same color as current segment - add to it
           if (pointColor === currentColor) {
@@ -262,8 +298,12 @@ function DynamicPolylines({
         })
       }
 
+      console.log('[EfficiencyOverlay] GPS points:', totalCount, 'Matched:', matchedCount, `(${((matchedCount/totalCount)*100).toFixed(1)}%)`)
+      console.log('[EfficiencyOverlay] Efficiency samples:', efficiencySamples.length)
+      console.log('[EfficiencyOverlay] Base segments (with gaps):', baseSegs.length)
+
       return {
-        baseSegment: { positions: allPositions, color: defaultColor },
+        baseSegments: baseSegs,
         overlaySegments: overlays
       }
     }
@@ -274,7 +314,7 @@ function DynamicPolylines({
       let currentSegment: GPSPoint[] = []
       let inIMURange = false
 
-      simplifiedTrack.forEach((point) => {
+      gpsTrack.forEach((point) => {
         if (!point.timestamp) return
 
         const pointTime = new Date(point.timestamp).getTime()
@@ -304,35 +344,37 @@ function DynamicPolylines({
       }
 
       return {
-        baseSegment: { positions: allPositions, color: defaultColor },
+        baseSegments: baseSegs,
         overlaySegments: overlays
       }
     }
 
-    // No overlay - just show default route
+    // No overlay - just show default route with gaps
     return {
-      baseSegment: { positions: allPositions, color: defaultColor },
+      baseSegments: baseSegs,
       overlaySegments: []
     }
-  }, [simplifiedTrack, imuTimeRanges, efficiencySamples, defaultColor, imuColor])
+  }, [gpsTrack, imuTimeRanges, efficiencySamples, defaultColor, imuColor])
 
   return (
     <>
-      {/* Base layer - always shows full route */}
-      <Polyline
-        key={`base-zoom-${zoom}`}
-        positions={baseSegment.positions}
-        pathOptions={{
-          color: baseSegment.color,
-          weight: 3,
-          opacity: 0.8,
-        }}
-      />
+      {/* Base layer - shows route with gaps at tunnels */}
+      {baseSegments.map((segment, idx) => (
+        <Polyline
+          key={`base-${idx}`}
+          positions={segment.positions}
+          pathOptions={{
+            color: segment.color,
+            weight: 3,
+            opacity: 0.8,
+          }}
+        />
+      ))}
 
       {/* Overlay layer - shows colored segments on top */}
       {overlaySegments.map((segment, idx) => (
         <Polyline
-          key={`overlay-${idx}-zoom-${zoom}`}
+          key={`overlay-${idx}`}
           positions={segment.positions}
           pathOptions={{
             color: segment.color,
@@ -468,8 +510,8 @@ export function RideMap({
 
         <FitBounds positions={positions} />
 
-        {/* Route polylines - dynamically simplified based on zoom */}
-        <DynamicPolylines
+        {/* Route polylines - full resolution */}
+        <RoutePolylines
           fullTrack={gpsTrack}
           imuTimeRanges={imuTimeRanges}
           defaultColor={defaultRouteColor}

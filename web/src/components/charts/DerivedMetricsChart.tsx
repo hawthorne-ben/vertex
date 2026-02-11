@@ -3,11 +3,13 @@
 import { useState, useMemo } from 'react'
 import { UPlotBase } from './UPlotBase'
 import { useDerivedMetric, DerivedMetricType } from './hooks/useDerivedMetric'
-import { AlertCircle } from 'lucide-react'
+import { AlertCircle, Settings } from 'lucide-react'
+import { EfficiencyTuningModal } from '@/components/dev/efficiency-tuning-modal'
 import uPlot from 'uplot'
 
 export interface DerivedMetricsChartProps {
   rideId: string
+  rideName?: string
   fitRecordingId?: string | null
   highlightTime?: number | null
   zoomRange?: { start: string; end: string } | null
@@ -22,6 +24,7 @@ export interface DerivedMetricsChartProps {
  */
 export function DerivedMetricsChart({
   rideId,
+  rideName,
   fitRecordingId,
   highlightTime,
   zoomRange = null,
@@ -29,6 +32,10 @@ export function DerivedMetricsChart({
   className = ''
 }: DerivedMetricsChartProps) {
   const [metric, setMetric] = useState<DerivedMetricType>('pedalingEfficiency')
+  const [showTuningModal, setShowTuningModal] = useState(false)
+
+  // Check if we're in development mode
+  const isDev = process.env.NODE_ENV === 'development'
 
   // Fetch data using hook
   const { samples, loading, error, metadata } = useDerivedMetric({
@@ -79,14 +86,20 @@ export function DerivedMetricsChart({
     }
 
     const data: uPlot.AlignedData = [timestamps, values] as uPlot.AlignedData
+
     const series: uPlot.Series[] = [
       {},
       {
         label: metric === 'pedalingEfficiency' ? 'Efficiency %' : 'Value',
-        stroke: 'hsl(145, 70%, 50%)', // Green
-        width: 2,
+        stroke: 'hsl(145, 70%, 50%)',
+        width: 0, // No connecting lines
         spanGaps: false,
-        points: { show: false }
+        points: {
+          show: true,
+          size: 4,
+          fill: 'hsl(145, 70%, 50%)',
+          stroke: 'hsl(145, 70%, 50%)'
+        }
       }
     ]
 
@@ -134,22 +147,45 @@ export function DerivedMetricsChart({
   return (
     <div className={`space-y-4 ${className}`}>
       {/* Metric selector */}
-      <div className="flex gap-4 items-center">
-        <div className="flex items-center gap-2">
-          <label className="text-sm font-medium text-muted-foreground">Metric:</label>
-          <select
-            value={metric}
-            onChange={(e) => setMetric(e.target.value as DerivedMetricType)}
-            className="px-3 py-2 pr-8 rounded-md text-sm bg-background border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2012%2012%22%3E%3Cpath%20fill%3D%22%23666%22%20d%3D%22M6%209L1%204h10z%22%2F%3E%3C%2Fsvg%3E')] bg-[length:12px] bg-[position:right_0.5rem_center] bg-no-repeat"
-            disabled={loading}
-          >
-            <option value="pedalingEfficiency">Pedaling Efficiency</option>
-            {/* Future metrics will go here */}
-          </select>
+      <div className="flex gap-4 items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-muted-foreground">Metric:</label>
+            <select
+              value={metric}
+              onChange={(e) => setMetric(e.target.value as DerivedMetricType)}
+              className="px-3 py-2 pr-8 rounded-md text-sm bg-background border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2012%2012%22%3E%3Cpath%20fill%3D%22%23666%22%20d%3D%22M6%209L1%204h10z%22%2F%3E%3C%2Fsvg%3E')] bg-[length:12px] bg-[position:right_0.5rem_center] bg-no-repeat"
+              disabled={loading}
+            >
+              <option value="pedalingEfficiency">Pedaling Efficiency</option>
+              {/* Future metrics will go here */}
+            </select>
+          </div>
+
+          {loading && <span className="text-xs text-muted-foreground animate-pulse">Calculating...</span>}
         </div>
 
-        {loading && <span className="text-xs text-muted-foreground animate-pulse">Calculating...</span>}
+        {/* DEV ONLY: Tuning button */}
+        {isDev && metric === 'pedalingEfficiency' && (
+          <button
+            onClick={() => setShowTuningModal(true)}
+            className="flex items-center gap-2 px-3 py-2 text-sm bg-primary/10 text-primary border border-primary/20 rounded-lg hover:bg-primary/20 transition-colors"
+          >
+            <Settings className="w-4 h-4" />
+            Tune Algorithm
+          </button>
+        )}
       </div>
+
+      {/* DEV ONLY: Tuning Modal */}
+      {isDev && (
+        <EfficiencyTuningModal
+          isOpen={showTuningModal}
+          onClose={() => setShowTuningModal(false)}
+          rideId={rideId}
+          rideName={rideName}
+        />
+      )}
 
       {/* Loading state */}
       {loading && !samples.length && (

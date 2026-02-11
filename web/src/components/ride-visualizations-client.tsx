@@ -29,6 +29,7 @@ interface VTXRecordingWithSamples {
 
 interface RideVisualizationsClientProps {
   rideId: string
+  rideName?: string
   rideStartTime: string
   rideEndTime: string
   fitRecordingId: string | null
@@ -38,6 +39,7 @@ interface RideVisualizationsClientProps {
 
 export function RideVisualizationsClient({
   rideId,
+  rideName,
   rideStartTime,
   rideEndTime,
   fitRecordingId,
@@ -52,7 +54,7 @@ export function RideVisualizationsClient({
   // Fetch ride samples once - shared between map and charts
   const { samples, loading, error } = useRideSamples(rideId, fitRecordingId)
 
-  // Fetch pedaling efficiency data for map overlay (always fetch full ride for map)
+  // Fetch pedaling efficiency data for map overlay (1 Hz to match GPS frequency)
   const {
     samples: efficiencySamples,
     loading: efficiencyLoading
@@ -60,7 +62,8 @@ export function RideVisualizationsClient({
     rideId,
     metric: 'pedalingEfficiency',
     timeRange: null, // Always fetch full ride for map
-    fitRecordingId
+    fitRecordingId,
+    resolution: 1 // 1 sample per second (matches GPS frequency)
   })
 
   // Calculate IMU time ranges for GPS color coding
@@ -100,6 +103,7 @@ export function RideVisualizationsClient({
               error={error}
               mapMode={activeDataTab === 'analytics' ? 'efficiency' : 'vtx'}
               efficiencySamples={efficiencySamples}
+              efficiencyLoading={efficiencyLoading}
             />
           </MapErrorBoundary>
         ) : (
@@ -127,6 +131,7 @@ export function RideVisualizationsClient({
           <RideDataTabs
             vtxRecordings={vtxRecordingsForChart}
             rideId={rideId}
+            rideName={rideName}
             fitRecordingId={fitRecordingId}
             highlightTime={selectedTime}
             onCoverageUpdate={setImuCoverageRanges}

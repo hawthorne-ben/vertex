@@ -38,6 +38,7 @@ interface RideMapClientProps {
   error: string | null
   mapMode?: 'vtx' | 'efficiency' // Map overlay mode
   efficiencySamples?: EfficiencySample[] // Pedaling efficiency data for heatmap
+  efficiencyLoading?: boolean // Loading state for efficiency data
 }
 
 export function RideMapClient({
@@ -49,7 +50,8 @@ export function RideMapClient({
   loading,
   error,
   mapMode = 'vtx',
-  efficiencySamples = []
+  efficiencySamples = [],
+  efficiencyLoading = false
 }: RideMapClientProps) {
 
   // Process samples into GPS track format
@@ -78,7 +80,10 @@ export function RideMapClient({
     return result?.index ?? null
   }, [highlightTime, gpsTrack])
 
-  if (loading) {
+  // Show loading state if GPS data is loading, or if in efficiency mode and efficiency is loading
+  const isLoading = loading || (mapMode === 'efficiency' && efficiencyLoading)
+
+  if (isLoading) {
     return (
       <div className="h-[400px] bg-muted rounded-lg flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
@@ -86,7 +91,9 @@ export function RideMapClient({
             <div className="w-12 h-12 border-4 border-muted-foreground/20 rounded-full"></div>
             <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin absolute top-0"></div>
           </div>
-          <p className="text-sm text-muted-foreground">Loading route...</p>
+          <p className="text-sm text-muted-foreground">
+            {loading ? 'Loading route...' : 'Loading efficiency data...'}
+          </p>
         </div>
       </div>
     )

@@ -1,6 +1,7 @@
 import { inngest } from '@/inngest/client'
 import { createClient } from '@supabase/supabase-js'
 import { calculatePedalingEfficiency } from '@/lib/analysis/pedaling-efficiency'
+import { ALGORITHM_VERSION } from '@/lib/analysis/pedaling-efficiency-constants'
 import { fileCache } from '@/lib/cache/file-cache'
 import { VTXDecoder } from '@vertex-pkg/vtx-parser'
 import FitParser from 'fit-file-parser'
@@ -9,8 +10,6 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
-
-const ALGORITHM_VERSION = '1.0.0' // Bump when algorithm changes to invalidate cache
 
 /**
  * Calculate pedaling efficiency for a ride

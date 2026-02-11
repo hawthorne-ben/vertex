@@ -157,6 +157,7 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
       {/* Time-Synced Visualizations (Map, IMU Charts, FIT Charts) */}
       <RideVisualizationsClient
         rideId={id}
+        rideName={ride.name}
         rideStartTime={ride.start_time}
         rideEndTime={ride.end_time}
         fitRecordingId={fitRecording?.id || null}

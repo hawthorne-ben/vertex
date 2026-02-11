@@ -4,6 +4,51 @@ import { withAuth } from '@/lib/api/auth'
 export const dynamic = 'force-dynamic'
 
 /**
+ * Helper: Average multiple efficiency samples into one
+ */
+function averageSamples(samples: any[]): any {
+  if (samples.length === 0) return null
+  if (samples.length === 1) return samples[0]
+
+  let sumEfficiency = 0
+  let sumConfidence = 0
+  let sumCadence = 0
+  let countEfficiency = 0
+  let countConfidence = 0
+  let countCadence = 0
+
+  for (const s of samples) {
+    if (s.efficiency !== null && s.efficiency !== undefined) {
+      sumEfficiency += s.efficiency
+      countEfficiency++
+    }
+    if (s.confidence !== null && s.confidence !== undefined) {
+      sumConfidence += s.confidence
+      countConfidence++
+    }
+    if (s.detectedCadence !== null && s.detectedCadence !== undefined) {
+      sumCadence += s.detectedCadence
+      countCadence++
+    }
+  }
+
+  // Use middle sample's timestamp as representative
+  const middleSample = samples[Math.floor(samples.length / 2)]
+
+  return {
+    timestamp: middleSample.timestamp,
+    efficiency: countEfficiency > 0 ? sumEfficiency / countEfficiency : null,
+    efficiencyPercent: countEfficiency > 0 ? (sumEfficiency / countEfficiency) * 100 : null,
+    confidence: countConfidence > 0 ? sumConfidence / countConfidence : null,
+    detectedCadence: countCadence > 0 ? sumCadence / countCadence : null,
+    // Keep other fields from middle sample
+    rawAccel: middleSample.rawAccel,
+    filteredAccel: middleSample.filteredAccel,
+    grade: middleSample.grade
+  }
+}
+
+/**
  * Get precomputed pedaling efficiency analysis for a ride
  *
  * Returns cached results computed by background Inngest job.
@@ -13,10 +58,12 @@ export const dynamic = 'force-dynamic'
  * - fields: 'metadata' to return only summary stats (default: all)
  * - start: ISO timestamp to filter from (optional)
  * - end: ISO timestamp to filter to (optional)
+ * - resolution: samples per second (e.g. '1' for GPS frequency, '10' for high detail)
  *
- * Resolution is determined server-side based on time range:
+ * Resolution is determined server-side:
  * - Full ride (no start/end): ~1000 samples
  * - Zoomed range: up to 10 samples per second based on duration
+ * - Custom resolution (resolution param): specified samples per second
  *
  * Response states:
  * - 200: Analysis completed, returns samples + metadata
@@ -47,6 +94,7 @@ export async function GET(
     const metadataOnly = fieldsParam === 'metadata'
     const startTime = searchParams.get('start') || undefined
     const endTime = searchParams.get('end') || undefined
+    const resolution = searchParams.get('resolution') // Custom resolution (samples per second)
 
     // Authenticate user
     const authResult = await withAuth(request)
@@ -137,22 +185,57 @@ export async function GET(
       })
     }
 
-    // Determine resolution based on time range (server-side logic)
-    let resolution: number
+    // Downsample based on resolution parameter or defaults
+    if (resolution) {
+      // Custom resolution: average samples into time buckets (e.g., 1 Hz = 1-second buckets)
+      const samplesPerSecond = parseFloat(resolution)
+      const bucketMs = 1000 / samplesPerSecond // e.g., 1 Hz = 1000ms buckets
 
-    if (!startTime || !endTime) {
-      // Full ride overview: ~1000 samples
-      resolution = 1000
+      const bucketedSamples: any[] = []
+      let currentBucket: any[] = []
+      let bucketStartTime = samples.length > 0 ? new Date(samples[0].timestamp).getTime() : 0
+
+      for (const sample of samples) {
+        const sampleTime = new Date(sample.timestamp).getTime()
+
+        // Check if sample belongs to next bucket
+        if (sampleTime >= bucketStartTime + bucketMs) {
+          // Average current bucket and push
+          if (currentBucket.length > 0) {
+            const avgSample = averageSamples(currentBucket)
+            bucketedSamples.push(avgSample)
+          }
+
+          // Start new bucket
+          bucketStartTime = Math.floor(sampleTime / bucketMs) * bucketMs
+          currentBucket = [sample]
+        } else {
+          currentBucket.push(sample)
+        }
+      }
+
+      // Push final bucket
+      if (currentBucket.length > 0) {
+        const avgSample = averageSamples(currentBucket)
+        bucketedSamples.push(avgSample)
+      }
+
+      samples = bucketedSamples
+    } else if (!startTime || !endTime) {
+      // Full ride overview: ~1000 samples using stride sampling
+      const targetResolution = 1000
+      if (samples.length > targetResolution) {
+        const stride = Math.ceil(samples.length / targetResolution)
+        samples = samples.filter((_: any, i: number) => i % stride === 0)
+      }
     } else {
-      // Zoomed view: up to 10 samples per second
+      // Zoomed view: up to 10 samples per second using stride sampling
       const durationSeconds = (new Date(endTime).getTime() - new Date(startTime).getTime()) / 1000
-      resolution = Math.min(Math.ceil(durationSeconds * 10), 5000) // Cap at 5000 points
-    }
-
-    // Downsample if necessary using LTTB
-    if (samples.length > resolution) {
-      const stride = Math.ceil(samples.length / resolution)
-      samples = samples.filter((_: any, i: number) => i % stride === 0)
+      const targetResolution = Math.min(Math.ceil(durationSeconds * 10), 5000)
+      if (samples.length > targetResolution) {
+        const stride = Math.ceil(samples.length / targetResolution)
+        samples = samples.filter((_: any, i: number) => i % stride === 0)
+      }
     }
 
     // Return metadata only if requested
