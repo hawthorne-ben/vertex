@@ -12,12 +12,13 @@ const supabase = createClient(
 )
 
 /**
- * Calculate pedaling efficiency for a ride
+ * Calculate pedaling efficiency AND riding position for a ride
  *
  * Triggered by: ride/vtx.merged event (after VTX files are merged)
  *
- * All processing done in single step to avoid Inngest output size limits (512KB)
- * Similar pattern to VTX file merging - compute and store in one atomic operation
+ * Computes both metrics in single pass to avoid duplicate pedaling detection logic.
+ * All processing done in single step to avoid Inngest output size limits (512KB).
+ * Similar pattern to VTX file merging - compute and store in one atomic operation.
  */
 export const calculatePedalingEfficiencyJob = inngest.createFunction(
   {
@@ -32,34 +33,51 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
     const { rideId } = event.data
 
     try {
-      // Step 1: Check if analysis already exists and is up-to-date
-      const existingAnalysis = await step.run('check-existing-analysis', async () => {
+      // Step 1: Check if analyses already exist and are up-to-date
+      const existingAnalyses = await step.run('check-existing-analyses', async () => {
         const { data } = await supabase
           .from('ride_analysis')
           .select('*')
           .eq('ride_id', rideId)
-          .eq('analysis_type', 'pedaling_efficiency')
-          .maybeSingle()
+          .in('analysis_type', ['pedaling_efficiency', 'riding_position'])
 
-        return data
+        return data || []
       })
 
-      if (
-        existingAnalysis?.status === 'completed' &&
-        existingAnalysis?.algorithm_version === ALGORITHM_VERSION
-      ) {
+      const efficiencyAnalysis = existingAnalyses.find(a => a.analysis_type === 'pedaling_efficiency')
+      const positionAnalysis = existingAnalyses.find(a => a.analysis_type === 'riding_position')
+
+      const bothUpToDate =
+        efficiencyAnalysis?.status === 'completed' &&
+        efficiencyAnalysis?.algorithm_version === ALGORITHM_VERSION &&
+        positionAnalysis?.status === 'completed' &&
+        positionAnalysis?.algorithm_version === ALGORITHM_VERSION
+
+      if (bothUpToDate) {
         return {
           success: true,
-          message: 'Analysis already up-to-date',
+          message: 'Analyses already up-to-date',
           rideId,
-          analysisId: existingAnalysis.id,
+          efficiencyAnalysisId: efficiencyAnalysis.id,
+          positionAnalysisId: positionAnalysis.id,
         }
       }
 
       // Step 2: Compute and store results (all in one step to avoid output size limits)
-      const result = await step.run('compute-and-store-pedaling-efficiency', async () => {
-        // Create or update analysis record with 'processing' status
-        const { data: analysis, error: analysisError } = await supabase
+      const result = await step.run('compute-and-store-analyses', async () => {
+        // Create or update both analysis records with 'processing' status
+        const sharedParameters = {
+          hpfCutoff: 0.5,
+          windowSize: 3,
+          fftWindowSize: 10,
+          confidenceThreshold: 0.15,
+          minCadence: 40,
+          maxCadence: 130,
+          useMagnitude: true,
+          yAxisThreshold: 0.8,
+        }
+
+        const { data: efficiencyAnalysis, error: efficiencyError } = await supabase
           .from('ride_analysis')
           .upsert(
             {
@@ -68,27 +86,39 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
               status: 'processing',
               started_at: new Date().toISOString(),
               algorithm_version: ALGORITHM_VERSION,
-              parameters: {
-                hpfCutoff: 0.5,
-                windowSize: 3,
-                fftWindowSize: 10,
-                confidenceThreshold: 0.15,
-                minCadence: 40,
-                maxCadence: 130,
-                useMagnitude: true,
-              },
-              metadata: {}, // Will be populated on completion
+              parameters: sharedParameters,
+              metadata: {},
             },
-            {
-              onConflict: 'ride_id,analysis_type',
-            }
+            { onConflict: 'ride_id,analysis_type' }
           )
           .select('id')
           .single()
 
-        if (analysisError)
-          throw new Error(`Failed to create analysis record: ${analysisError.message}`)
-        const analysisId = analysis.id
+        if (efficiencyError)
+          throw new Error(`Failed to create efficiency analysis: ${efficiencyError.message}`)
+
+        const { data: positionAnalysis, error: positionError } = await supabase
+          .from('ride_analysis')
+          .upsert(
+            {
+              ride_id: rideId,
+              analysis_type: 'riding_position',
+              status: 'processing',
+              started_at: new Date().toISOString(),
+              algorithm_version: ALGORITHM_VERSION,
+              parameters: sharedParameters,
+              metadata: {},
+            },
+            { onConflict: 'ride_id,analysis_type' }
+          )
+          .select('id')
+          .single()
+
+        if (positionError)
+          throw new Error(`Failed to create position analysis: ${positionError.message}`)
+
+        const efficiencyAnalysisId = efficiencyAnalysis.id
+        const positionAnalysisId = positionAnalysis.id
 
         // Fetch ride with recordings
         type RecordingData = {
@@ -218,7 +248,7 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
           throw new Error('No valid VTX samples found')
         }
 
-        // Run pedaling efficiency calculation
+        // Run pedaling efficiency AND riding position calculation (computed together in single pass)
         const computeResult = calculatePedalingEfficiency({
           vtxSamples,
           fitSamples,
@@ -230,35 +260,55 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
             minCadence: 40,
             maxCadence: 130,
             useMagnitude: true,
+            yAxisThreshold: 0.8,
             includeDebug: false, // Don't store debug stats
           },
         })
 
-        // Store results in database
-        const { error: updateError } = await supabase
+        // Store efficiency results in database
+        const { error: efficiencyUpdateError } = await supabase
           .from('ride_analysis')
           .update({
             status: 'completed',
             completed_at: new Date().toISOString(),
-            samples: computeResult.samples,
-            metadata: computeResult.metadata,
+            samples: computeResult.efficiency.samples,
+            metadata: computeResult.efficiency.metadata,
           })
-          .eq('id', analysisId)
+          .eq('id', efficiencyAnalysisId)
 
-        if (updateError) {
-          throw new Error(`Failed to store results: ${updateError.message}`)
+        if (efficiencyUpdateError) {
+          throw new Error(`Failed to store efficiency results: ${efficiencyUpdateError.message}`)
         }
 
-        // Return only small summary stats (not the full samples array)
+        // Store position results in database
+        const { error: positionUpdateError } = await supabase
+          .from('ride_analysis')
+          .update({
+            status: 'completed',
+            completed_at: new Date().toISOString(),
+            samples: computeResult.position.samples,
+            metadata: computeResult.position.metadata,
+          })
+          .eq('id', positionAnalysisId)
+
+        if (positionUpdateError) {
+          throw new Error(`Failed to store position results: ${positionUpdateError.message}`)
+        }
+
+        // Return only small summary stats (not the full samples arrays)
         return {
-          analysisId,
-          sampleCount: computeResult.samples.length,
-          avgEfficiency: computeResult.metadata.avgEfficiencyPercent,
-          pedalingPercent: computeResult.metadata.pedalingPercent,
+          efficiencyAnalysisId,
+          positionAnalysisId,
+          efficiencySampleCount: computeResult.efficiency.samples.length,
+          positionSampleCount: computeResult.position.samples.length,
+          avgEfficiency: computeResult.efficiency.metadata.avgEfficiencyPercent,
+          pedalingPercent: computeResult.efficiency.metadata.pedalingPercent,
+          standingPercent: computeResult.position.metadata.standingPercent,
+          seatedPercent: computeResult.position.metadata.seatedPercent,
         }
       })
 
-      console.log(`[Pedaling Efficiency] Completed for ride ${rideId}`, result)
+      console.log(`[Ride Analysis] Completed efficiency and position for ride ${rideId}`, result)
 
       return {
         success: true,
@@ -266,18 +316,31 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
         ...result,
       }
     } catch (error) {
-      console.error(`[Pedaling Efficiency] Failed for ride ${rideId}:`, error)
+      console.error(`[Ride Analysis] Failed for ride ${rideId}:`, error)
 
-      // Update analysis status to failed
+      // Update both analysis statuses to failed
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      const now = new Date().toISOString()
+
       await supabase
         .from('ride_analysis')
         .update({
           status: 'failed',
-          error_message: error instanceof Error ? error.message : 'Unknown error',
-          completed_at: new Date().toISOString(),
+          error_message: errorMessage,
+          completed_at: now,
         })
         .eq('ride_id', rideId)
         .eq('analysis_type', 'pedaling_efficiency')
+
+      await supabase
+        .from('ride_analysis')
+        .update({
+          status: 'failed',
+          error_message: errorMessage,
+          completed_at: now,
+        })
+        .eq('ride_id', rideId)
+        .eq('analysis_type', 'riding_position')
 
       throw error
     }

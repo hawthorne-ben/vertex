@@ -13,7 +13,7 @@
  * Version string for cache invalidation
  * Bump this when changing any constants or algorithm logic
  */
-export const ALGORITHM_VERSION = '1.1.1'
+export const ALGORITHM_VERSION = '1.2.0'  // Added riding position detection
 
 // ============================================
 // SIGNAL PROCESSING
@@ -277,3 +277,26 @@ export const GRADE_SMOOTH_WINDOW_SECONDS = 10
  * Values outside ±MAX_GRADE are clamped
  */
 export const MAX_GRADE_PERCENT = 30
+
+// ============================================
+// RIDING POSITION DETECTION
+// ============================================
+
+/**
+ * Y-axis (lateral rocking) threshold for standing detection
+ * Standing creates lateral rocking motion not present when seated
+ *
+ * Tuning guide:
+ * - 1.5 m/s²: Very sensitive, may detect seated rocking
+ * - 2.5 m/s²: Balanced (default) - most normal seated riding is below this
+ * - 4.0 m/s²: Conservative, only very aggressive standing
+ *
+ * Note: Initial value of 0.8 was far too low, causing false positives
+ */
+export const Y_AXIS_STANDING_THRESHOLD = 2.5
+
+/**
+ * Window size for position calculation in seconds
+ * Matches efficiency window for consistency
+ */
+export const POSITION_WINDOW_SECONDS = 3

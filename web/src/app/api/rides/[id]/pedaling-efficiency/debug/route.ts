@@ -195,11 +195,15 @@ export async function GET(
       parameters: {
         windowSize,
         hpfCutoff,
-        sampleCount: result.samples.length,
-        sampleRate: result.metadata.sampleRate
+        sampleCount: result.efficiency.samples.length,
+        sampleRate: result.efficiency.metadata.sampleRate
       },
-      samples: result.samples,  // Full sample data
-      metadata: result.metadata,
+      samples: result.efficiency.samples,  // Full efficiency sample data
+      metadata: result.efficiency.metadata,
+      position: {
+        samples: result.position.samples,
+        metadata: result.position.metadata
+      },
       rawInputs: {
         vtxSampleCount: allVtxSamples.length,
         fitSampleCount: fitSamples.length,

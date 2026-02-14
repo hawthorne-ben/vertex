@@ -55,16 +55,10 @@ class FileCache {
     const cached = this.cache.get(key)
 
     if (cached) {
-      console.log(`[FileCache] HIT: ${key} (age: ${Date.now() - cached.parsedAt}ms)`)
       return cached.arrayBuffer
     }
 
-    console.log(`[FileCache] MISS: ${key}`)
-    const startTime = Date.now()
     const arrayBuffer = await fetchFn()
-    const fetchTime = Date.now() - startTime
-
-    console.log(`[FileCache] Fetched ${key} in ${fetchTime}ms (${(arrayBuffer.byteLength / 1024 / 1024).toFixed(2)}MB)`)
 
     this.cache.set(key, {
       arrayBuffer,
@@ -116,17 +110,19 @@ class FileCache {
   }
 
   /**
-   * Log current cache statistics
+   * Log current cache statistics (dev only)
    */
   logStats(): void {
-    const stats = this.stats()
-    console.log('[FileCache] Stats:', {
-      entries: stats.size,
-      totalSize: `${(stats.calculatedSize / 1024 / 1024).toFixed(2)}MB`,
-      hitRate: stats.hitRate,
-      hits: stats.hits,
-      misses: stats.misses
-    })
+    if (process.env.NODE_ENV === 'development') {
+      const stats = this.stats()
+      console.log('[FileCache] Stats:', {
+        entries: stats.size,
+        totalSize: `${(stats.calculatedSize / 1024 / 1024).toFixed(2)}MB`,
+        hitRate: stats.hitRate,
+        hits: stats.hits,
+        misses: stats.misses
+      })
+    }
   }
 }
 

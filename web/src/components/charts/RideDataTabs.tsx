@@ -32,6 +32,9 @@ export interface RideDataTabsProps {
   // Tab change callback (for map overlay sync)
   onTabChange?: (tab: 'imu' | 'analytics') => void
 
+  // Selected metric callback (for map overlay sync)
+  onMetricChange?: (metric: string | null) => void
+
   className?: string
 }
 
@@ -49,6 +52,7 @@ export function RideDataTabs({
   zoomRange: sharedZoomRange,
   onZoomChange: sharedZoomChange,
   onTabChange,
+  onMetricChange,
   className = ''
 }: RideDataTabsProps) {
   const [activeTab, setActiveTab] = useState<'imu' | 'analytics'>('imu')
@@ -172,6 +176,7 @@ export function RideDataTabs({
                 highlightTime={highlightTime}
                 zoomRange={currentZoomRange}
                 onZoomChange={sharedZoomChange}
+                onMetricChange={onMetricChange}
               />
             ) : (
               <div className="h-[400px] bg-muted rounded-lg flex items-center justify-center">

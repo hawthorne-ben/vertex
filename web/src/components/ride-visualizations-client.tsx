@@ -50,9 +50,15 @@ export function RideVisualizationsClient({
   const [imuCoverageRanges, setImuCoverageRanges] = useState<Array<{ start: number; end: number }>>([])
   const [sharedZoomRange, setSharedZoomRange] = useState<{ start: string; end: string } | null>(null)
   const [activeDataTab, setActiveDataTab] = useState<'imu' | 'analytics'>('imu')
+  const [selectedMetric, setSelectedMetric] = useState<string | null>('pedalingEfficiency')
 
   // Fetch ride samples once - shared between map and charts
   const { samples, loading, error } = useRideSamples(rideId, fitRecordingId)
+
+  // Determine which metric to fetch for map overlay
+  // Only fetch when in analytics tab, and fetch the currently selected metric
+  const shouldFetchEfficiency = activeDataTab === 'analytics' && (selectedMetric === 'pedalingEfficiency' || selectedMetric === null)
+  const shouldFetchPosition = activeDataTab === 'analytics' && selectedMetric === 'ridingPosition'
 
   // Fetch pedaling efficiency data for map overlay (1 Hz to match GPS frequency)
   const {
@@ -63,8 +69,32 @@ export function RideVisualizationsClient({
     metric: 'pedalingEfficiency',
     timeRange: null, // Always fetch full ride for map
     fitRecordingId,
-    resolution: 1 // 1 sample per second (matches GPS frequency)
+    resolution: 1, // 1 sample per second (matches GPS frequency)
+    enabled: shouldFetchEfficiency
   })
+
+  // Fetch riding position data for map overlay (already at 1 Hz)
+  const {
+    samples: positionSamplesRaw,
+    loading: positionLoading
+  } = useDerivedMetric({
+    rideId,
+    metric: 'ridingPosition',
+    timeRange: null, // Always fetch full ride for map
+    fitRecordingId,
+    resolution: 1, // Position data is already at 1 Hz
+    enabled: shouldFetchPosition
+  })
+
+  // Cast to position-specific type (samples include all original fields from API)
+  const positionSamples = positionSamplesRaw as Array<{
+    timestamp: string
+    position: 'standing' | 'seated' | null
+    confidence: number
+    rockingMagnitude: number
+    detectedCadence: number | null
+    value: number | null
+  }>
 
   // Calculate IMU time ranges for GPS color coding
   // Use coverage ranges from VTX data if available, otherwise fall back to full recording ranges
@@ -92,8 +122,9 @@ export function RideVisualizationsClient({
       {/* GPS Map */}
       <div className="mb-8">
         {fitRecordingId && hasGpsData ? (
-          <MapErrorBoundary>
+          <MapErrorBoundary key={rideId}>
             <RideMapClient
+              key={rideId}
               rideId={rideId}
               fitRecordingId={fitRecordingId}
               highlightTime={selectedTime}
@@ -101,9 +132,11 @@ export function RideVisualizationsClient({
               samples={samples}
               loading={loading}
               error={error}
-              mapMode={activeDataTab === 'analytics' ? 'efficiency' : 'vtx'}
+              mapMode={activeDataTab === 'analytics' ? (selectedMetric as 'pedalingEfficiency' | 'ridingPosition' | null) || 'pedalingEfficiency' : 'vtx'}
               efficiencySamples={efficiencySamples}
               efficiencyLoading={efficiencyLoading}
+              positionSamples={positionSamples}
+              positionLoading={positionLoading}
             />
           </MapErrorBoundary>
         ) : (
@@ -138,6 +171,7 @@ export function RideVisualizationsClient({
             zoomRange={sharedZoomRange}
             onZoomChange={setSharedZoomRange}
             onTabChange={setActiveDataTab}
+            onMetricChange={setSelectedMetric}
           />
         </div>
       )}

@@ -28,6 +28,14 @@ interface EfficiencySample {
   value: number
 }
 
+interface PositionSample {
+  timestamp: string
+  position: 'standing' | 'seated' | null
+  confidence: number
+  rockingMagnitude: number
+  detectedCadence: number | null
+}
+
 interface RideMapClientProps {
   rideId: string
   fitRecordingId: string | null
@@ -36,9 +44,11 @@ interface RideMapClientProps {
   samples: Sample[]
   loading: boolean
   error: string | null
-  mapMode?: 'vtx' | 'efficiency' // Map overlay mode
+  mapMode?: 'vtx' | 'efficiency' | 'pedalingEfficiency' | 'ridingPosition' // Map overlay mode
   efficiencySamples?: EfficiencySample[] // Pedaling efficiency data for heatmap
   efficiencyLoading?: boolean // Loading state for efficiency data
+  positionSamples?: PositionSample[] // Riding position data for heatmap
+  positionLoading?: boolean // Loading state for position data
 }
 
 export function RideMapClient({
@@ -51,7 +61,9 @@ export function RideMapClient({
   error,
   mapMode = 'vtx',
   efficiencySamples = [],
-  efficiencyLoading = false
+  efficiencyLoading = false,
+  positionSamples = [],
+  positionLoading = false
 }: RideMapClientProps) {
 
   // Process samples into GPS track format
@@ -80,8 +92,10 @@ export function RideMapClient({
     return result?.index ?? null
   }, [highlightTime, gpsTrack])
 
-  // Show loading state if GPS data is loading, or if in efficiency mode and efficiency is loading
-  const isLoading = loading || (mapMode === 'efficiency' && efficiencyLoading)
+  // Show loading state if GPS data is loading, or if in analytics mode and data is loading
+  const isLoading = loading ||
+    ((mapMode === 'efficiency' || mapMode === 'pedalingEfficiency') && efficiencyLoading) ||
+    (mapMode === 'ridingPosition' && positionLoading)
 
   if (isLoading) {
     return (
@@ -113,7 +127,8 @@ export function RideMapClient({
       hoverIndex={highlightIndex !== null && highlightIndex !== -1 ? highlightIndex : null}
       className="w-full"
       imuTimeRanges={mapMode === 'vtx' ? imuTimeRanges : []}
-      efficiencySamples={mapMode === 'efficiency' ? efficiencySamples : undefined}
+      efficiencySamples={(mapMode === 'efficiency' || mapMode === 'pedalingEfficiency') ? efficiencySamples : undefined}
+      positionSamples={mapMode === 'ridingPosition' ? positionSamples : undefined}
     />
   )
 }

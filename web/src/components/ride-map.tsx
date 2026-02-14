@@ -104,6 +104,17 @@ const getEfficiencyColor = (efficiency: number): string => {
   }
 }
 
+// Helper: Map riding position to color
+// Green = Seated, Orange = Standing
+const getPositionColor = (position: 'standing' | 'seated' | null): string | null => {
+  if (position === 'seated') {
+    return '#22c55e' // Green - hsl(145, 70%, 50%)
+  } else if (position === 'standing') {
+    return '#fb923c' // Orange - hsl(25, 90%, 55%)
+  }
+  return null // No pedaling
+}
+
 // Helper: Build efficiency lookup map (O(1) lookups instead of O(n) linear search)
 const buildEfficiencyMap = (samples: EfficiencySample[]): Map<number, number> => {
   const map = new Map<number, number>()
@@ -145,6 +156,111 @@ const getEfficiencyFromMap = (
   return null
 }
 
+// Helper: Build position lookup map (O(1) lookups)
+const buildPositionMap = (samples: PositionSample[]): Map<number, 'standing' | 'seated' | null> => {
+  const map = new Map<number, 'standing' | 'seated' | null>()
+
+  for (const sample of samples) {
+    const timestamp = new Date(sample.timestamp).getTime()
+    // Only store non-null positions (filter out "not pedaling" samples)
+    if (sample.position !== null) {
+      const bucket = Math.round(timestamp / 1000) * 1000
+      map.set(bucket, sample.position)
+    }
+  }
+
+  return map
+}
+
+// Helper: Find position using pre-built map
+const getPositionFromMap = (
+  targetTime: number,
+  positionMap: Map<number, 'standing' | 'seated' | null>,
+  maxWindowMs: number = 1000
+): 'standing' | 'seated' | null => {
+  // Try exact second match first
+  const targetBucket = Math.round(targetTime / 1000) * 1000
+  if (positionMap.has(targetBucket)) {
+    return positionMap.get(targetBucket)!
+  }
+
+  // Try adjacent seconds
+  for (let offset = 1000; offset <= maxWindowMs; offset += 1000) {
+    if (positionMap.has(targetBucket + offset)) {
+      return positionMap.get(targetBucket + offset)!
+    }
+    if (positionMap.has(targetBucket - offset)) {
+      return positionMap.get(targetBucket - offset)!
+    }
+  }
+
+  return null
+}
+
+// Helper: Build overlay segments from GPS track and color lookup function
+// This unified function handles both efficiency and position overlays
+const buildOverlaySegments = (
+  gpsTrack: GPSPoint[],
+  getColorForPoint: (point: GPSPoint) => string | null,
+  overlayName: string
+): { segments: { positions: [number, number][]; color: string }[]; matchedCount: number; totalCount: number } => {
+  const segments: { positions: [number, number][]; color: string }[] = []
+  let currentSegment: [number, number][] = []
+  let currentColor: string | null = null
+  let matchedCount = 0
+  let totalCount = 0
+
+  for (let idx = 0; idx < gpsTrack.length; idx++) {
+    const point = gpsTrack[idx]
+    if (!point.timestamp) continue
+
+    totalCount++
+    const pointColor = getColorForPoint(point)
+
+    if (pointColor !== null) {
+      matchedCount++
+
+      // Same color as current segment - add to it
+      if (pointColor === currentColor) {
+        currentSegment.push([point.lat, point.lon])
+      } else {
+        // Color changed - save current segment and start new one
+        if (currentSegment.length > 1) {
+          segments.push({
+            positions: [...currentSegment],
+            color: currentColor!
+          })
+        }
+        // Start new segment (with previous point for continuity if available)
+        currentSegment = currentSegment.length > 0
+          ? [currentSegment[currentSegment.length - 1], [point.lat, point.lon]]
+          : [[point.lat, point.lon]]
+        currentColor = pointColor
+      }
+    } else {
+      // No data - end current segment
+      if (currentSegment.length > 1) {
+        segments.push({
+          positions: [...currentSegment],
+          color: currentColor!
+        })
+      }
+      currentSegment = []
+      currentColor = null
+    }
+  }
+
+  // Save final segment
+  if (currentSegment.length > 1 && currentColor) {
+    segments.push({
+      positions: currentSegment,
+      color: currentColor
+    })
+  }
+
+  return { segments, matchedCount, totalCount }
+}
+
 interface GPSPoint {
   lat: number
   lon: number
@@ -165,6 +281,14 @@ interface EfficiencySample {
   value: number
 }
 
+interface PositionSample {
+  timestamp: string
+  position: 'standing' | 'seated' | null
+  confidence: number
+  rockingMagnitude: number
+  detectedCadence: number | null
+}
+
 interface RideMapProps {
   gpsTrack: GPSPoint[]
   hoverIndex?: number | null
@@ -173,6 +297,7 @@ interface RideMapProps {
   className?: string
   imuTimeRanges?: IMUTimeRange[] // Time ranges where IMU data exists
   efficiencySamples?: EfficiencySample[] // Pedaling efficiency samples for heatmap overlay
+  positionSamples?: PositionSample[] // Riding position samples for heatmap overlay
 }
 
 // Component to fit bounds only on initial mount
@@ -199,13 +324,15 @@ function RoutePolylines({
   imuTimeRanges,
   defaultColor,
   imuColor,
-  efficiencySamples
+  efficiencySamples,
+  positionSamples
 }: {
   fullTrack: GPSPoint[]
   imuTimeRanges: IMUTimeRange[]
   defaultColor: string
   imuColor: string
   efficiencySamples?: EfficiencySample[]
+  positionSamples?: PositionSample[]
 }) {
   // Use full GPS track (1 Hz, ~6000 points for 2-hour ride)
   const gpsTrack = fullTrack
@@ -236,71 +363,19 @@ function RoutePolylines({
 
     // Mode 1: Efficiency overlay - show full route + colored efficiency segments
     if (efficiencySamples && efficiencySamples.length > 0) {
-      const overlays: { positions: [number, number][]; color: string }[] = []
-
       // Build efficiency lookup map once (O(n) instead of O(n²))
       const efficiencyMap = buildEfficiencyMap(efficiencySamples)
 
-      let currentSegment: [number, number][] = []
-      let currentColor: string | null = null
-      let matchedCount = 0
-      let totalCount = 0
-
-      for (let idx = 0; idx < gpsTrack.length; idx++) {
-        const point = gpsTrack[idx]
-        if (!point.timestamp) continue
-
-        totalCount++
-        const pointTime = new Date(point.timestamp).getTime()
-
-        // Lookup efficiency from pre-built map (O(1))
-        const efficiency = getEfficiencyFromMap(pointTime, efficiencyMap, 1000)
-
-        if (efficiency !== null) {
-          matchedCount++
-          const pointColor = getEfficiencyColor(efficiency)
-
-          // Same color as current segment - add to it
-          if (pointColor === currentColor) {
-            currentSegment.push([point.lat, point.lon])
-          } else {
-            // Color changed - save current segment and start new one
-            if (currentSegment.length > 1) {
-              overlays.push({
-                positions: [...currentSegment],
-                color: currentColor!
-              })
-            }
-            // Start new segment (with previous point for continuity if available)
-            currentSegment = currentSegment.length > 0
-              ? [currentSegment[currentSegment.length - 1], [point.lat, point.lon]]
-              : [[point.lat, point.lon]]
-            currentColor = pointColor
-          }
-        } else {
-          // No efficiency data - end current segment
-          if (currentSegment.length > 1) {
-            overlays.push({
-              positions: [...currentSegment],
-              color: currentColor!
-            })
-          }
-          currentSegment = []
-          currentColor = null
-        }
-      }
-
-      // Save final segment
-      if (currentSegment.length > 1 && currentColor) {
-        overlays.push({
-          positions: currentSegment,
-          color: currentColor
-        })
-      }
-
-      console.log('[EfficiencyOverlay] GPS points:', totalCount, 'Matched:', matchedCount, `(${((matchedCount/totalCount)*100).toFixed(1)}%)`)
-      console.log('[EfficiencyOverlay] Efficiency samples:', efficiencySamples.length)
-      console.log('[EfficiencyOverlay] Base segments (with gaps):', baseSegs.length)
+      // Use shared overlay builder
+      const { segments: overlays, matchedCount, totalCount } = buildOverlaySegments(
+        gpsTrack,
+        (point) => {
+          const pointTime = new Date(point.timestamp!).getTime()
+          const efficiency = getEfficiencyFromMap(pointTime, efficiencyMap, 1000)
+          return efficiency !== null ? getEfficiencyColor(efficiency) : null
+        },
+        'EfficiencyOverlay'
+      )
 
       return {
         baseSegments: baseSegs,
@@ -308,7 +383,29 @@ function RoutePolylines({
       }
     }
 
-    // Mode 2: VTX overlay - show full route + green IMU segments
+    // Mode 2: Position overlay - show full route + colored position segments (green=seated, orange=standing)
+    if (positionSamples && positionSamples.length > 0) {
+      // Build position lookup map once (O(n) instead of O(n²))
+      const positionMap = buildPositionMap(positionSamples)
+
+      // Use shared overlay builder
+      const { segments: overlays, matchedCount, totalCount } = buildOverlaySegments(
+        gpsTrack,
+        (point) => {
+          const pointTime = new Date(point.timestamp!).getTime()
+          const position = getPositionFromMap(pointTime, positionMap, 1000)
+          return position ? getPositionColor(position) : null
+        },
+        'PositionOverlay'
+      )
+
+      return {
+        baseSegments: baseSegs,
+        overlaySegments: overlays
+      }
+    }
+
+    // Mode 3: VTX overlay - show full route + green IMU segments
     if (imuTimeRanges.length > 0) {
       const overlays: { positions: [number, number][]; color: string }[] = []
       let currentSegment: GPSPoint[] = []
@@ -354,7 +451,7 @@ function RoutePolylines({
       baseSegments: baseSegs,
       overlaySegments: []
     }
-  }, [gpsTrack, imuTimeRanges, efficiencySamples, defaultColor, imuColor])
+  }, [gpsTrack, imuTimeRanges, efficiencySamples, positionSamples, defaultColor, imuColor])
 
   return (
     <>
@@ -394,10 +491,18 @@ export function RideMap({
   colorBy = 'speed',
   className = '',
   imuTimeRanges = [],
-  efficiencySamples
+  efficiencySamples,
+  positionSamples
 }: RideMapProps) {
   const [mounted, setMounted] = useState(false)
   const [isDark, setIsDark] = useState(false)
+
+  // Use stable initial center to prevent map reset on re-renders
+  // Must be before conditional returns to follow Rules of Hooks
+  const { initialCenter, initialZoom } = useMemo(() => ({
+    initialCenter: [gpsTrack[0]?.lat || 0, gpsTrack[0]?.lon || 0] as [number, number],
+    initialZoom: 13
+  }), [gpsTrack])
 
   // Detect theme from HTML class
   useEffect(() => {
@@ -438,9 +543,7 @@ export function RideMap({
     )
   }
 
-  // Calculate center and bounds from original track
-  const centerLat = gpsTrack.reduce((sum, p) => sum + p.lat, 0) / gpsTrack.length
-  const centerLon = gpsTrack.reduce((sum, p) => sum + p.lon, 0) / gpsTrack.length
+  // Calculate bounds from original track
   const positions: [number, number][] = gpsTrack.map(p => [p.lat, p.lon])
 
   // Theme-aware tile layer
@@ -493,8 +596,9 @@ export function RideMap({
   return (
     <div className={`${className} relative`} style={{ zIndex: 1 }}>
       <MapContainer
-        center={[centerLat, centerLon]}
-        zoom={15}
+        key="ride-map" // Stable key to prevent remounting when overlay props change
+        center={initialCenter}
+        zoom={initialZoom}
         style={{ height: 400, width: '100%', borderRadius: '0.5rem', position: 'relative', zIndex: 1 }}
         scrollWheelZoom={false}
         zoomControl={false}
@@ -517,6 +621,7 @@ export function RideMap({
           defaultColor={defaultRouteColor}
           imuColor={imuRouteColor}
           efficiencySamples={efficiencySamples}
+          positionSamples={positionSamples}
         />
 
         {/* Hover marker - zIndex 1000 */}

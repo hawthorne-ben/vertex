@@ -9,10 +9,10 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 60 // Allow up to 60 seconds for large rides
 
 /**
- * DEV ONLY: Recompute pedaling efficiency with custom parameters
+ * DEV ONLY: Recompute pedaling efficiency and riding position with custom parameters
  *
  * This endpoint allows developers to experiment with algorithm tuning
- * by recomputing efficiency with custom parameters.
+ * by recomputing both metrics with custom parameters.
  *
  * POST /api/rides/[id]/pedaling-efficiency/recompute
  *
@@ -26,16 +26,23 @@ export const maxDuration = 60 // Allow up to 60 seconds for large rides
  *     minCadence?: number
  *     maxCadence?: number
  *     useMagnitude?: boolean
+ *     yAxisThreshold?: number
  *   },
- *   saveToDatabase?: boolean  // If true, overwrites existing analysis
+ *   saveToDatabase?: boolean  // If true, overwrites existing analyses
  * }
  *
  * Response:
  * {
  *   success: true,
  *   message: string,
- *   metadata: PedalingEfficiencyMetadata,
- *   sampleCount: number,
+ *   efficiency: {
+ *     metadata: PedalingEfficiencyMetadata,
+ *     sampleCount: number
+ *   },
+ *   position: {
+ *     metadata: RidingPositionMetadata,
+ *     sampleCount: number
+ *   },
  *   parameters: object
  * }
  */
@@ -182,7 +189,7 @@ export async function POST(
 
     console.log(`[DEV] Parsed VTX: ${vtxSamples.length} samples`)
 
-    // Calculate efficiency with custom parameters
+    // Calculate both efficiency and position with custom parameters
     const startTime = Date.now()
     const result = calculatePedalingEfficiency({
       vtxSamples,
@@ -195,12 +202,17 @@ export async function POST(
     const computeTime = Date.now() - startTime
 
     console.log(`[DEV] Computation took ${computeTime}ms`)
-    console.log(`[DEV] Result: ${result.samples.length} samples, ${result.metadata.pedalingSamples} pedaling`)
-    console.log(`[DEV] Avg efficiency: ${result.metadata.avgEfficiencyPercent?.toFixed(1)}%`)
+    console.log(`[DEV] Efficiency: ${result.efficiency.samples.length} samples, ${result.efficiency.metadata.pedalingSamples} pedaling`)
+    console.log(`[DEV] Avg efficiency: ${result.efficiency.metadata.avgEfficiencyPercent?.toFixed(1)}%`)
+    console.log(`[DEV] Position: ${result.position.samples.length} samples`)
+    console.log(`[DEV] Standing: ${result.position.metadata.standingPercent?.toFixed(1)}%, Seated: ${result.position.metadata.seatedPercent?.toFixed(1)}%`)
 
     // Save to database if requested
     if (saveToDatabase) {
-      const { error: upsertError } = await supabase
+      const now = new Date().toISOString()
+
+      // Save efficiency analysis
+      const { error: efficiencyError } = await supabase
         .from('ride_analysis')
         .upsert(
           {
@@ -209,30 +221,60 @@ export async function POST(
             status: 'completed',
             algorithm_version: ALGORITHM_VERSION,
             parameters,
-            samples: result.samples,
-            metadata: result.metadata,
-            started_at: new Date().toISOString(),
-            completed_at: new Date().toISOString(),
+            samples: result.efficiency.samples,
+            metadata: result.efficiency.metadata,
+            started_at: now,
+            completed_at: now,
           },
           {
             onConflict: 'ride_id,analysis_type',
           }
         )
 
-      if (upsertError) {
-        throw new Error(`Failed to save analysis: ${upsertError.message}`)
+      if (efficiencyError) {
+        throw new Error(`Failed to save efficiency analysis: ${efficiencyError.message}`)
       }
 
-      console.log(`[DEV] Saved analysis to database`)
+      // Save position analysis
+      const { error: positionError } = await supabase
+        .from('ride_analysis')
+        .upsert(
+          {
+            ride_id: rideId,
+            analysis_type: 'riding_position',
+            status: 'completed',
+            algorithm_version: ALGORITHM_VERSION,
+            parameters,
+            samples: result.position.samples,
+            metadata: result.position.metadata,
+            started_at: now,
+            completed_at: now,
+          },
+          {
+            onConflict: 'ride_id,analysis_type',
+          }
+        )
+
+      if (positionError) {
+        throw new Error(`Failed to save position analysis: ${positionError.message}`)
+      }
+
+      console.log(`[DEV] Saved both analyses to database`)
     }
 
     return NextResponse.json({
       success: true,
       message: saveToDatabase
-        ? 'Analysis recomputed and saved to database'
-        : 'Analysis recomputed (not saved)',
-      metadata: result.metadata,
-      sampleCount: result.samples.length,
+        ? 'Both analyses recomputed and saved to database'
+        : 'Both analyses recomputed (not saved)',
+      efficiency: {
+        metadata: result.efficiency.metadata,
+        sampleCount: result.efficiency.samples.length,
+      },
+      position: {
+        metadata: result.position.metadata,
+        sampleCount: result.position.samples.length,
+      },
       parameters: {
         ...parameters,
         algorithmVersion: ALGORITHM_VERSION,

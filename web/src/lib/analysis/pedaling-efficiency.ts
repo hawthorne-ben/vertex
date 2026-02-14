@@ -1,32 +1,23 @@
 /**
- * Pedaling Efficiency Analysis
+ * Ride Analytics Calculation
  *
- * Measures pedaling smoothness by analyzing acceleration oscillations from pedaling forces.
- * Uses FFT-based pedaling detection to avoid false positives when stationary.
+ * Computes BOTH pedaling efficiency AND riding position from VTX + FIT data.
+ * Shares pedaling detection logic (FFT, confidence) to avoid duplicate work.
  *
  * Algorithm Overview:
  * 1. Sync VTX acceleration data with FIT data by timestamp
- * 2. Calculate 3-axis acceleration magnitude (captures pedaling forces regardless of bike orientation)
+ * 2. Calculate 3-axis acceleration magnitude + extract Y-axis for rocking detection
  * 3. Apply high-pass filter (cutoff ~0.5 Hz) to remove gravity and constant components
  * 4. Detect pedaling with FFT: analyze frequency spectrum for cadence range (40-130 RPM)
  * 5. Calculate confidence based on peak-to-median ratio and signal variance
- * 6. Calculate rolling standard deviation of filtered acceleration
- * 7. Convert to efficiency score: efficiency = exp(-k * std_dev), only when confidence > threshold
- * 8. TUNING FIX: Rescale efficiency to more motivating range [50%, 100%]
- * 9. TUNING FIX: Only report efficiency when BOTH confidence AND cadence are detected
+ * 6. **EFFICIENCY:** Calculate std dev → efficiency score (only when pedaling detected)
+ * 7. **POSITION:** Calculate Y-axis rocking → standing vs. seated (only when pedaling detected)
+ * 8. Return both analyses with matching gaps (same confidence thresholds)
  *
- * Key improvements over naive approach:
- * - No reliance on noisy GPS grade for gravity compensation
- * - High-pass filter removes all constant components (gravity, sensor bias)
- * - 3-axis magnitude captures pedaling forces in any direction
- * - FFT detects actual pedaling vs stationary periods
- * - Returns null efficiency when not confidently pedaling
- *
- * Version 1.1.0 Changes:
- * - Raised stationary threshold (0.05 → 0.15 m/s²) to fix false positives
- * - Tightened Method 3 detection (peak ratio 1.2 → 2.0) to reduce descent false positives
- * - Added efficiency rescaling for more motivating output (70% → 85%)
- * - Require BOTH confidence AND cadence for efficiency output
+ * Version 1.2.0 Changes:
+ * - Added riding position detection (standing vs. seated)
+ * - Refactored to compute both metrics in single pass
+ * - Shared pedaling detection for consistency and performance
  */
 
 import { syncFitVtxData, calculateSampleRate } from '../sync/fit-vtx-sync'
@@ -34,11 +25,15 @@ import { HighPassFilter } from '../imu/signal-processing'
 import { detectPedalingWithFFT } from './pedaling-detection'
 import { calculateEfficiency, calculateStdDev, smoothGrades } from './efficiency-calculation'
 import { calculateMetadata } from './efficiency-metadata'
+import { calculateRidingPosition, downsamplePositionByMajorityVote } from './riding-position-calculation'
+import { calculateRidingPositionMetadata } from './riding-position-metadata'
 import type { PedalingEfficiencyOutput, PedalingEfficiencyMetadata } from './efficiency-metadata'
+import type { RidingPositionSample, RidingPositionMetadata } from './riding-position-types'
 import * as CONSTANTS from './pedaling-efficiency-constants'
 
 // Re-export types for convenience
 export type { PedalingEfficiencyOutput, PedalingEfficiencyMetadata }
+export type { RidingPositionSample, RidingPositionMetadata }
 
 // ============================================
 // INPUT TYPES
@@ -66,6 +61,7 @@ export interface PedalingEfficiencyInput {
     maxCadence?: number          // Max reasonable cadence in RPM (default: 130)
     useMagnitude?: boolean       // Use 3-axis magnitude vs just accel_x (default: true)
     includeDebug?: boolean       // Include debug statistics in response (default: false)
+    yAxisThreshold?: number      // Y-axis rocking threshold for standing detection (default: 0.8)
   }
 }
 
@@ -74,14 +70,17 @@ export interface PedalingEfficiencyInput {
 // ============================================
 
 /**
- * Calculate pedaling efficiency from VTX and FIT data
+ * Calculate ride analytics (efficiency + position) from VTX and FIT data
  *
  * @param input - VTX samples, FIT samples, and optional configuration
- * @returns Samples with efficiency scores and summary metadata
+ * @returns Both efficiency and position analyses with metadata
  */
 export function calculatePedalingEfficiency(
   input: PedalingEfficiencyInput
-): { samples: PedalingEfficiencyOutput[]; metadata: PedalingEfficiencyMetadata } {
+): {
+  efficiency: { samples: PedalingEfficiencyOutput[]; metadata: PedalingEfficiencyMetadata };
+  position: { samples: RidingPositionSample[]; metadata: RidingPositionMetadata };
+} {
   const {
     vtxSamples,
     fitSamples,
@@ -127,6 +126,7 @@ export function calculatePedalingEfficiency(
     timestamp: string
     rawAccel: number
     filteredAccel: number  // High-pass filtered (gravity removed)
+    yAxis: number  // Y-axis acceleration for rocking detection
     grade: number | null
   }> = []
 
@@ -151,21 +151,27 @@ export function calculatePedalingEfficiency(
     const filteredAccel = hpf.update(rawAccel)
     const grade = grades[idx]
 
+    // Extract Y-axis for riding position detection (lateral rocking)
+    const yAxis = point.vtx.accel_y ?? 0
+
     processedSamples.push({
       timestamp: point.vtx.timestamp,
       rawAccel,
       filteredAccel,
+      yAxis,
       grade
     })
   })
 
   // ============================================
-  // SECOND PASS: Calculate rolling FFT for pedaling detection + efficiency
+  // SECOND PASS: Calculate rolling FFT for pedaling detection + efficiency + position
   // ============================================
 
   const windowSamples = Math.round(windowSize * sampleRate)
   const fftWindowSamples = Math.round(fftWindowSize * sampleRate)
+  const yAxisThreshold = options.yAxisThreshold ?? CONSTANTS.Y_AXIS_STANDING_THRESHOLD
   const efficiencySamples: PedalingEfficiencyOutput[] = []
+  const positionSamples: RidingPositionSample[] = []
 
   for (let i = 0; i < processedSamples.length; i++) {
     const sample = processedSamples[i]
@@ -211,13 +217,45 @@ export function calculatePedalingEfficiency(
       filteredAccel: sample.filteredAccel,
       grade: sample.grade
     })
+
+    // ============================================
+    // RIDING POSITION DETECTION
+    // ============================================
+
+    // Extract Y-axis window for rocking detection (same size as efficiency window)
+    const yAxisWindow = effWindowData.map(s => s.yAxis)
+
+    // Calculate riding position from Y-axis lateral rocking
+    const { position, rockingMagnitude } = calculateRidingPosition(
+      yAxisWindow,
+      confidence,
+      cadence,
+      confidenceThreshold,
+      yAxisThreshold
+    )
+
+    positionSamples.push({
+      timestamp: sample.timestamp,
+      position,
+      confidence,
+      rockingMagnitude,
+      detectedCadence: cadence
+    })
   }
+
+  // ============================================
+  // DOWNSAMPLE POSITION TO 1 HZ
+  // ============================================
+
+  // Position changes slowly, downsample to 1 Hz using majority vote
+  // This reduces storage and matches GPS frequency
+  const downsampledPosition = downsamplePositionByMajorityVote(positionSamples, 1000)
 
   // ============================================
   // CALCULATE METADATA
   // ============================================
 
-  const metadata = calculateMetadata(
+  const efficiencyMetadata = calculateMetadata(
     efficiencySamples,
     processedSamples,
     grades,
@@ -226,5 +264,13 @@ export function calculatePedalingEfficiency(
     confidenceThreshold
   )
 
-  return { samples: efficiencySamples, metadata }
+  const positionMetadata = calculateRidingPositionMetadata(
+    downsampledPosition,
+    sampleRate
+  )
+
+  return {
+    efficiency: { samples: efficiencySamples, metadata: efficiencyMetadata },
+    position: { samples: downsampledPosition, metadata: positionMetadata }
+  }
 }
