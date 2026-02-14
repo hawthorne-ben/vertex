@@ -66,12 +66,19 @@ const DevicesScreen: React.FC = () => {
   }, []);
 
   const checkAndRequestPermissions = async () => {
-    if (Platform.OS !== 'android') {
-      setHasPermissions(true);
-      return;
-    }
-
     try {
+      if (Platform.OS === 'ios') {
+        // iOS only needs Bluetooth permission for BLE scanning
+        const btStatus = await check(PERMISSIONS.IOS.BLUETOOTH);
+        if (btStatus !== RESULTS.GRANTED) {
+          const result = await request(PERMISSIONS.IOS.BLUETOOTH);
+          setHasPermissions(result === RESULTS.GRANTED);
+        } else {
+          setHasPermissions(true);
+        }
+        return;
+      }
+
       const bluetoothScanStatus = await check(PERMISSIONS.ANDROID.BLUETOOTH_SCAN);
       const bluetoothConnectStatus = await check(PERMISSIONS.ANDROID.BLUETOOTH_CONNECT);
       const locationStatus = await check(PERMISSIONS.ANDROID.ACCESS_FINE_LOCATION);

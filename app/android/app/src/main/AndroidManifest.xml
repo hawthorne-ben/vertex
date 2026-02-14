@@ -53,9 +53,9 @@
         </intent-filter>
       </activity>
 
-      <!-- Background Recording Service -->
+      <!-- Foreground Recording Service (notifee) -->
       <service
-        android:name="com.asterinet.react.bgactions.RNBackgroundActionsTask"
+        android:name="app.notifee.core.ForegroundService"
         android:foregroundServiceType="dataSync|connectedDevice|location"
         android:exported="false" />
 

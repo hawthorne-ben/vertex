@@ -1,89 +1,42 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useMemo } from 'react'
+import dynamic from 'next/dynamic'
 import uPlot from 'uplot'
-import 'uplot/dist/uPlot.min.css'
+
+const UPlotBase = dynamic(
+  () => import('./charts/UPlotBase').then(mod => ({ default: mod.UPlotBase })),
+  { ssr: false, loading: () => <div className="h-[250px] bg-muted rounded-lg animate-pulse" /> }
+)
 
 interface ElevationProfileProps {
   samples: Array<{
     timestamp: string
     altitude?: number | null
   }>
-  onHover?: (index: number | null) => void
-  highlightIndex?: number | null // Externally controlled highlight
   highlightTime?: number | null // Unix timestamp in seconds
   zoomRange?: { start: string; end: string } | null
   onZoom?: (start: string, end: string) => void
-  syncKey?: string
-  resetTrigger?: number
   className?: string
 }
 
 export function ElevationProfile({
   samples,
-  onHover,
-  highlightIndex,
   highlightTime,
   zoomRange,
   onZoom,
-  syncKey = 'ride-charts',
-  resetTrigger = 0,
   className = ''
 }: ElevationProfileProps) {
-  const chartRef = useRef<HTMLDivElement>(null)
-  const plotRef = useRef<uPlot | null>(null)
-  const highlightTimeRef = useRef<number | null>(highlightTime || null)
+  const chartConfig = useMemo(() => {
+    if (samples.length === 0 || !samples.some(s => s.altitude !== null && s.altitude !== undefined)) return null
 
-  // Keep ref in sync
-  useEffect(() => {
-    highlightTimeRef.current = highlightTime || null
-  }, [highlightTime])
-
-  useEffect(() => {
-    if (!chartRef.current || samples.length === 0) return
-
-    // Prepare data
     const timestamps = samples.map(s => new Date(s.timestamp).getTime() / 1000)
     const altitudeFeet = samples.map(s => s.altitude ? s.altitude * 3.28084 : null) // meters to feet
 
-    const hasAltitude = altitudeFeet.some(v => v !== null)
-
-    if (!hasAltitude) return
-
-    // Calculate grade (percent slope) between points
-    const grades: (number | null)[] = [null] // First point has no grade
-    for (let i = 1; i < samples.length; i++) {
-      const prev = samples[i - 1]
-      const curr = samples[i]
-
-      if (prev.altitude !== null && curr.altitude !== null && prev.altitude !== undefined && curr.altitude !== undefined) {
-        const prevTime = new Date(prev.timestamp).getTime() / 1000
-        const currTime = new Date(curr.timestamp).getTime() / 1000
-        const timeDiff = currTime - prevTime
-
-        // Approximate distance (assuming constant speed)
-        // For more accuracy, would need GPS distance between points
-        // Simple approximation: use time and average cycling speed
-        const estimatedSpeed = 5 // m/s (~11 mph average)
-        const distance = estimatedSpeed * timeDiff
-
-        if (distance > 0) {
-          const elevChange = curr.altitude - prev.altitude
-          const grade = (elevChange / distance) * 100
-          grades.push(Math.max(-25, Math.min(25, grade))) // Clamp to reasonable range
-        } else {
-          grades.push(null)
-        }
-      } else {
-        grades.push(null)
-      }
-    }
-
-    // Check theme
     const isDark = document.documentElement.classList.contains('dark')
     const gridColor = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'
     const textColor = isDark ? '#e5e7eb' : '#374151'
-    const fillColor = isDark ? 'rgba(59, 130, 246, 0.3)' : 'rgba(59, 130, 246, 0.2)' // blue with transparency
+    const fillColor = isDark ? 'rgba(59, 130, 246, 0.3)' : 'rgba(59, 130, 246, 0.2)'
 
     const data: uPlot.AlignedData = [timestamps, altitudeFeet as any]
 
@@ -91,13 +44,12 @@ export function ElevationProfile({
       { label: 'Time' },
       {
         label: 'Elevation',
-        stroke: '#3b82f6', // blue
+        stroke: '#3b82f6',
         fill: fillColor,
         width: 2,
         scale: 'elevation',
         value: (u, v) => v == null ? '-' : `${v.toFixed(0)} ft`,
         paths: (u, seriesIdx, idx0, idx1) => {
-          // Custom path builder for filled area chart
           const stroke = new Path2D()
           const fill = new Path2D()
 
@@ -125,207 +77,54 @@ export function ElevationProfile({
       }
     ]
 
-    // Plugin to draw vertical highlight line (using time, not index)
-    const highlightPlugin: uPlot.Plugin = {
-      hooks: {
-        draw: [
-          (u) => {
-            const ht = highlightTimeRef.current
-            if (ht === null || ht === undefined) return
-
-            const ctx = u.ctx
-            const plotData = u.data
-            if (!plotData || !plotData[0] || plotData[0].length === 0) return
-
-            const timestamps = plotData[0] as number[]
-
-            // Find closest timestamp
-            let closestIdx = 0
-            let minDiff = Math.abs(timestamps[0] - ht)
-            for (let i = 1; i < timestamps.length; i++) {
-              const diff = Math.abs(timestamps[i] - ht)
-              if (diff < minDiff) {
-                minDiff = diff
-                closestIdx = i
-              }
-            }
-
-            // Get pixel position
-            const x = u.valToPos(timestamps[closestIdx], 'x', true)
-            const plotTop = u.bbox.top
-            const plotBottom = u.bbox.top + u.bbox.height
-
-            // Draw vertical line
-            ctx.save()
-            ctx.strokeStyle = 'rgba(59, 130, 246, 0.6)' // Blue
-            ctx.lineWidth = 2
-            ctx.setLineDash([5, 5])
-            ctx.beginPath()
-            ctx.moveTo(x, plotTop)
-            ctx.lineTo(x, plotBottom)
-            ctx.stroke()
-            ctx.restore()
-          }
-        ]
+    const scales: Record<string, uPlot.Scale> = {
+      x: {
+        ...(zoomRange ? {
+          range: [
+            new Date(zoomRange.start).getTime() / 1000,
+            new Date(zoomRange.end).getTime() / 1000
+          ]
+        } : {})
+      },
+      elevation: {
+        auto: true,
+        range: (u, dataMin, dataMax) => {
+          const padding = (dataMax - dataMin) * 0.1
+          return [dataMin - padding, dataMax + padding]
+        }
       }
     }
 
-    const opts: uPlot.Options = {
-      width: chartRef.current.clientWidth,
-      height: 250,
-      padding: [8, 8, 0, 0],
-      plugins: [
-        highlightPlugin,
-        // Zoom plugin - only include if onZoom callback is provided
-        ...(onZoom ? [{
-          hooks: {
-            setSelect: [
-              (u: uPlot) => {
-                // setSelect is called when user completes a drag selection
-                const select = u.select
-                if (!select || select.left == null || select.width == null) return
-
-                // Ignore if selection is being cleared (width is 0)
-                if (select.width === 0) return
-
-                // Convert pixel coordinates to data values
-                const left = select.left
-                const width = select.width
-                const startVal = u.posToVal(left, 'x')
-                const endVal = u.posToVal(left + width, 'x')
-
-                const start = new Date(startVal * 1000).toISOString()
-                const end = new Date(endVal * 1000).toISOString()
-
-                // Clear selection (this will trigger setSelect again but width will be 0)
-                u.setSelect({ left: 0, top: 0, width: 0, height: 0 })
-
-                // Trigger zoom callback
-                onZoom(start, end)
-              }
-            ]
-          }
-        }] : [])
-      ],
-      series,
-      cursor: {
-        sync: { key: syncKey },
-        drag: { x: true, y: false },
-      },
-      scales: {
-        x: {
-          // If zoomed, use the zoom range; otherwise let it auto-fit
-          ...(zoomRange ? {
-            range: [
-              new Date(zoomRange.start).getTime() / 1000,
-              new Date(zoomRange.end).getTime() / 1000
-            ]
-          } : {})
-        },
-        elevation: {
-          auto: true,
-          range: (u, dataMin, dataMax) => {
-            // Add padding to both min and max
-            const padding = (dataMax - dataMin) * 0.1
-            return [dataMin - padding, dataMax + padding]
-          }
-        }
-      },
-      axes: [
-        {
-          // X-axis
-          space: 50,
-          grid: { show: true, stroke: gridColor },
-          stroke: textColor,
-          ticks: { show: true, stroke: gridColor },
-          values: (u, vals) => vals.map(v => {
-            const date = new Date(v * 1000)
-            const hours = date.getHours()
-            const minutes = date.getMinutes().toString().padStart(2, '0')
-            const seconds = date.getSeconds().toString().padStart(2, '0')
-            return `${hours}:${minutes}:${seconds}`
-          })
-        },
-        {
-          // Y-axis (elevation)
-          scale: 'elevation',
-          side: 3,
-          grid: { show: true, stroke: gridColor },
-          stroke: textColor,
-          ticks: { show: true, stroke: gridColor },
-          label: 'Elevation (ft)',
-          labelSize: 20,
-          labelGap: 4,
-          size: 50,
-          values: (u, vals) => vals.map(v => v?.toFixed(0) || ''),
-          space: 25,
-        }
-      ],
-      hooks: {
-        setCursor: [
-          (u) => {
-            const idx = u.cursor.idx
-            if (onHover) {
-              onHover(idx !== undefined && idx !== null ? idx : null)
-            }
-          }
-        ],
-        draw: [
-          (u) => {
-            // Draw grade labels on steep sections
-            const ctx = u.ctx
-            const idx = u.cursor.idx
-
-            if (idx !== undefined && idx !== null && grades[idx] !== null) {
-              const grade = grades[idx]!
-              const x = u.valToPos(u.data[0][idx], 'x', true)
-              const y = u.valToPos(u.data[1][idx] || 0, 'elevation', true)
-
-              // Show grade label
-              ctx.save()
-              ctx.fillStyle = isDark ? '#e5e7eb' : '#1f2937'
-              ctx.font = '12px sans-serif'
-              const gradeText = `${grade >= 0 ? '+' : ''}${grade.toFixed(1)}%`
-              ctx.fillText(gradeText, x + 10, y - 10)
-              ctx.restore()
-            }
-          }
-        ]
-      }
-    }
-
-    const plot = new uPlot(opts, data, chartRef.current)
-    plotRef.current = plot
-
-    const handleResize = () => {
-      if (chartRef.current && plotRef.current) {
-        plotRef.current.setSize({
-          width: chartRef.current.clientWidth,
-          height: 250
+    const axes: uPlot.Axis[] = [
+      {
+        space: 50,
+        grid: { show: true, stroke: gridColor },
+        stroke: textColor,
+        ticks: { show: true, stroke: gridColor },
+        values: (u, vals) => vals.map(v => {
+          const date = new Date(v * 1000)
+          return `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}`
         })
+      },
+      {
+        scale: 'elevation',
+        side: 3,
+        grid: { show: true, stroke: gridColor },
+        stroke: textColor,
+        ticks: { show: true, stroke: gridColor },
+        label: 'Elevation (ft)',
+        labelSize: 20,
+        labelGap: 4,
+        size: 50,
+        values: (u, vals) => vals.map(v => v?.toFixed(0) || ''),
+        space: 25,
       }
-    }
-    window.addEventListener('resize', handleResize)
+    ]
 
-    return () => {
-      window.removeEventListener('resize', handleResize)
-      plot.destroy()
-    }
-  }, [samples, onHover, syncKey])
+    return { data, series, scales, axes }
+  }, [samples, zoomRange])
 
-  // Trigger redraw when highlightTime changes
-  useEffect(() => {
-    if (plotRef.current && highlightTime !== null && highlightTime !== undefined) {
-      requestAnimationFrame(() => {
-        if (plotRef.current) {
-          const currentData = plotRef.current.data
-          plotRef.current.setData(currentData)
-        }
-      })
-    }
-  }, [highlightTime])
-
-  if (samples.length === 0 || !samples.some(s => s.altitude !== null)) {
+  if (!chartConfig) {
     return (
       <div className={`bg-muted rounded-lg flex items-center justify-center ${className}`} style={{ height: 250 }}>
         <p className="text-muted-foreground">No elevation data available</p>
@@ -334,8 +133,15 @@ export function ElevationProfile({
   }
 
   return (
-    <div className={className}>
-      <div ref={chartRef} className="w-full" />
-    </div>
+    <UPlotBase
+      data={chartConfig.data}
+      series={chartConfig.series}
+      scales={chartConfig.scales}
+      axes={chartConfig.axes}
+      height={250}
+      highlightTime={highlightTime}
+      onZoom={onZoom}
+      className={className}
+    />
   )
 }

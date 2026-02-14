@@ -367,7 +367,6 @@ export function DerivedMetricsChart({
                 unit={chartData.yAxisLabel}
                 highlightTime={highlightTime}
                 onZoom={onZoomChange ? (start, end) => onZoomChange({ start, end }) : undefined}
-                syncKey="derived-metrics-sync"
               />
             </div>
           )}

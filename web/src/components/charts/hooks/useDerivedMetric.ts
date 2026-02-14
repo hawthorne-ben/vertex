@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAuthFetch } from '@/hooks/useAuthFetch'
 import { apiCache } from '@/lib/cache/api-cache'
 
@@ -81,6 +81,7 @@ export function useDerivedMetric({
   const [error, setError] = useState<string | null>(null)
   const [metadata, setMetadata] = useState<any | null>(null)
   const { authFetch } = useAuthFetch()
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
     // Don't fetch if disabled
@@ -92,7 +93,11 @@ export function useDerivedMetric({
       return
     }
 
-    let pollingInterval: NodeJS.Timeout | null = null
+    // Clear any existing polling from previous effect run
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current)
+      pollingIntervalRef.current = null
+    }
 
     const fetchMetric = async () => {
       setLoading(true)
@@ -117,7 +122,6 @@ export function useDerivedMetric({
             if (resolution !== undefined) {
               effParams.set('resolution', resolution.toString())
             }
-            // Otherwise fetch full ride (server auto-downsamples to ~1000 points)
 
             url = `/api/rides/${rideId}/pedaling-efficiency${effParams.toString() ? `?${effParams}` : ''}`
             break
@@ -152,8 +156,6 @@ export function useDerivedMetric({
 
           // Handle new API response format with processing states
           if (data.status === 'pending' || data.status === 'processing') {
-            // Analysis is still being computed - don't cache, start polling
-            // Throw special error to trigger polling
             const pollingError = new Error('POLLING_REQUIRED')
             ;(pollingError as any).status = data.status
             throw pollingError
@@ -178,23 +180,19 @@ export function useDerivedMetric({
         const metricMetadata = result.metadata || null
 
         // Transform to common format
-        // Server handles time range filtering and downsampling
         const transformed = metricSamples.map((s: any) => {
           let value: number | null = null
 
-          // Extract numeric value based on metric type
           if (metric === 'pedalingEfficiency') {
             value = s.efficiencyPercent ?? (s.efficiency !== null && s.efficiency !== undefined ? s.efficiency * 100 : null)
           } else if (metric === 'ridingPosition') {
-            // For position, value is categorical (standing=1, seated=0, null=null)
-            // This allows for basic charting, but position should primarily use bar chart
             value = s.position === 'standing' ? 1 : s.position === 'seated' ? 0 : null
           }
 
           return {
             timestamp: s.timestamp,
             value,
-            ...s // Keep all original fields
+            ...s
           }
         })
 
@@ -203,33 +201,33 @@ export function useDerivedMetric({
         setLoading(false)
 
         // Stop polling if we got results
-        if (pollingInterval) {
-          clearInterval(pollingInterval)
-          pollingInterval = null
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current)
+          pollingIntervalRef.current = null
         }
       } catch (err: any) {
         // Handle polling case
         if (err.message === 'POLLING_REQUIRED') {
           setSamples([])
           setMetadata(null)
-          setLoading(true) // Keep loading indicator showing
+          setLoading(true)
 
           // Start polling every 3 seconds if not already polling
-          if (!pollingInterval) {
-            pollingInterval = setInterval(() => {
+          if (!pollingIntervalRef.current) {
+            pollingIntervalRef.current = setInterval(() => {
               fetchMetric()
             }, 3000)
           }
-          return // Don't set error state
+          return
         }
 
         console.error(`Failed to fetch ${metric}:`, err)
         setError(err.message)
 
         // Stop polling on error
-        if (pollingInterval) {
-          clearInterval(pollingInterval)
-          pollingInterval = null
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current)
+          pollingIntervalRef.current = null
         }
         setLoading(false)
       }
@@ -239,8 +237,9 @@ export function useDerivedMetric({
 
     // Cleanup polling on unmount or dependency change
     return () => {
-      if (pollingInterval) {
-        clearInterval(pollingInterval)
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current)
+        pollingIntervalRef.current = null
       }
     }
   }, [rideId, metric, timeRange, fitRecordingId, resolution, enabled, authFetch])

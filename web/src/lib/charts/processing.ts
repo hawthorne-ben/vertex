@@ -18,7 +18,7 @@ export interface IMUSample {
   yaw?: number | null
 }
 
-export type IMUDataType = 'orientation' | 'accel' | 'gyro' | 'smoothedAccel' | 'smoothedGyro' | 'trueOrientation'
+export type IMUDataType = 'orientation' | 'accel' | 'gyro'
 
 export interface ChartData {
   data: uPlot.AlignedData
@@ -118,7 +118,6 @@ export function processIMUChartData(
 
   switch (dataType) {
     case 'orientation':
-    case 'trueOrientation':
       data = [
         timestamps,
         finalSamples.map(s => s?.roll ?? null),
@@ -135,7 +134,6 @@ export function processIMUChartData(
       break
 
     case 'accel':
-    case 'smoothedAccel':
       data = [
         timestamps,
         finalSamples.map(s => s?.accel_x ?? null),
@@ -152,7 +150,6 @@ export function processIMUChartData(
       break
 
     case 'gyro':
-    case 'smoothedGyro':
       data = [
         timestamps,
         finalSamples.map(s => s?.gyro_x ?? null),
@@ -206,21 +203,18 @@ export function calculateIMUStats(
   const getValues = () => {
     switch (dataType) {
       case 'orientation':
-      case 'trueOrientation':
         return {
           'Roll': samples.map(s => s.roll ?? 0),
           'Pitch': samples.map(s => s.pitch ?? 0),
           'Yaw': samples.map(s => s.yaw ?? 0)
         }
       case 'accel':
-      case 'smoothedAccel':
         return {
           'X': samples.map(s => s.accel_x),
           'Y': samples.map(s => s.accel_y),
           'Z': samples.map(s => s.accel_z)
         }
       case 'gyro':
-      case 'smoothedGyro':
         return {
           'X': samples.map(s => s.gyro_x),
           'Y': samples.map(s => s.gyro_y),

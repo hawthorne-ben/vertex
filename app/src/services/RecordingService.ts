@@ -15,9 +15,10 @@ import BleService from './BleService';
 import GPSService from './GPSService';
 import { IMURecord, GPSRecord, VTXMetadata, VTXStreamEncoder } from '@vertex-pkg/vtx-parser';
 import { useDeviceStore } from '../stores/deviceStore';
+import { Platform } from 'react-native';
 import RNFS from 'react-native-fs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import WakeLockService from './WakeLockService';
+import NotificationService from './NotificationService';
 
 export type RecordingFormat = 'csv' | 'vtx';
 
@@ -50,9 +51,10 @@ class RecordingService {
 
   // Buffering with larger size for better performance
   private writeBuffer: IMUSensorData[] = [];
-  private readonly BUFFER_SIZE = 1000; // 10 seconds at 100Hz
+  private readonly BUFFER_SIZE = 250; // 2.5 seconds at 100Hz
   private isWriting: boolean = false;
   private isStopping: boolean = false; // Flag to prevent new flushes during stop
+  private flushPending: boolean = false;
 
   // GPS tracking
   private gpsBuffer: GPSRecord[] = [];
@@ -243,8 +245,14 @@ class RecordingService {
         await this.startGPSTracking();
       }
 
-      // Acquire wake lock to prevent CPU sleep
-      await WakeLockService.acquire();
+      // Start foreground service via notification (prevents OS from killing app)
+      await NotificationService.showRecordingNotification(
+        true,
+        deviceName,
+        '00:00',
+        0,
+        deviceId,
+      );
 
       // Persist session to survive crashes
       await this.persistSession();
@@ -293,37 +301,21 @@ class RecordingService {
       // Flush any remaining GPS data
       await this.flushGPSBuffer();
 
-      // Finalize VTX file if needed
+      // Header is already kept up-to-date by periodic updates in flushBuffer(),
+      // so no full-file rewrite is needed here.
       if (session.format === 'vtx' && this.vtxStreamEncoder) {
-        const finalHeader = this.vtxStreamEncoder.finalize();
-
-        // Read file and update header
-        const currentFile = await RNFS.readFile(session.filePath, 'base64');
-        const currentBytes = atob(currentFile);
-        const currentArray = new Uint8Array(currentBytes.length);
-        for (let i = 0; i < currentBytes.length; i++) {
-          currentArray[i] = currentBytes.charCodeAt(i);
-        }
-
-        // Replace header
-        for (let i = 0; i < finalHeader.length; i++) {
-          currentArray[i] = finalHeader[i];
-        }
-
-        // Write back
-        let binary = '';
-        for (let i = 0; i < currentArray.length; i++) {
-          binary += String.fromCharCode(currentArray[i]);
-        }
-        await RNFS.writeFile(session.filePath, btoa(binary), 'base64');
-
-        console.log('[RecordingService] VTX file finalized');
+        console.log('[RecordingService] VTX file finalized (header already current)');
       }
 
       console.log(`[RecordingService] Recording stopped: ${session.sampleCount} samples recorded`);
 
-      // Release wake lock
-      await WakeLockService.release();
+      // Stop foreground service (Android) or just hide notification (iOS)
+      if (Platform.OS === 'android') {
+        await NotificationService.stopForegroundService();
+        (global as any).__stopForegroundService?.();
+      } else {
+        await NotificationService.hideRecordingNotification();
+      }
 
       // Clear persisted session (recording complete)
       await this.clearPersistedSession();
@@ -562,7 +554,12 @@ class RecordingService {
    * Flush write buffer to file (async, non-blocking)
    */
   private async flushBuffer(): Promise<void> {
-    if (this.writeBuffer.length === 0 || this.isWriting || !this.currentSession) {
+    if (this.writeBuffer.length === 0 || !this.currentSession) {
+      return;
+    }
+
+    if (this.isWriting) {
+      this.flushPending = true;
       return;
     }
 
@@ -630,6 +627,21 @@ class RecordingService {
         }
       }
 
+      // Periodic header update: keep VTX header current so file is valid if app is killed
+      if (this.currentSession.format === 'vtx' && this.vtxStreamEncoder && this.currentSession.sampleCount > 0) {
+        try {
+          const header = this.vtxStreamEncoder.finalize();
+          let binary = '';
+          for (let i = 0; i < header.byteLength; i++) {
+            binary += String.fromCharCode(header[i]);
+          }
+          const headerBase64 = btoa(binary);
+          await RNFS.write(this.currentSession.filePath, headerBase64, 0, 'base64');
+        } catch (headerErr) {
+          console.warn('[RecordingService] Failed to update header:', headerErr);
+        }
+      }
+
       console.log(`[RecordingService] Flushed ${dataToWrite.length} samples to ${this.currentSession.format} file`);
     } catch (error: any) {
       console.error('[RecordingService] Write error:', error);
@@ -638,6 +650,14 @@ class RecordingService {
       this.writeBuffer.unshift(...dataToWrite);
     } finally {
       this.isWriting = false;
+
+      // Flush queue: if data arrived while we were writing, flush again
+      if (this.flushPending) {
+        this.flushPending = false;
+        this.flushBuffer().catch(err => {
+          console.error('[RecordingService] Queued flush error:', err);
+        });
+      }
     }
   }
 
@@ -768,6 +788,7 @@ class RecordingService {
     this.gpsBuffer = [];
     this.isWriting = false;
     this.isStopping = false;
+    this.flushPending = false;
     this.isGPSEnabled = false;
     this.vtxStreamEncoder = null;
     this.baseTimestamp = null;

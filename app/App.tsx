@@ -12,7 +12,7 @@ import { NavigationContainer, NavigationContainerRef } from '@react-navigation/n
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthProvider } from './src/contexts/AuthContext';
 import { ThemeProvider, useTheme } from './src/contexts/ThemeContext';
-import { ToastProvider } from './src/contexts/ToastContext';
+import { ToastProvider, useToast } from './src/contexts/ToastContext';
 import AppNavigator from './src/navigation/AppNavigator';
 import BleService from './src/services/BleService';
 import RecordingService from './src/services/RecordingService';
@@ -102,8 +102,12 @@ const autoConnectToDevice = async () => {
 };
 
 // Recovery check component that uses themed dialogs
-const RecoveryCheck: React.FC<{ onComplete: () => void }> = ({ onComplete }) => {
+const RecoveryCheck: React.FC<{
+  onComplete: () => void;
+  navigationRef: React.RefObject<NavigationContainerRef<any> | null>;
+}> = ({ onComplete, navigationRef }) => {
   const { theme } = useTheme();
+  const { showToast } = useToast();
   const [showRecoveryDialog, setShowRecoveryDialog] = useState(false);
   const [showSuccessDialog, setShowSuccessDialog] = useState(false);
   const [showErrorDialog, setShowErrorDialog] = useState(false);
@@ -128,12 +132,49 @@ const RecoveryCheck: React.FC<{ onComplete: () => void }> = ({ onComplete }) => 
           console.log('[RecoveryCheck] Is corrupted:', isCorrupted);
 
           if (isCorrupted) {
+            // Legacy file without periodic header updates — show recovery dialog
             console.log('[RecoveryCheck] File is corrupted, showing recovery dialog');
             setInterruptedSession(session);
             setShowRecoveryDialog(true);
           } else {
-            console.log('[RecoveryCheck] Session interrupted but file is fine, clearing session');
+            // File is valid thanks to periodic header updates.
+            // Clear session, then try to reconnect and auto-resume.
+            console.log('[RecoveryCheck] File is valid, attempting auto-resume...');
             await RecordingService.clearPersistedSession();
+
+            try {
+              // Attempt BLE reconnection with 10s timeout
+              const connectPromise = BleService.connectToDevice(session.deviceId);
+              const timeoutPromise = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('timeout')), 10000),
+              );
+              await Promise.race([connectPromise, timeoutPromise]);
+
+              console.log('[RecoveryCheck] Reconnected, navigating to Record screen');
+              showToast({
+                message: 'Recording resumed — previous segment saved',
+                variant: 'success',
+                duration: 4000,
+              });
+
+              // Navigate to RecordScreen to auto-start a new recording
+              setTimeout(() => {
+                navigationRef.current?.navigate('Record', {
+                  deviceId: session.deviceId,
+                  deviceName: session.deviceName,
+                  autoStart: true,
+                });
+              }, 300);
+            } catch {
+              // Reconnection failed — just inform the user the previous file was saved
+              console.log('[RecoveryCheck] Reconnection failed, previous recording saved');
+              showToast({
+                message: `Previous recording saved (${session.sampleCount.toLocaleString()} samples)`,
+                variant: 'info',
+                duration: 4000,
+              });
+            }
+
             onComplete();
           }
         } else {
@@ -297,7 +338,10 @@ function App() {
 
             {/* Recovery check on app startup */}
             {isCheckingRecovery && (
-              <RecoveryCheck onComplete={() => setIsCheckingRecovery(false)} />
+              <RecoveryCheck
+                onComplete={() => setIsCheckingRecovery(false)}
+                navigationRef={navigationRef}
+              />
             )}
           </AuthProvider>
         </ToastProvider>

@@ -4,7 +4,7 @@
  * Manages system notifications for recording status and connection state
  */
 
-import notifee, { AndroidImportance, AndroidStyle, EventType } from '@notifee/react-native';
+import notifee, { AndroidForegroundServiceType, AndroidImportance, AndroidStyle, EventType } from '@notifee/react-native';
 import { Platform } from 'react-native';
 
 class NotificationService {
@@ -74,6 +74,15 @@ class NotificationService {
           importance: AndroidImportance.LOW,
           ongoing: true, // Makes it persistent (can't swipe away)
           onlyAlertOnce: true, // Don't make sound/vibration on updates
+          // Foreground service keeps the app alive on Android; iOS uses UIBackgroundModes instead
+          ...(Platform.OS === 'android' && {
+            asForegroundService: true,
+            foregroundServiceTypes: [
+              AndroidForegroundServiceType.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+              AndroidForegroundServiceType.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+              AndroidForegroundServiceType.FOREGROUND_SERVICE_TYPE_LOCATION,
+            ],
+          }),
           style: {
             type: AndroidStyle.BIGTEXT,
             text: `${connectionStatus} • ${recordingTime} • ${sampleCount.toLocaleString()} samples`,
@@ -168,6 +177,17 @@ class NotificationService {
       });
     } catch (error) {
       console.error('[NotificationService] Failed to show connection restored notification:', error);
+    }
+  }
+
+  /**
+   * Stop the foreground service (must be called when recording ends)
+   */
+  async stopForegroundService(): Promise<void> {
+    try {
+      await notifee.stopForegroundService();
+    } catch (error) {
+      console.error('[NotificationService] Failed to stop foreground service:', error);
     }
   }
 

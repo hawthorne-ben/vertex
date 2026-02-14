@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useAuthFetch } from '@/hooks/useAuthFetch'
+import { apiCache } from '@/lib/cache/api-cache'
 
-export type IMUDataType = 'orientation' | 'accel' | 'gyro' | 'smoothedAccel' | 'smoothedGyro' | 'trueOrientation'
+export type IMUDataType = 'orientation' | 'accel' | 'gyro'
 
 export interface IMUSample {
   timestamp: string
@@ -94,13 +95,15 @@ export function useIMUData({
             ? `/api/rides/${rideId}/vtx-samples?${params}`
             : `/api/rides/${rideId}/vtx-samples`
 
-          const response = await authFetch(url)
+          const { samples: fetchedSamples, metadata, coverage } = await apiCache.getOrFetch(url, async () => {
+            const response = await authFetch(url)
 
-          if (!response.ok) {
-            throw new Error(`Failed to fetch data: ${response.statusText}`)
-          }
+            if (!response.ok) {
+              throw new Error(`Failed to fetch data: ${response.statusText}`)
+            }
 
-          const { samples: fetchedSamples, metadata, coverage } = await response.json()
+            return response.json()
+          })
 
           // Transform samples to consistent format
           const transformed = fetchedSamples.map((s: any) => ({
@@ -148,15 +151,7 @@ export function useIMUData({
               params.set('resolution', 'high')
             }
 
-            // Choose endpoint based on data type
-            let endpoint: string
-            if (dataType === 'trueOrientation') {
-              endpoint = `/api/recordings/${recording.id}/samples/filtered`
-            } else if (dataType === 'smoothedAccel' || dataType === 'smoothedGyro') {
-              endpoint = `/api/recordings/${recording.id}/samples/smoothed`
-            } else {
-              endpoint = `/api/recordings/${recording.id}/samples`
-            }
+            const endpoint = `/api/recordings/${recording.id}/samples`
 
             const url = params.toString() ? `${endpoint}?${params}` : endpoint
 

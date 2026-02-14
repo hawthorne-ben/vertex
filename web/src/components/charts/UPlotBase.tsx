@@ -15,13 +15,12 @@ export interface UPlotBaseProps {
   height?: number
   highlightTime?: number | null // Unix timestamp in seconds
   onZoom?: (start: string, end: string) => void
-  syncKey?: string
   className?: string
 }
 
 /**
  * Pure uPlot rendering component
- * Handles: rendering, resize, cursor sync, theme detection, highlight line
+ * Handles: rendering, resize, theme detection, highlight line, zoom
  * Does NOT handle: data fetching, processing, or business logic
  */
 export function UPlotBase({
@@ -34,25 +33,24 @@ export function UPlotBase({
   height = 400,
   highlightTime,
   onZoom,
-  syncKey = 'chart-sync',
   className = ''
 }: UPlotBaseProps) {
   const chartRef = useRef<HTMLDivElement>(null)
   const uplotRef = useRef<uPlot | null>(null)
-  const highlightTimeRef = useRef<number | null>(highlightTime || null)
+  const highlightTimeRef = useRef<number | null>(highlightTime ?? null)
 
   // Keep ref in sync with prop
   useEffect(() => {
-    highlightTimeRef.current = highlightTime || null
+    highlightTimeRef.current = highlightTime ?? null
   }, [highlightTime])
 
-  // Plugin to draw vertical highlight line
+  // Plugin to draw vertical highlight line at a given timestamp
   const highlightPlugin: uPlot.Plugin = {
     hooks: {
       draw: [
         (u) => {
           const ht = highlightTimeRef.current
-          if (ht === null || ht === undefined) return
+          if (ht === null) return
 
           const ctx = u.ctx
           const plotData = u.data
@@ -60,25 +58,25 @@ export function UPlotBase({
 
           const timestamps = plotData[0] as number[]
 
-          // Find closest timestamp
-          let closestIdx = 0
-          let minDiff = Math.abs(timestamps[0] - ht)
-          for (let i = 1; i < timestamps.length; i++) {
-            const diff = Math.abs(timestamps[i] - ht)
-            if (diff < minDiff) {
-              minDiff = diff
-              closestIdx = i
-            }
+          // Binary search for closest timestamp
+          let lo = 0
+          let hi = timestamps.length - 1
+          while (lo < hi) {
+            const mid = (lo + hi) >> 1
+            if (timestamps[mid] < ht) lo = mid + 1
+            else hi = mid
+          }
+          // Check if the previous index is closer
+          if (lo > 0 && Math.abs(timestamps[lo - 1] - ht) < Math.abs(timestamps[lo] - ht)) {
+            lo = lo - 1
           }
 
-          // Get pixel position
-          const x = u.valToPos(timestamps[closestIdx], 'x', true)
+          const x = u.valToPos(timestamps[lo], 'x', true)
           const plotTop = u.bbox.top
           const plotBottom = u.bbox.top + u.bbox.height
 
-          // Draw vertical line
           ctx.save()
-          ctx.strokeStyle = 'rgba(59, 130, 246, 0.6)' // Blue
+          ctx.strokeStyle = 'rgba(59, 130, 246, 0.6)'
           ctx.lineWidth = 2
           ctx.setLineDash([5, 5])
           ctx.beginPath()
@@ -86,6 +84,29 @@ export function UPlotBase({
           ctx.lineTo(x, plotBottom)
           ctx.stroke()
           ctx.restore()
+        }
+      ]
+    }
+  }
+
+  // Zoom plugin
+  const zoomPlugin: uPlot.Plugin = {
+    hooks: {
+      setSelect: [
+        (u: uPlot) => {
+          const select = u.select
+          if (!select || select.left == null || select.width == null) return
+          if (select.width === 0) return
+
+          const startVal = u.posToVal(select.left, 'x')
+          const endVal = u.posToVal(select.left + select.width, 'x')
+
+          const start = new Date(startVal * 1000).toISOString()
+          const end = new Date(endVal * 1000).toISOString()
+
+          u.setSelect({ left: 0, top: 0, width: 0, height: 0 })
+
+          onZoom?.(start, end)
         }
       ]
     }
@@ -130,7 +151,6 @@ export function UPlotBase({
     // Build default axes if not provided
     const defaultAxes: uPlot.Axis[] = [
       {
-        // X-axis (time)
         space: 80,
         grid: { show: true, stroke: gridColor },
         stroke: textColor,
@@ -141,14 +161,18 @@ export function UPlotBase({
         })
       },
       {
-        // Y-axis
-        side: 3, // left
+        side: 3,
         grid: { show: true, stroke: gridColor },
         stroke: textColor,
         size: 70,
         space: 40,
       }
     ]
+
+    const plugins: uPlot.Plugin[] = [highlightPlugin]
+    if (onZoom) {
+      plugins.push(zoomPlugin)
+    }
 
     const opts: uPlot.Options = {
       width: chartRef.current.clientWidth,
@@ -157,43 +181,9 @@ export function UPlotBase({
       scales: scales,
       axes: axes || defaultAxes,
       cursor: {
-        sync: { key: syncKey },
-        drag: { x: true, y: false },
+        drag: { x: !!onZoom, y: false },
       },
-      plugins: [
-        // Highlight plugin - only include if highlightTime prop is provided
-        ...(highlightTime !== null && highlightTime !== undefined ? [highlightPlugin] : []),
-        // Zoom plugin - only include if onZoom callback is provided
-        ...(onZoom ? [{
-          hooks: {
-            setSelect: [
-              (u: uPlot) => {
-                // setSelect is called when user completes a drag selection
-                const select = u.select
-                if (!select || select.left == null || select.width == null) return
-
-                // Ignore if selection is being cleared (width is 0)
-                if (select.width === 0) return
-
-                // Convert pixel coordinates to data values
-                const left = select.left
-                const width = select.width
-                const startVal = u.posToVal(left, 'x')
-                const endVal = u.posToVal(left + width, 'x')
-
-                const start = new Date(startVal * 1000).toISOString()
-                const end = new Date(endVal * 1000).toISOString()
-
-                // Clear selection (this will trigger setSelect again but width will be 0)
-                u.setSelect({ left: 0, top: 0, width: 0, height: 0 })
-
-                // Trigger zoom callback
-                onZoom(start, end)
-              }
-            ]
-          }
-        }] : [])
-      ]
+      plugins,
     }
 
     // Create new chart
@@ -212,7 +202,7 @@ export function UPlotBase({
       }
     }, 0)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [series, axes, scales, height, syncKey, onZoom])
+  }, [series, axes, scales, height, onZoom])
 
   // Effect to update data when it changes (without recreating chart)
   useEffect(() => {
@@ -224,6 +214,24 @@ export function UPlotBase({
       // Chart might be recreating
     }
   }, [data])
+
+  // Effect to update scales when they change (e.g. zoom range)
+  useEffect(() => {
+    if (!uplotRef.current || !scales) return
+
+    try {
+      for (const [key, scale] of Object.entries(scales)) {
+        if (scale.range && Array.isArray(scale.range)) {
+          uplotRef.current.setScale(key, {
+            min: scale.range[0] as number,
+            max: scale.range[1] as number,
+          })
+        }
+      }
+    } catch (err) {
+      // Chart might be recreating
+    }
+  }, [scales])
 
   // Effect to handle resize
   useEffect(() => {
@@ -263,14 +271,11 @@ export function UPlotBase({
     }
   }, [])
 
-  // Trigger redraw when highlightTime changes
+  // Trigger redraw when highlightTime changes (plugin reads from ref)
   useEffect(() => {
     if (uplotRef.current && highlightTime !== null && highlightTime !== undefined) {
       requestAnimationFrame(() => {
-        if (uplotRef.current) {
-          const currentData = uplotRef.current.data
-          uplotRef.current.setData(currentData)
-        }
+        uplotRef.current?.redraw(false, false)
       })
     }
   }, [highlightTime])

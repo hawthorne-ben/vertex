@@ -7,6 +7,7 @@
 
 import Geolocation from 'react-native-geolocation-service';
 import { PermissionsAndroid, Platform } from 'react-native';
+import { check, request, PERMISSIONS, RESULTS } from 'react-native-permissions';
 import { GPSRecord } from '@vertex-pkg/vtx-parser';
 
 export interface GPSServiceOptions {
@@ -28,11 +29,24 @@ class GPSService {
    * Request location permissions
    */
   async requestPermissions(): Promise<boolean> {
-    if (Platform.OS !== 'android') {
-      return false;
-    }
-
     try {
+      if (Platform.OS === 'ios') {
+        const whenInUse = await request(PERMISSIONS.IOS.LOCATION_WHEN_IN_USE);
+        if (whenInUse !== RESULTS.GRANTED) {
+          console.log('[GPSService] iOS when-in-use location denied');
+          return false;
+        }
+
+        const always = await request(PERMISSIONS.IOS.LOCATION_ALWAYS);
+        if (always !== RESULTS.GRANTED) {
+          console.log('[GPSService] iOS always-location denied, continuing with when-in-use');
+          // Still usable with when-in-use, just won't track in background
+        }
+
+        console.log('[GPSService] iOS location permissions granted');
+        return true;
+      }
+
       const fineLocation = await PermissionsAndroid.request(
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
         {
@@ -76,11 +90,12 @@ class GPSService {
    * Check if location permissions are granted
    */
   async hasPermissions(): Promise<boolean> {
-    if (Platform.OS !== 'android') {
-      return false;
-    }
-
     try {
+      if (Platform.OS === 'ios') {
+        const status = await check(PERMISSIONS.IOS.LOCATION_WHEN_IN_USE);
+        return status === RESULTS.GRANTED;
+      }
+
       const granted = await PermissionsAndroid.check(
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
       );

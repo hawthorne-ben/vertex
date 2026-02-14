@@ -39,7 +39,7 @@ export function IMUSensorChart({
   initialSamples,
   originalCount: propOriginalCount
 }: IMUSensorChartProps) {
-  const [dataType, setDataType] = useState<IMUDataType>('orientation')
+  const [dataType, setDataType] = useState<IMUDataType>('accel')
 
   // Fetch data using hook
   // Skip fetching if initialSamples are provided (recording detail page)
@@ -80,11 +80,9 @@ export function IMUSensorChart({
   const getTitle = () => {
     switch (dataType) {
       case 'orientation': return 'Orientation (BNO055)'
-      case 'trueOrientation': return 'True* Orientation (Bicycle Filter)'
       case 'accel': return 'Accelerometer'
-      case 'smoothedAccel': return 'Smoothed Accelerometer (0.1Hz EMA)'
       case 'gyro': return 'Gyroscope'
-      case 'smoothedGyro': return 'Smoothed Gyroscope (2Hz EMA)'
+      default: return 'Accelerometer'
     }
   }
 
@@ -92,7 +90,7 @@ export function IMUSensorChart({
 
   // Auto-switch to accel if orientation data is not available
   useEffect(() => {
-    if (!loading && samples.length > 0 && !hasOrientationData && (dataType === 'orientation' || dataType === 'trueOrientation')) {
+    if (!loading && samples.length > 0 && !hasOrientationData && dataType === 'orientation') {
       setDataType('accel')
     }
   }, [loading, samples.length, hasOrientationData, dataType])
@@ -110,15 +108,10 @@ export function IMUSensorChart({
             disabled={loading}
           >
             {hasOrientationData && (
-              <>
-                <option value="orientation">Orientation (BNO055)</option>
-                <option value="trueOrientation">True* Orientation (Bicycle Filter)</option>
-              </>
+              <option value="orientation">Orientation (BNO055)</option>
             )}
             <option value="accel">Accelerometer</option>
             <option value="gyro">Gyroscope</option>
-            <option value="smoothedAccel">Smoothed Accelerometer (0.1Hz)</option>
-            <option value="smoothedGyro">Smoothed Gyroscope (2Hz)</option>
           </select>
         </div>
 
@@ -161,7 +154,6 @@ export function IMUSensorChart({
             unit={chartData.yAxisLabel}
             highlightTime={highlightTime}
             onZoom={onZoomChange ? (start, end) => onZoomChange({ start, end }) : undefined}
-            syncKey="imu-sensor-sync"
           />
         )}
       </div>

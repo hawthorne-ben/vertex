@@ -1,10 +1,8 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
-import { useAuthFetch } from '@/hooks/useAuthFetch'
+import { useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { findClosestByTime } from '@/lib/sync/fit-vtx-sync'
 
 // Dynamically import charts to avoid SSR issues
 const SingleMetricChart = dynamic(
@@ -17,16 +15,9 @@ const ElevationProfile = dynamic(
   { ssr: false, loading: () => <div className="h-[250px] bg-muted rounded-lg animate-pulse" /> }
 )
 
-const RideMap = dynamic(
-  () => import('./ride-map').then(mod => ({ default: mod.RideMap })),
-  { ssr: false, loading: () => <div className="h-[400px] bg-muted rounded-lg animate-pulse" /> }
-)
-
 interface RideChartsClientProps {
   rideId: string
   fitRecordingId: string | null
-  showMap?: boolean
-  onElevationUpdate?: (elevationMeters: number) => void
   highlightTime?: number | null // Unix timestamp in seconds to highlight
   samples?: Sample[]
   loading?: boolean
@@ -45,14 +36,11 @@ interface Sample {
   heart_rate?: number | null
   cadence?: number | null
   temperature?: number | null
-  grade?: number | null
 }
 
 export function RideChartsClient({
   rideId,
   fitRecordingId,
-  showMap = false,
-  onElevationUpdate,
   highlightTime,
   samples: propSamples,
   loading: propLoading,
@@ -60,18 +48,11 @@ export function RideChartsClient({
   zoomRange,
   onZoomChange
 }: RideChartsClientProps) {
-  const [fetchedSamples, setFetchedSamples] = useState<Sample[]>([])
-  const [fetchedLoading, setFetchedLoading] = useState(true)
-  const [fetchedError, setFetchedError] = useState<string | null>(null)
-  const [hoverIndex, setHoverIndex] = useState<number | null>(null)
-  const { authFetch } = useAuthFetch()
+  const samples = propSamples ?? []
+  const loading = propLoading ?? false
+  const error = propError ?? null
 
-  // Use props if provided, otherwise use fetched state
-  const samples = propSamples ?? fetchedSamples
-  const loading = propLoading ?? fetchedLoading
-  const error = propError ?? fetchedError
-
-  // Filter samples by zoom range if provided (MUST be before highlightIndex calculation)
+  // Filter samples by zoom range if provided
   const filteredSamples = useMemo(() => {
     if (!zoomRange) return samples
 
@@ -84,77 +65,34 @@ export function RideChartsClient({
     })
   }, [samples, zoomRange])
 
-  // Convert highlightTime to sample index in FILTERED samples (using shared sync library)
-  const highlightIndex = useMemo(() => {
-    if (highlightTime === null || highlightTime === undefined || filteredSamples.length === 0) {
-      return null
-    }
+  // Check what data we have based on filtered samples
+  const dataAvailability = useMemo(() => ({
+    hasPower: filteredSamples.some(s => s.power_watts !== null && s.power_watts !== undefined),
+    hasHR: filteredSamples.some(s => s.heart_rate !== null && s.heart_rate !== undefined),
+    hasCadence: filteredSamples.some(s => s.cadence !== null && s.cadence !== undefined),
+    hasSpeed: filteredSamples.some(s => s.speed_ms !== null && s.speed_ms !== undefined),
+    hasElevation: filteredSamples.some(s => s.altitude !== null && s.altitude !== undefined),
+  }), [filteredSamples])
 
-    const result = findClosestByTime(filteredSamples, highlightTime)
-    return result?.index ?? null
-  }, [highlightTime, filteredSamples])
+  const { hasPower, hasHR, hasCadence, hasSpeed, hasElevation } = dataAvailability
 
-  // Use highlightIndex if set, otherwise use hoverIndex
-  const activeIndex = highlightIndex !== null && highlightIndex !== -1 ? highlightIndex : hoverIndex
-
-  // Only fetch if samples not provided as prop
-  useEffect(() => {
-    async function loadSamples() {
-      if (propSamples !== undefined) {
-        // Samples provided as prop, skip fetch
-        return
-      }
-
-      if (!fitRecordingId) {
-        setFetchedError('No FIT file associated with this ride')
-        setFetchedLoading(false)
-        return
-      }
-
-      try {
-        const response = await authFetch(`/api/rides/${rideId}/samples`)
-
-        if (!response.ok) {
-          const errorData = await response.json()
-          throw new Error(errorData.error || 'Failed to fetch ride data')
-        }
-
-        const { samples: sampleData } = await response.json()
-        setFetchedSamples(sampleData)
-      } catch (err: any) {
-        console.error('Failed to load ride data:', err)
-        setFetchedError(err.message)
-      } finally {
-        setFetchedLoading(false)
-      }
-    }
-
-    loadSamples()
-  }, [rideId, fitRecordingId, propSamples, authFetch])
-
-  // Check what data we have (must be before any returns for hooks rules)
-  const hasPower = samples.some(s => s.power_watts !== null && s.power_watts !== undefined)
-  const hasHR = samples.some(s => s.heart_rate !== null && s.heart_rate !== undefined)
-  const hasCadence = samples.some(s => s.cadence !== null && s.cadence !== undefined)
-  const hasSpeed = samples.some(s => s.speed_ms !== null && s.speed_ms !== undefined)
-  const hasElevation = samples.some(s => s.altitude !== null && s.altitude !== undefined)
-  const hasGpsData = samples.some(s => s.latitude !== null && s.longitude !== null)
-
-  // Debug: log what data is available
-  useEffect(() => {
-    if (samples.length > 0) {
-      console.log('[RideChartsClient] Data availability:', {
-        hasPower,
-        hasHR,
-        hasCadence,
-        hasSpeed,
-        hasElevation,
-        hasGpsData,
-        sampleCount: samples.length,
-        firstSample: samples[0]
-      })
-    }
-  }, [samples, hasPower, hasHR, hasCadence, hasSpeed, hasElevation, hasGpsData])
+  // Prepare data for individual charts (memoized)
+  const powerData = useMemo(() =>
+    filteredSamples.map(s => ({ timestamp: s.timestamp, value: s.power_watts ?? null })),
+    [filteredSamples]
+  )
+  const hrData = useMemo(() =>
+    filteredSamples.map(s => ({ timestamp: s.timestamp, value: s.heart_rate ?? null })),
+    [filteredSamples]
+  )
+  const cadenceData = useMemo(() =>
+    filteredSamples.map(s => ({ timestamp: s.timestamp, value: s.cadence ?? null })),
+    [filteredSamples]
+  )
+  const speedData = useMemo(() =>
+    filteredSamples.map(s => ({ timestamp: s.timestamp, value: s.speed_ms ? s.speed_ms * 2.23694 : null })),
+    [filteredSamples]
+  )
 
   if (loading) {
     return (
@@ -194,23 +132,6 @@ export function RideChartsClient({
     )
   }
 
-  // Prepare data for individual charts
-  const powerData = filteredSamples.map(s => ({ timestamp: s.timestamp, value: s.power_watts ?? null }))
-  const hrData = filteredSamples.map(s => ({ timestamp: s.timestamp, value: s.heart_rate ?? null }))
-  const cadenceData = filteredSamples.map(s => ({ timestamp: s.timestamp, value: s.cadence ?? null }))
-  const speedData = filteredSamples.map(s => ({ timestamp: s.timestamp, value: s.speed_ms ? s.speed_ms * 2.23694 : null })) // m/s to mph
-
-  // Prepare GPS track for map
-  const gpsTrack = samples
-    .filter(s => s.latitude !== null && s.longitude !== null)
-    .map(s => ({
-      lat: s.latitude!,
-      lon: s.longitude!,
-      altitude: s.altitude,
-      speed: s.speed_ms,
-      timestamp: s.timestamp,
-    }))
-
   const hasAnyData = hasPower || hasHR || hasCadence || hasSpeed || hasElevation
 
   if (!hasAnyData) {
@@ -231,26 +152,6 @@ export function RideChartsClient({
   return (
     <div className="space-y-6">
 
-      {/* GPS Map (if enabled and data available) */}
-      {showMap && hasGpsData && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Route Map</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <RideMap
-              gpsTrack={gpsTrack}
-              hoverIndex={activeIndex}
-              onPointClick={(index) => {
-                // Future: sync to charts
-              }}
-              colorBy="speed"
-              className="w-full"
-            />
-          </CardContent>
-        </Card>
-      )}
-
       {/* Performance Charts Grid - 2 per row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Power Chart */}
@@ -264,10 +165,8 @@ export function RideChartsClient({
                 samples={powerData}
                 label="Power"
                 unit="W"
-                highlightIndex={activeIndex}
+                highlightTime={highlightTime}
                 color="#ef4444"
-                onHover={setHoverIndex}
-                syncKey="ride-sync"
                 className="w-full"
               />
             </CardContent>
@@ -285,10 +184,8 @@ export function RideChartsClient({
                 samples={hrData}
                 label="Heart Rate"
                 unit="bpm"
-                highlightIndex={activeIndex}
+                highlightTime={highlightTime}
                 color="#ec4899"
-                onHover={setHoverIndex}
-                syncKey="ride-sync"
                 className="w-full"
               />
             </CardContent>
@@ -306,10 +203,8 @@ export function RideChartsClient({
                 samples={cadenceData}
                 label="Cadence"
                 unit="rpm"
-                highlightIndex={activeIndex}
+                highlightTime={highlightTime}
                 color="#3b82f6"
-                onHover={setHoverIndex}
-                syncKey="ride-sync"
                 className="w-full"
               />
             </CardContent>
@@ -327,10 +222,8 @@ export function RideChartsClient({
                 samples={speedData}
                 label="Speed"
                 unit="mph"
-                highlightIndex={activeIndex}
+                highlightTime={highlightTime}
                 color="#10b981"
-                onHover={setHoverIndex}
-                syncKey="ride-sync"
                 className="w-full"
               />
             </CardContent>
@@ -347,16 +240,11 @@ export function RideChartsClient({
           <CardContent className="pt-0">
             <ElevationProfile
               samples={samples}
-              onHover={setHoverIndex}
               highlightTime={highlightTime}
               zoomRange={zoomRange}
               onZoom={onZoomChange ? (start, end) => onZoomChange({ start, end }) : undefined}
-              syncKey="ride-sync"
               className="w-full"
             />
-            <div className="mt-3 text-xs text-muted-foreground">
-              <p>Hover over steep sections to see grade percentage.</p>
-            </div>
           </CardContent>
         </Card>
       )}

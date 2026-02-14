@@ -1,7 +1,6 @@
 'use client'
 
 import { useMemo } from 'react'
-import uPlot from 'uplot'
 
 interface RidingPositionSample {
   timestamp: string
@@ -84,11 +83,26 @@ export function RidingPositionChart({
     return result
   }, [samples])
 
+  // Compute highlight position as a clamped percentage (only when we have data)
+  const highlightPercent = useMemo(() => {
+    if (highlightTime === null || highlightTime === undefined || samples.length === 0) return null
+
+    const startMs = new Date(samples[0].timestamp).getTime()
+    const endMs = new Date(samples[samples.length - 1].timestamp).getTime()
+    const totalDuration = endMs - startMs
+    if (totalDuration <= 0) return null
+
+    const pct = ((highlightTime * 1000 - startMs) / totalDuration) * 100
+    // Clamp to chart bounds
+    if (pct < 0 || pct > 100) return null
+    return pct
+  }, [highlightTime, samples])
+
   return (
     <div className="space-y-4">
       {/* Bar chart visualization */}
       <div className="border border-border rounded-lg p-6 bg-card">
-        <div className="relative" style={{ height: '200px' }}>
+        <div className="relative overflow-hidden" style={{ height: '200px' }}>
           {segments.length === 0 ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
               No position data available (not pedaling)
@@ -109,7 +123,6 @@ export function RidingPositionChart({
                 const leftPercent = ((segment.start - startTime) / totalDuration) * 100
                 const widthPercent = ((segment.end - segment.start) / totalDuration) * 100
 
-                // Format position for display
                 const positionLabel = segment.position
                   ? segment.position.charAt(0).toUpperCase() + segment.position.slice(1)
                   : 'Unknown'
@@ -122,20 +135,22 @@ export function RidingPositionChart({
                       left: `${leftPercent}%`,
                       width: `${widthPercent}%`,
                       backgroundColor: segment.position === 'standing'
-                        ? 'hsl(25, 90%, 55%)' // Orange
-                        : 'hsl(145, 70%, 50%)', // Green
+                        ? 'hsl(25, 90%, 55%)'
+                        : 'hsl(145, 70%, 50%)',
                     }}
                     title={`${positionLabel}: ${new Date(segment.start).toLocaleTimeString()} - ${new Date(segment.end).toLocaleTimeString()}`}
                   />
                 )
               })}
 
-              {/* Highlight indicator */}
-              {highlightTime !== null && highlightTime !== undefined && (
+              {/* Highlight indicator — dashed blue, bounded */}
+              {highlightPercent !== null && (
                 <div
-                  className="absolute top-0 bottom-0 w-0.5 bg-red-500 z-10 pointer-events-none"
+                  className="absolute top-0 bottom-0 z-10 pointer-events-none"
                   style={{
-                    left: `${((highlightTime - new Date(samples[0].timestamp).getTime()) / (new Date(samples[samples.length - 1].timestamp).getTime() - new Date(samples[0].timestamp).getTime())) * 100}%`
+                    left: `${highlightPercent}%`,
+                    width: '2px',
+                    backgroundImage: 'repeating-linear-gradient(to bottom, rgba(59,130,246,0.6) 0px, rgba(59,130,246,0.6) 5px, transparent 5px, transparent 10px)',
                   }}
                 />
               )}

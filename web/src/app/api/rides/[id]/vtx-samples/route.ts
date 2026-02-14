@@ -6,9 +6,15 @@ import { downsampleLTTB } from '@/lib/data/downsampling'
 import { LRUCache } from 'lru-cache'
 
 // Cache for coverage ranges (computed once per file, keyed by storage path)
+// No TTL — VTX files are immutable, coverage never changes
 const coverageCache = new LRUCache<string, Array<{ start: number; end: number }>>({
-  max: 100, // Cache up to 100 rides
-  ttl: 1000 * 60 * 60, // 1 hour TTL
+  max: 100,
+})
+
+// Cache for decoded+downsampled results (keyed by storagePath + query params)
+// No TTL — VTX files are immutable, same inputs always produce same output
+const resultCache = new LRUCache<string, any>({
+  max: 50,
 })
 
 export const dynamic = 'force-dynamic'
@@ -145,6 +151,13 @@ export async function GET(
 
       storagePath = vtxRecording.storage_path
       source = 'individual'
+    }
+
+    // Check result cache before doing any decoding work
+    const resultCacheKey = `${storagePath}:${startTime || ''}:${endTime || ''}:${downsample}:${fieldsParam || ''}`
+    const cachedResult = resultCache.get(resultCacheKey)
+    if (cachedResult) {
+      return NextResponse.json(cachedResult)
     }
 
     // Download VTX file from storage (with caching)
@@ -339,7 +352,7 @@ export async function GET(
       })
     }
 
-    return NextResponse.json({
+    const responseBody = {
       samples: finalSamples,
       metadata: {
         source,
@@ -354,7 +367,11 @@ export async function GET(
         merged_at: ride.merged_at || null
       },
       coverage: coverageRanges
-    })
+    }
+
+    resultCache.set(resultCacheKey, responseBody)
+
+    return NextResponse.json(responseBody)
 
   } catch (error) {
     console.error('VTX samples error:', error)
