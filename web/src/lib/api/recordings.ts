@@ -146,5 +146,23 @@ export const recordingsApi = {
       .maybeSingle()
 
     return !!data
+  },
+
+  /**
+   * Get the ride ID associated with a recording via ride_recordings join table
+   */
+  async getRideForRecording(recordingId: string): Promise<string | null> {
+    const client = createClient()
+    const { data, error } = await client
+      .from('ride_recordings')
+      .select('ride_id')
+      .eq('recording_id', recordingId)
+      .maybeSingle()
+
+    if (error || !data) {
+      return null
+    }
+
+    return data.ride_id
   }
 }

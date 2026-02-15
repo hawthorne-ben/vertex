@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { FileText, X, Upload, Loader2 } from 'lucide-react'
+import { FileText, X, Upload, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
 
 interface FileToUpload {
   file: File
@@ -121,50 +121,123 @@ export function ConfirmationModal({ files, isOpen, onConfirm, onCancel, onRemove
   )
 }
 
+export type UploadPhase = 'uploading' | 'processing' | 'complete' | 'error'
+
 interface UploadProgressModalProps {
   isOpen: boolean
   currentFile: string
   progress: number
   totalFiles: number
   currentFileIndex: number
+  phase?: UploadPhase
+  errorMessage?: string
+  onDismiss?: () => void
 }
 
-export function UploadProgressModal({ isOpen, currentFile, progress, totalFiles, currentFileIndex }: UploadProgressModalProps) {
+export function UploadProgressModal({ isOpen, currentFile, progress, totalFiles, currentFileIndex, phase = 'uploading', errorMessage, onDismiss }: UploadProgressModalProps) {
   if (!isOpen) return null
+
+  const titles: Record<UploadPhase, string> = {
+    uploading: 'Uploading Files',
+    processing: 'Processing Ride Data',
+    complete: 'Processing Complete',
+    error: 'Processing Error',
+  }
 
   return (
     <div className="fixed inset-0 bg-black/30 backdrop-blur-sm flex items-center justify-center z-50 p-4">
       <div className="bg-background border border-border rounded-xl shadow-2xl max-w-md w-full">
         {/* Header */}
         <div className="p-6 border-b border-border">
-          <h2 className="text-xl font-medium text-primary">Uploading Files</h2>
+          <h2 className="text-xl font-medium text-primary">{titles[phase]}</h2>
         </div>
 
         {/* Content */}
         <div className="p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <Loader2 className="w-6 h-6 text-primary animate-spin" />
-            <div className="flex-grow">
-              <p className="text-sm text-primary font-medium truncate">
-                {currentFile}
-              </p>
-              <p className="text-xs text-secondary">
-                File {currentFileIndex + 1} of {totalFiles}
-              </p>
-            </div>
-          </div>
+          {phase === 'uploading' && (
+            <>
+              <div className="flex items-center gap-3 mb-4">
+                <Loader2 className="w-6 h-6 text-primary animate-spin" />
+                <div className="flex-grow">
+                  <p className="text-sm text-primary font-medium truncate">
+                    {currentFile}
+                  </p>
+                  <p className="text-xs text-secondary">
+                    File {currentFileIndex + 1} of {totalFiles}
+                  </p>
+                </div>
+              </div>
 
-          {/* Progress bar */}
-          <div className="w-full bg-muted rounded-full h-2 mb-2">
-            <div 
-              className="bg-primary h-2 rounded-full transition-all duration-300"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-          
-          <p className="text-xs text-secondary text-center">
-            {progress.toFixed(0)}% complete
-          </p>
+              {/* Progress bar */}
+              <div className="w-full bg-muted rounded-full h-2 mb-2">
+                <div
+                  className="bg-primary h-2 rounded-full transition-all duration-300"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+
+              <p className="text-xs text-secondary text-center">
+                {progress.toFixed(0)}% complete
+              </p>
+            </>
+          )}
+
+          {phase === 'processing' && (
+            <>
+              <div className="flex items-center gap-3 mb-4">
+                <Loader2 className="w-6 h-6 text-primary animate-spin" />
+                <div className="flex-grow">
+                  <p className="text-sm text-primary font-medium">
+                    Processing ride data...
+                  </p>
+                  <p className="text-xs text-secondary">
+                    This usually takes a few seconds
+                  </p>
+                </div>
+              </div>
+
+              {/* Indeterminate progress bar */}
+              <div className="w-full bg-muted rounded-full h-2 overflow-hidden">
+                <div className="bg-primary h-2 rounded-full animate-pulse w-full" />
+              </div>
+            </>
+          )}
+
+          {phase === 'complete' && (
+            <div className="flex items-center gap-3">
+              <CheckCircle2 className="w-6 h-6 text-green-500 flex-shrink-0" />
+              <div className="flex-grow">
+                <p className="text-sm text-primary font-medium">
+                  Processing complete! Redirecting...
+                </p>
+              </div>
+            </div>
+          )}
+
+          {phase === 'error' && (
+            <>
+              <div className="flex items-center gap-3 mb-4">
+                <AlertCircle className="w-6 h-6 text-error flex-shrink-0" />
+                <div className="flex-grow">
+                  <p className="text-sm text-primary font-medium">
+                    Something went wrong
+                  </p>
+                  <p className="text-xs text-secondary mt-1">
+                    {errorMessage || 'An unexpected error occurred during processing.'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <button
+                  onClick={onDismiss}
+                  className="px-4 py-2 text-sm bg-primary text-primary-foreground hover:bg-primary/90 rounded-md transition-colors"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

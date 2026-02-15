@@ -1,14 +1,15 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { Upload, FileText } from 'lucide-react'
-import { ConfirmationModal, UploadProgressModal } from '@/components/upload-modals'
+import { ConfirmationModal, UploadProgressModal, UploadPhase } from '@/components/upload-modals'
 import { TusUploader } from '@/lib/upload/tus-uploader'
 import { useToast } from '@/components/ui/toast-context'
 import { authFetch } from '@/lib/api/auth-headers'
+import { recordingsApi } from '@/lib/api/recordings'
 
 interface FileToUpload {
   file: File
@@ -23,6 +24,9 @@ export default function UploadPage() {
   const [lastProgress, setLastProgress] = useState(0)
   const [currentFileIndex, setCurrentFileIndex] = useState(0)
   const [currentFileName, setCurrentFileName] = useState('')
+  const [uploadPhase, setUploadPhase] = useState<UploadPhase>('uploading')
+  const [uploadError, setUploadError] = useState<string | undefined>()
+  const pollingRef = useRef<NodeJS.Timeout | null>(null)
   const router = useRouter()
   const { addToast } = useToast()
 
@@ -77,6 +81,8 @@ export default function UploadPage() {
     console.log(`🚀 Starting upload for ${selectedFiles.length} files`)
     setShowConfirmation(false)
     setShowUploadProgress(true)
+    setUploadPhase('uploading')
+    setUploadError(undefined)
     setUploadProgress(0)
     setLastProgress(0)
     setCurrentFileIndex(0)
@@ -92,21 +98,20 @@ export default function UploadPage() {
     }
 
     const uploadedFileIds: string[] = []
-    let hasFitFiles = false
-    let hasVtxFiles = false
+    const fitRecordings: { recordingId: string; filename: string }[] = []
 
     try {
       for (let i = 0; i < selectedFiles.length; i++) {
         const fileToUpload = selectedFiles[i]
         const file = fileToUpload.file
-        
+
         setCurrentFileIndex(i)
         setCurrentFileName(file?.name || 'Unknown file')
-        
+
         // Calculate base progress for this file
         const fileStartProgress = (i / selectedFiles.length) * 100
         const fileEndProgress = ((i + 1) / selectedFiles.length) * 100
-        
+
         console.log(`📁 Processing file ${i + 1}/${selectedFiles.length}: ${file?.name || 'Unknown file'}`)
         console.log(`📁 File progress range: ${fileStartProgress.toFixed(1)}% - ${fileEndProgress.toFixed(1)}%`)
 
@@ -127,12 +132,8 @@ export default function UploadPage() {
         })
 
         // Track file type
-        const fileName = file?.name.toLowerCase() || ''
-        if (fileName.endsWith('.fit')) {
-          hasFitFiles = true
-        } else if (fileName.endsWith('.vtx')) {
-          hasVtxFiles = true
-        }
+        const fileName = file?.name || ''
+        const fileNameLower = fileName.toLowerCase()
 
         // Update progress to 90% (upload complete, starting server processing)
         if (uploadProgressEnd > lastProgress) {
@@ -162,6 +163,11 @@ export default function UploadPage() {
         const recordingData = await response.json()
         uploadedFileIds.push(recordingData.recordingId)
 
+        // Track FIT recordings for post-upload polling
+        if (fileNameLower.endsWith('.fit')) {
+          fitRecordings.push({ recordingId: recordingData.recordingId, filename: fileName })
+        }
+
         // Update progress to 100% for this file (processing complete)
         if (processingProgressEnd > lastProgress) {
           setUploadProgress(processingProgressEnd)
@@ -169,42 +175,104 @@ export default function UploadPage() {
         }
       }
 
-      // Upload complete - close modal and redirect immediately
+      // Upload phase complete
       setUploadProgress(100)
       setLastProgress(100)
-      setShowUploadProgress(false)
-
       setSelectedFiles([])
 
-      // Use setTimeout to ensure state updates are flushed before navigation
-      setTimeout(() => {
-        // Redirect based on file type
-        // If only FIT files, go to rides page
-        // If only VTX files, go to recordings page
-        // If mixed, prefer rides page (FIT files are more immediately useful)
-        if (hasFitFiles) {
-          router.push('/rides')
-        } else {
-          router.push('/recordings')
+      // If no FIT files, redirect to /recordings immediately (VTX only)
+      if (fitRecordings.length === 0) {
+        setShowUploadProgress(false)
+        router.push('/recordings')
+        return
+      }
+
+      // FIT files exist — switch to processing phase and poll
+      setUploadPhase('processing')
+
+      const fitRecordingIds = fitRecordings.map(r => r.recordingId)
+      const startTime = Date.now()
+      const TIMEOUT_MS = 60_000
+
+      const pollProcessingStatus = async () => {
+        try {
+          // Check timeout
+          if (Date.now() - startTime > TIMEOUT_MS) {
+            if (pollingRef.current) clearInterval(pollingRef.current)
+            setUploadPhase('error')
+            setUploadError('Processing is taking longer than expected. Your ride will appear on the rides page once processing completes.')
+            return
+          }
+
+          const statuses = await recordingsApi.getProcessingStatus(fitRecordingIds)
+
+          // Check if any failed
+          const failedRecording = Object.values(statuses).find(r => r.status === 'failed')
+          if (failedRecording) {
+            if (pollingRef.current) clearInterval(pollingRef.current)
+            setUploadPhase('error')
+            setUploadError(failedRecording.error_message || 'Processing failed for one or more files.')
+            return
+          }
+
+          // Check if all are ready
+          const allReady = fitRecordingIds.every(id => statuses[id]?.status === 'ready')
+          if (!allReady) return
+
+          // All ready — determine redirect target
+          if (pollingRef.current) clearInterval(pollingRef.current)
+
+          // Pick target: single FIT → that one; multiple → earliest filename alphabetically
+          let targetRecordingId: string
+          if (fitRecordings.length === 1) {
+            targetRecordingId = fitRecordings[0].recordingId
+          } else {
+            const sorted = [...fitRecordings].sort((a, b) => a.filename.localeCompare(b.filename))
+            targetRecordingId = sorted[0].recordingId
+          }
+
+          // Look up the ride ID for this recording
+          const rideId = await recordingsApi.getRideForRecording(targetRecordingId)
+
+          setUploadPhase('complete')
+
+          // Keep modal visible during navigation — it will unmount when the page changes.
+          // Brief delay so the user sees the success state before navigation begins.
+          setTimeout(() => {
+            if (rideId) {
+              router.push(`/rides/${rideId}`)
+            } else {
+              router.push('/rides')
+            }
+          }, 800)
+        } catch (err) {
+          console.error('Polling error:', err)
+          // Don't stop polling on transient errors, let timeout handle it
         }
-      }, 0)
+      }
+
+      // Start polling every 2 seconds
+      pollingRef.current = setInterval(pollProcessingStatus, 2000)
+      // Also run immediately
+      pollProcessingStatus()
 
     } catch (err) {
       console.error('Upload error:', err)
-      setShowUploadProgress(false)
-      
-      // Show error toast
-      addToast({
-        type: 'error',
-        title: 'Upload failed',
-        message: err instanceof Error ? err.message : 'Unknown error occurred during upload'
-      })
+      setUploadPhase('error')
+      setUploadError(err instanceof Error ? err.message : 'Unknown error occurred during upload')
     }
   }, [selectedFiles, router, uploadFile, lastProgress, addToast])
 
   const handleCancelUpload = useCallback(() => {
     setShowConfirmation(false)
     setSelectedFiles([])
+  }, [])
+
+  const handleDismissError = useCallback(() => {
+    if (pollingRef.current) clearInterval(pollingRef.current)
+    setShowUploadProgress(false)
+    setUploadPhase('uploading')
+    setUploadError(undefined)
   }, [])
 
   const handleRemoveFile = useCallback((id: string) => {
@@ -275,6 +343,9 @@ export default function UploadPage() {
         progress={uploadProgress}
         totalFiles={selectedFiles.length}
         currentFileIndex={currentFileIndex}
+        phase={uploadPhase}
+        errorMessage={uploadError}
+        onDismiss={handleDismissError}
       />
 
       {/* Help section */}

@@ -87,7 +87,7 @@ export function BatchOperationModal({
   }
 
   const getConfirmClass = () => {
-    return operation === 'delete' ? 'bg-error hover:bg-error/90' : ''
+    return operation === 'delete' ? 'bg-destructive hover:bg-destructive/90 text-destructive-foreground' : ''
   }
 
   return (
@@ -175,9 +175,9 @@ export function BatchOperationModal({
 
           {/* Warning for destructive operations */}
           {(operation === 'delete' || operation === 'merge') && (
-            <div className="mt-6 p-4 bg-error/10 border border-error/20 rounded-lg">
-              <p className="text-sm text-error font-medium">
-                ⚠️ {operation === 'delete' ? 'This action cannot be undone' : 'Original files will be permanently deleted after merge'}
+            <div className="mt-6 p-4 bg-red-500/10 border border-red-500/20 rounded-lg">
+              <p className="text-sm text-red-600 dark:text-red-400 font-medium">
+                {operation === 'delete' ? 'This action cannot be undone' : 'Original files will be permanently deleted after merge'}
               </p>
             </div>
           )}

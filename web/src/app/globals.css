@@ -316,6 +316,18 @@
 }
 
 
+/* Pointer cursor for all interactive elements (overrides Tailwind preflight) */
+button,
+[role="button"],
+a,
+select,
+summary,
+label[for],
+input[type="checkbox"],
+input[type="radio"] {
+  cursor: pointer;
+}
+
 /* Minimal Leaflet customization - blend with theme */
 .leaflet-container {
   background: transparent !important;

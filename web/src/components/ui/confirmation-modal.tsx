@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { X, AlertTriangle, Trash2, CheckCircle2 } from 'lucide-react'
+import { X, AlertTriangle, CheckCircle2 } from 'lucide-react'
 
 export type ConfirmationType = 'delete' | 'warning' | 'success'
 
@@ -32,21 +32,19 @@ export function ConfirmationModal({
 
   const getIcon = () => {
     switch (type) {
-      case 'delete':
-        return <Trash2 className="w-6 h-6 text-error" />
       case 'warning':
         return <AlertTriangle className="w-6 h-6 text-warning" />
       case 'success':
         return <CheckCircle2 className="w-6 h-6 text-success" />
       default:
-        return <AlertTriangle className="w-6 h-6 text-secondary" />
+        return null
     }
   }
 
   const getConfirmButtonStyle = () => {
     switch (type) {
       case 'delete':
-        return 'bg-error hover:bg-error/90 text-error-foreground'
+        return 'bg-destructive hover:bg-destructive/90 text-destructive-foreground'
       case 'warning':
         return 'bg-warning hover:bg-warning/90 text-warning-foreground'
       case 'success':
@@ -74,9 +72,11 @@ export function ConfirmationModal({
       <div className="bg-background border border-border rounded-xl shadow-2xl max-w-md w-full">
         {/* Header */}
         <div className="flex items-center gap-3 p-6 border-b border-border">
-          <div className="flex-shrink-0">
-            {getIcon()}
-          </div>
+          {getIcon() && (
+            <div className="flex-shrink-0">
+              {getIcon()}
+            </div>
+          )}
           <div className="flex-grow">
             <h2 className="text-lg font-semibold text-primary">
               {title}

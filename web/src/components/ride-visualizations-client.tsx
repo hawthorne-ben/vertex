@@ -121,8 +121,8 @@ export function RideVisualizationsClient({
   const isImuTab = IMU_TABS.includes(activeTab)
   const selectedMetric = TAB_TO_METRIC[activeTab] ?? null
 
-  const shouldFetchEfficiency = activeTab === 'efficiency'
-  const shouldFetchPosition = activeTab === 'position'
+  const shouldFetchEfficiency = activeTab === 'efficiency' && hasAnalyticsData
+  const shouldFetchPosition = activeTab === 'position' && hasAnalyticsData
 
   // Fetch pedaling efficiency data for map overlay (1 Hz to match GPS frequency)
   const {

@@ -152,7 +152,9 @@ export function useDerivedMetric({
           const data: ApiResponse = await response.json()
 
           // Handle new API response format with processing states
-          if (data.status === 'pending' || data.status === 'processing') {
+          // not_started means the analysis job hasn't been triggered yet (e.g. user just landed on the ride page
+          // after upload). Treat it the same as pending/processing — poll until it's ready.
+          if (data.status === 'pending' || data.status === 'processing' || data.status === 'not_started') {
             const pollingError = new Error('POLLING_REQUIRED')
             ;(pollingError as any).status = data.status
             throw pollingError
@@ -160,10 +162,6 @@ export function useDerivedMetric({
 
           if (data.status === 'failed') {
             throw new Error(data.error || data.message || 'Analysis failed')
-          }
-
-          if (data.status === 'not_started') {
-            throw new Error(data.message || 'Analysis not yet started')
           }
 
           if (!response.ok) {
