@@ -7,36 +7,66 @@
 import * as CONSTANTS from './pedaling-efficiency-constants'
 
 /**
- * Calculate riding position from Y-axis acceleration data
+ * Calculate riding position from Y-axis acceleration and optional gyro roll rate
  *
- * @param yAxisWindow - Array of Y-axis acceleration values in the analysis window
- * @param isPedaling - Whether the rider is currently pedaling (from FIT cadence)
- * @param yAxisThreshold - Y-axis magnitude threshold for standing detection
- * @returns Position ('standing', 'seated', or null if not pedaling)
+ * Uses weighted fusion of two signals:
+ * - Accel Y-axis stdDev (lateral rocking)
+ * - Gyro X-axis RMS (roll rate from band-pass filter)
+ *
+ * Each signal is normalized to 0–1 against its threshold, then combined
+ * with configurable weights. Standing if combined score >= 1.0.
+ * Falls back to accel-only when gyro data is not available.
  */
 export function calculateRidingPosition(
   yAxisWindow: number[],
   isPedaling: boolean,
-  yAxisThreshold: number = CONSTANTS.Y_AXIS_STANDING_THRESHOLD
-): { position: 'standing' | 'seated' | null; rockingMagnitude: number } {
+  yAxisThreshold: number = CONSTANTS.Y_AXIS_STANDING_THRESHOLD,
+  options?: {
+    rollRms?: number
+    rollThreshold?: number
+    gyroWeight?: number
+    accelWeight?: number
+  }
+): { position: 'standing' | 'seated' | null; rockingMagnitude: number; rollRms?: number } {
 
   // Not pedaling - return null (matches efficiency behavior)
   if (!isPedaling) {
     return {
       position: null,
-      rockingMagnitude: 0
+      rockingMagnitude: 0,
+      rollRms: undefined
     }
   }
 
   // Calculate Y-axis rocking magnitude (std dev of Y-axis in window)
   const rockingMagnitude = calculateStdDev(yAxisWindow)
 
-  // Determine position based on lateral rocking
-  const position = rockingMagnitude >= yAxisThreshold ? 'standing' : 'seated'
+  const rollRms = options?.rollRms
+  const hasGyro = rollRms !== undefined && rollRms !== null
+  const gyroWeight = options?.gyroWeight ?? CONSTANTS.POSITION_GYRO_WEIGHT
+  const accelWeight = options?.accelWeight ?? CONSTANTS.POSITION_ACCEL_WEIGHT
+  const rollThreshold = options?.rollThreshold ?? CONSTANTS.ROLL_RMS_STANDING_THRESHOLD
+
+  let position: 'standing' | 'seated'
+
+  if (hasGyro && gyroWeight > 0) {
+    // Weighted fusion: normalize each signal to 0–1 against its threshold
+    const accelScore = rockingMagnitude / yAxisThreshold
+    const gyroScore = rollRms / rollThreshold
+
+    // Weighted combination
+    const combined = accelWeight * accelScore + gyroWeight * gyroScore
+
+    position = combined >= 1.0 ? 'standing' : 'seated'
+  } else {
+    // Fallback: accel-only path (no gyro data or gyro weight is 0)
+    position = rockingMagnitude >= yAxisThreshold ? 'standing' : 'seated'
+  }
 
   return {
     position,
-    rockingMagnitude
+    rockingMagnitude,
+    rollRms: hasGyro ? rollRms : undefined
   }
 }
 
@@ -59,9 +89,9 @@ function calculateStdDev(values: number[]): number {
  * @returns Downsampled samples with majority position per bucket
  */
 export function downsamplePositionByMajorityVote(
-  samples: Array<{ timestamp: string; position: 'standing' | 'seated' | null; rockingMagnitude: number; cadence: number | null }>,
+  samples: Array<{ timestamp: string; position: 'standing' | 'seated' | null; rockingMagnitude: number; rollRms?: number; cadence: number | null }>,
   bucketMs: number = 1000
-): Array<{ timestamp: string; position: 'standing' | 'seated' | null; rockingMagnitude: number; cadence: number | null }> {
+): Array<{ timestamp: string; position: 'standing' | 'seated' | null; rockingMagnitude: number; rollRms?: number; cadence: number | null }> {
 
   if (samples.length === 0) return []
 
@@ -90,6 +120,8 @@ export function downsamplePositionByMajorityVote(
     }
 
     let sumRocking = 0
+    let sumRollRms = 0
+    let rollRmsCount = 0
     let sumCadence = 0
     let cadenceCount = 0
 
@@ -99,6 +131,10 @@ export function downsamplePositionByMajorityVote(
       else counts.null++
 
       sumRocking += s.rockingMagnitude
+      if (s.rollRms !== undefined) {
+        sumRollRms += s.rollRms
+        rollRmsCount++
+      }
       if (s.cadence !== null) {
         sumCadence += s.cadence
         cadenceCount++
@@ -122,6 +158,7 @@ export function downsamplePositionByMajorityVote(
       timestamp: middleSample.timestamp,
       position: majorityPosition,
       rockingMagnitude: sumRocking / bucketSamples.length,
+      rollRms: rollRmsCount > 0 ? sumRollRms / rollRmsCount : undefined,
       cadence: cadenceCount > 0 ? sumCadence / cadenceCount : null
     })
   }

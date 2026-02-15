@@ -15,7 +15,7 @@
  * Version string for cache invalidation
  * Bump this when changing any constants or algorithm logic
  */
-export const ALGORITHM_VERSION = '3.0.0'  // FIT cadence, no FFT
+export const ALGORITHM_VERSION = '4.0.0'  // Gyro roll rate fusion for position detection
 
 // ============================================
 // SIGNAL PROCESSING
@@ -149,3 +149,42 @@ export const Y_AXIS_STANDING_THRESHOLD = 2.2
  * Matches efficiency window for consistency
  */
 export const POSITION_WINDOW_SECONDS = 3
+
+// ============================================
+// GYRO ROLL RATE (POSITION DETECTION)
+// ============================================
+
+/**
+ * Band-pass filter low cutoff for gyro_x roll rate (Hz)
+ * Must pass the 0.5 Hz roll fundamental from 60 RPM standing cadence
+ */
+export const ROLL_BPF_LOW_HZ = 0.3
+
+/**
+ * Band-pass filter high cutoff for gyro_x roll rate (Hz)
+ * Rejects road vibration harmonics above cadence range
+ */
+export const ROLL_BPF_HIGH_HZ = 4.0
+
+/**
+ * RMS threshold for band-pass filtered gyro_x roll rate (rad/s)
+ * Standing produces periodic roll oscillation above this threshold
+ *
+ * Tuning guide:
+ * - 0.1 rad/s: Very sensitive
+ * - 0.3 rad/s: Balanced (default)
+ * - 0.5 rad/s: Conservative
+ */
+export const ROLL_RMS_STANDING_THRESHOLD = 10
+
+/**
+ * Weight for gyro-derived roll signal in position detection (0–1)
+ * Combined with accel weight for weighted fusion
+ */
+export const POSITION_GYRO_WEIGHT = 0.7
+
+/**
+ * Weight for accel-derived Y-axis signal in position detection (0–1)
+ * Combined with gyro weight for weighted fusion
+ */
+export const POSITION_ACCEL_WEIGHT = 0.3

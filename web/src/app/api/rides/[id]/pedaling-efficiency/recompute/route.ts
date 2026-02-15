@@ -180,6 +180,7 @@ export async function POST(
         accel_x: record.accelX,
         accel_y: record.accelY,
         accel_z: record.accelZ,
+        gyro_x: record.gyroX,
       })
     }
 

@@ -70,6 +70,11 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
           hpfCutoff: 0.5,
           windowSize: 3,
           yAxisThreshold: 2.2,
+          rollBpfLow: 0.3,
+          rollBpfHigh: 4.0,
+          rollRmsThreshold: 10,
+          gyroWeight: 0.7,
+          accelWeight: 0.3,
         }
 
         const { data: efficiencyAnalysis, error: efficiencyError } = await supabase
@@ -237,6 +242,7 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
             accel_x: record.accelX,
             accel_y: record.accelY,
             accel_z: record.accelZ,
+            gyro_x: record.gyroX,
           })
         }
 
@@ -252,6 +258,11 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
             hpfCutoff: 0.5,
             windowSize: 3,
             yAxisThreshold: 2.2,
+            rollBpfLow: 0.3,
+            rollBpfHigh: 4.0,
+            rollRmsThreshold: 10,
+            gyroWeight: 0.7,
+            accelWeight: 0.3,
             includeDebug: false, // Don't store debug stats
           },
         })

@@ -18,7 +18,7 @@
  */
 
 import { syncFitVtxData, calculateSampleRate } from '../sync/fit-vtx-sync'
-import { HighPassFilter } from '../imu/signal-processing'
+import { HighPassFilter, BandPassFilter } from '../imu/signal-processing'
 import { calculateEfficiency, calculateStdDev, smoothGrades } from './efficiency-calculation'
 import { calculateMetadata } from './efficiency-metadata'
 import { calculateRidingPosition, downsamplePositionByMajorityVote } from './riding-position-calculation'
@@ -41,6 +41,7 @@ export interface PedalingEfficiencyInput {
     accel_x: number
     accel_y?: number  // Optional, for magnitude calculation
     accel_z?: number  // Optional, for magnitude calculation
+    gyro_x?: number   // Optional, for roll rate position detection
   }>
   fitSamples: Array<{
     timestamp: string
@@ -54,6 +55,11 @@ export interface PedalingEfficiencyInput {
     syncTolerance?: number       // Max time diff for sync in ms (default: 100)
     includeDebug?: boolean       // Include debug statistics in response (default: false)
     yAxisThreshold?: number      // Y-axis rocking threshold for standing detection (default: 2.2)
+    rollBpfLow?: number          // Roll BPF low cutoff Hz (default: 0.3)
+    rollBpfHigh?: number         // Roll BPF high cutoff Hz (default: 4.0)
+    rollRmsThreshold?: number    // Roll RMS threshold for standing (default: 0.3)
+    gyroWeight?: number          // Weight for gyro signal in position detection (default: 0.5)
+    accelWeight?: number         // Weight for accel signal in position detection (default: 0.5)
   }
 }
 
@@ -108,6 +114,19 @@ export function calculatePedalingEfficiency(
   // Separate HPF for Y-axis position detection (lateral rocking has different frequency content)
   const yAxisHpf = new HighPassFilter(hpfCutoff, sampleRate)
 
+  // Gyro roll rate processing
+  const rollBpfLow = options.rollBpfLow ?? CONSTANTS.ROLL_BPF_LOW_HZ
+  const rollBpfHigh = options.rollBpfHigh ?? CONSTANTS.ROLL_BPF_HIGH_HZ
+  const rollRmsThreshold = options.rollRmsThreshold ?? CONSTANTS.ROLL_RMS_STANDING_THRESHOLD
+  const gyroWeight = options.gyroWeight ?? CONSTANTS.POSITION_GYRO_WEIGHT
+  const accelWeight = options.accelWeight ?? CONSTANTS.POSITION_ACCEL_WEIGHT
+
+  // Detect if gyro data is present (check first few samples)
+  const hasGyroData = vtxSamples.slice(0, 5).some(s => s.gyro_x !== undefined && s.gyro_x !== null)
+
+  // BPF for gyro_x roll rate (only created if gyro data present)
+  const rollBpf = hasGyroData ? new BandPassFilter(rollBpfLow, rollBpfHigh, sampleRate) : null
+
   // ============================================
   // FIRST PASS: Calculate acceleration magnitude and apply HPF
   // ============================================
@@ -117,6 +136,7 @@ export function calculatePedalingEfficiency(
     rawAccel: number
     filteredAccel: number  // High-pass filtered (gravity removed)
     yAxis: number  // Y-axis acceleration for rocking detection
+    filteredRoll: number | null  // BPF-filtered gyro_x roll rate
     grade: number | null
     cadence: number | null  // FIT cadence (carried forward between FIT samples)
   }> = []
@@ -148,11 +168,15 @@ export function calculatePedalingEfficiency(
     // HPF on Y-axis for riding position detection
     const yAxis = yAxisHpf.update(point.vtx.accel_y ?? 0)
 
+    // BPF on gyro_x for roll rate detection
+    const filteredRoll = rollBpf ? rollBpf.update(point.vtx.gyro_x ?? 0) : null
+
     processedSamples.push({
       timestamp: point.vtx.timestamp,
       rawAccel,
       filteredAccel,
       yAxis,
+      filteredRoll,
       grade,
       cadence
     })
@@ -204,17 +228,32 @@ export function calculatePedalingEfficiency(
     // Extract Y-axis window for rocking detection (same size as efficiency window)
     const yAxisWindow = effWindowData.map(s => s.yAxis)
 
-    // Calculate riding position from Y-axis lateral rocking
-    const { position, rockingMagnitude } = calculateRidingPosition(
+    // Compute RMS of filtered gyro_x roll rate in window (if available)
+    let rollRms: number | undefined
+    if (hasGyroData) {
+      const rollWindow = effWindowData.map(s => s.filteredRoll ?? 0)
+      const sumSquares = rollWindow.reduce((sum, v) => sum + v * v, 0)
+      rollRms = Math.sqrt(sumSquares / rollWindow.length)
+    }
+
+    // Calculate riding position from Y-axis lateral rocking + optional gyro roll
+    const positionResult = calculateRidingPosition(
       yAxisWindow,
       isPedaling,
-      yAxisThreshold
+      yAxisThreshold,
+      hasGyroData ? {
+        rollRms,
+        rollThreshold: rollRmsThreshold,
+        gyroWeight,
+        accelWeight,
+      } : undefined
     )
 
     positionSamples.push({
       timestamp: sample.timestamp,
-      position,
-      rockingMagnitude,
+      position: positionResult.position,
+      rockingMagnitude: positionResult.rockingMagnitude,
+      rollRms: positionResult.rollRms,
       cadence: sample.cadence
     })
   }

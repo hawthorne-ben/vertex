@@ -216,6 +216,42 @@ export class VectorButterworthFilter {
 }
 
 /**
+ * Band-pass filter implemented as cascaded HPF + LPF (both EMA-based)
+ * Passes frequencies between lowCutoff and highCutoff, rejects DC and high-freq noise
+ */
+export class BandPassFilter {
+  private hpf: HighPassFilter
+  private lpf: LowPassFilter
+
+  /**
+   * @param lowCutoff - High-pass cutoff in Hz (frequencies below this are removed)
+   * @param highCutoff - Low-pass cutoff in Hz (frequencies above this are removed)
+   * @param sampleRate - Sample rate in Hz
+   */
+  constructor(lowCutoff: number, highCutoff: number, sampleRate: number) {
+    this.hpf = new HighPassFilter(lowCutoff, sampleRate)
+    this.lpf = new LowPassFilter(highCutoff, sampleRate)
+  }
+
+  /**
+   * Filter a new sample (passes frequencies between low and high cutoffs)
+   */
+  update(newValue: number): number {
+    // HPF first to remove DC/gravity, then LPF to remove high-freq noise
+    const highPassed = this.hpf.update(newValue)
+    return this.lpf.update(highPassed)
+  }
+
+  /**
+   * Reset filter state
+   */
+  reset() {
+    this.hpf.reset()
+    this.lpf.reset()
+  }
+}
+
+/**
  * Median filter for outlier rejection (useful for gyro spikes)
  */
 export class MedianFilter {

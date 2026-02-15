@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { X, Settings, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react'
 import { useAuthFetch } from '@/hooks/useAuthFetch'
 import { apiCache } from '@/lib/cache/api-cache'
@@ -17,6 +17,11 @@ interface TuningParameters {
   hpfCutoff: number
   windowSize: number
   yAxisThreshold: number
+  rollBpfLow: number
+  rollBpfHigh: number
+  rollRmsThreshold: number
+  gyroWeight: number
+  accelWeight: number
 }
 
 interface RecomputeResult {
@@ -54,6 +59,11 @@ export function EfficiencyTuningModal({
     hpfCutoff: CONSTANTS.HPF_CUTOFF_HZ,
     windowSize: CONSTANTS.EFFICIENCY_WINDOW_SECONDS,
     yAxisThreshold: CONSTANTS.Y_AXIS_STANDING_THRESHOLD,
+    rollBpfLow: CONSTANTS.ROLL_BPF_LOW_HZ,
+    rollBpfHigh: CONSTANTS.ROLL_BPF_HIGH_HZ,
+    rollRmsThreshold: CONSTANTS.ROLL_RMS_STANDING_THRESHOLD,
+    gyroWeight: CONSTANTS.POSITION_GYRO_WEIGHT,
+    accelWeight: CONSTANTS.POSITION_ACCEL_WEIGHT,
   })
 
   const [saveToDatabase, setSaveToDatabase] = useState(false)
@@ -78,6 +88,11 @@ export function EfficiencyTuningModal({
             hpfCutoff: parameters.hpfCutoff,
             windowSize: parameters.windowSize,
             yAxisThreshold: parameters.yAxisThreshold,
+            rollBpfLow: parameters.rollBpfLow,
+            rollBpfHigh: parameters.rollBpfHigh,
+            rollRmsThreshold: parameters.rollRmsThreshold,
+            gyroWeight: parameters.gyroWeight,
+            accelWeight: parameters.accelWeight,
           },
           saveToDatabase,
         }),
@@ -108,6 +123,11 @@ export function EfficiencyTuningModal({
       hpfCutoff: CONSTANTS.HPF_CUTOFF_HZ,
       windowSize: CONSTANTS.EFFICIENCY_WINDOW_SECONDS,
       yAxisThreshold: CONSTANTS.Y_AXIS_STANDING_THRESHOLD,
+      rollBpfLow: CONSTANTS.ROLL_BPF_LOW_HZ,
+      rollBpfHigh: CONSTANTS.ROLL_BPF_HIGH_HZ,
+      rollRmsThreshold: CONSTANTS.ROLL_RMS_STANDING_THRESHOLD,
+      gyroWeight: CONSTANTS.POSITION_GYRO_WEIGHT,
+      accelWeight: CONSTANTS.POSITION_ACCEL_WEIGHT,
     })
     setResult(null)
     setError(null)
@@ -157,18 +177,12 @@ export function EfficiencyTuningModal({
                 label="HPF Cutoff (Hz)"
                 value={parameters.hpfCutoff}
                 onChange={(v) => setParameters({ ...parameters, hpfCutoff: v })}
-                min={0.1}
-                max={1.0}
-                step={0.1}
                 hint="Removes gravity. Lower = more aggressive. Default: 0.5 Hz"
               />
               <FormField
                 label="Efficiency Window (seconds)"
                 value={parameters.windowSize}
                 onChange={(v) => setParameters({ ...parameters, windowSize: v })}
-                min={1}
-                max={10}
-                step={0.5}
                 hint="Smoothness window. Road: 2-3s. MTB: 3-5s"
               />
             </div>
@@ -181,15 +195,43 @@ export function EfficiencyTuningModal({
                 label="Y-Axis Standing Threshold (m/s²)"
                 value={parameters.yAxisThreshold}
                 onChange={(v) => setParameters({ ...parameters, yAxisThreshold: v })}
-                min={1.0}
-                max={5.0}
-                step={0.1}
-                hint="Lateral rocking threshold. 2.5 = balanced. Lower = more standing detected"
+                hint="Lateral rocking threshold. 2.2 = balanced. Lower = more standing detected"
               />
-              <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+              <FormField
+                label="Roll BPF Low Hz"
+                value={parameters.rollBpfLow}
+                onChange={(v) => setParameters({ ...parameters, rollBpfLow: v })}
+                hint="High-pass cutoff for gyro roll. Must pass 0.5 Hz (60 RPM standing)"
+              />
+              <FormField
+                label="Roll BPF High Hz"
+                value={parameters.rollBpfHigh}
+                onChange={(v) => setParameters({ ...parameters, rollBpfHigh: v })}
+                hint="Low-pass cutoff for gyro roll. Rejects road vibration above cadence"
+              />
+              <FormField
+                label="Roll RMS Threshold (rad/s)"
+                value={parameters.rollRmsThreshold}
+                onChange={(v) => setParameters({ ...parameters, rollRmsThreshold: v })}
+                hint="Gyro roll rate RMS threshold for standing. 2.5 = default"
+              />
+              <FormField
+                label="Gyro Weight"
+                value={parameters.gyroWeight}
+                onChange={(v) => setParameters({ ...parameters, gyroWeight: v })}
+                hint="Weight for gyro roll signal (0 = disabled, 1 = gyro only)"
+              />
+              <FormField
+                label="Accel Weight"
+                value={parameters.accelWeight}
+                onChange={(v) => setParameters({ ...parameters, accelWeight: v })}
+                hint="Weight for accel Y-axis signal (0 = disabled, 1 = accel only)"
+              />
+              <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg md:col-span-2">
                 <p className="text-xs text-blue-700 dark:text-blue-400">
-                  <strong>Standing Detection:</strong> Y-axis stddev ≥ threshold = standing.
-                  Most seated riding is &lt; 2.0 m/s². Aggressive climbing: 2.5-4.0 m/s².
+                  <strong>Weighted Fusion:</strong> Each signal is normalized to 0–1 against its threshold,
+                  then combined: score = accelWeight × (yStdDev/yThreshold) + gyroWeight × (rollRms/rollThreshold).
+                  Standing if score ≥ 1.0. Set gyroWeight=0 for accel-only (v3 behavior).
                 </p>
               </div>
             </div>
@@ -315,29 +357,40 @@ interface FormFieldProps {
   label: string
   value: number
   onChange: (value: number) => void
-  min: number
-  max: number
-  step: number
   hint?: string
 }
 
-function FormField({ label, value, onChange, min, max, step, hint }: FormFieldProps) {
-  // Ensure value is a valid number
-  const displayValue = isNaN(value) ? min : value
+function FormField({ label, value, onChange, hint }: FormFieldProps) {
+  const [draft, setDraft] = useState(String(value))
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Sync draft when value changes externally (e.g. reset)
+  useEffect(() => {
+    if (document.activeElement !== inputRef.current) {
+      setDraft(String(value))
+    }
+  }, [value])
+
+  const commit = () => {
+    const parsed = parseFloat(draft)
+    if (!isNaN(parsed)) {
+      onChange(parsed)
+    } else {
+      setDraft(String(value))
+    }
+  }
 
   return (
     <div className="space-y-1.5">
       <label className="text-sm font-medium text-primary">{label}</label>
       <input
-        type="number"
-        value={displayValue}
-        onChange={(e) => {
-          const parsed = parseFloat(e.target.value)
-          onChange(isNaN(parsed) ? min : parsed)
-        }}
-        min={min}
-        max={max}
-        step={step}
+        ref={inputRef}
+        type="text"
+        inputMode="decimal"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Enter') commit() }}
         className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm text-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
       />
       {hint && <p className="text-xs text-secondary">{hint}</p>}
