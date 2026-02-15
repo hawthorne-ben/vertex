@@ -1,3 +1,4 @@
+import { Suspense } from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { notFound, redirect } from 'next/navigation'
 import { headers } from 'next/headers'
@@ -155,19 +156,21 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
       </div>
 
       {/* Time-Synced Visualizations (Map, IMU Charts, FIT Charts) */}
-      <RideVisualizationsClient
-        rideId={id}
-        rideName={ride.name}
-        rideStartTime={ride.start_time}
-        rideEndTime={ride.end_time}
-        fitRecordingId={fitRecording?.id || null}
-        hasGpsData={analysis.has_gps_data || false}
-        vtxRecordings={vtxRecordings.map((rec: any) => ({
-          id: rec.id,
-          start_time: rec.start_time,
-          end_time: rec.end_time
-        }))}
-      />
+      <Suspense>
+        <RideVisualizationsClient
+          rideId={id}
+          rideName={ride.name}
+          rideStartTime={ride.start_time}
+          rideEndTime={ride.end_time}
+          fitRecordingId={fitRecording?.id || null}
+          hasGpsData={analysis.has_gps_data || false}
+          vtxRecordings={vtxRecordings.map((rec: any) => ({
+            id: rec.id,
+            start_time: rec.start_time,
+            end_time: rec.end_time
+          }))}
+        />
+      </Suspense>
 
       {/* Add VTX Data Button (if no recordings yet) */}
       {vtxRecordings.length === 0 && (

@@ -1,30 +1,59 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useCallback } from 'react'
+import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { TimeSlider } from './time-slider'
 import { RideMapClient } from './ride-map-client'
 import { RideChartsClient } from './ride-charts-client'
-import { RideDataTabs } from './charts/RideDataTabs'
+import { IMUSensorChart } from './charts/IMUSensorChart'
+import { DerivedMetricsChart } from './charts/DerivedMetricsChart'
 import { Card, CardHeader, CardTitle, CardContent } from './ui/card'
 import { MapErrorBoundary } from './map-error-boundary'
 import { getVtxTimeRanges } from '@/lib/sync/fit-vtx-sync'
 import { useRideSamples } from './hooks/useRideSamples'
 import { useDerivedMetric } from './charts/hooks/useDerivedMetric'
 
-interface VTXRecordingWithSamples {
+// Unified tab type — the 5 top-level tabs
+type ViewTab = 'efficiency' | 'position' | 'orientation' | 'acceleration' | 'rotation'
+
+const TAB_CONFIG: Array<{ id: ViewTab; label: string }> = [
+  { id: 'efficiency', label: 'Efficiency' },
+  { id: 'position', label: 'Position' },
+  { id: 'orientation', label: 'Orientation' },
+  { id: 'acceleration', label: 'Acceleration' },
+  { id: 'rotation', label: 'Rotation' },
+]
+
+// Map tab to IMU coverage color on the map
+const IMU_TAB_COLORS: Record<string, string> = {
+  orientation: '#22c55e',  // Green
+  acceleration: '#3b82f6', // Blue
+  rotation: '#f97316',     // Orange
+}
+
+// Tabs that use IMU data vs derived analytics
+const IMU_TABS: ViewTab[] = ['orientation', 'acceleration', 'rotation']
+const ANALYTICS_TABS: ViewTab[] = ['efficiency', 'position']
+
+// Map tab → IMU data type
+const TAB_TO_IMU_TYPE: Record<string, 'orientation' | 'accel' | 'gyro'> = {
+  orientation: 'orientation',
+  acceleration: 'accel',
+  rotation: 'gyro',
+}
+
+// Map tab → derived metric type
+const TAB_TO_METRIC: Record<string, 'pedalingEfficiency' | 'ridingPosition'> = {
+  efficiency: 'pedalingEfficiency',
+  position: 'ridingPosition',
+}
+
+const VALID_TABS = new Set<string>(TAB_CONFIG.map(t => t.id))
+
+interface VTXRecording {
   id: string
-  filename: string
   start_time: string
   end_time: string
-  duration_ms: number
-  file_size_bytes: number
-  status: string
-  samples: Array<{
-    id: string
-    timestamp: string
-    [key: string]: unknown
-  }> | null
-  originalCount: number
 }
 
 interface RideVisualizationsClientProps {
@@ -34,7 +63,7 @@ interface RideVisualizationsClientProps {
   rideEndTime: string
   fitRecordingId: string | null
   hasGpsData: boolean
-  vtxRecordings: VTXRecordingWithSamples[]
+  vtxRecordings: VTXRecording[]
 }
 
 export function RideVisualizationsClient({
@@ -46,19 +75,54 @@ export function RideVisualizationsClient({
   hasGpsData,
   vtxRecordings
 }: RideVisualizationsClientProps) {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
+
+  const hasVtxData = vtxRecordings.length > 0
+  const hasFitData = !!fitRecordingId
+  // Analytics require both VTX (IMU) and FIT (GPS) data
+  const hasAnalyticsData = hasVtxData && hasFitData && hasGpsData
+
+  // Read initial tab from URL query param, fallback to first available tab
+  const initialTab = (() => {
+    const param = searchParams.get('tab')
+    if (param && VALID_TABS.has(param)) {
+      const tab = param as ViewTab
+      const isAvailable = (ANALYTICS_TABS.includes(tab) && hasAnalyticsData) ||
+                          (IMU_TABS.includes(tab) && hasVtxData)
+      if (isAvailable) return tab
+    }
+    // Default: first available tab
+    if (hasAnalyticsData) return 'efficiency' as ViewTab
+    if (hasVtxData) return 'orientation' as ViewTab
+    return 'efficiency' as ViewTab
+  })()
+
+  const [activeTab, setActiveTab] = useState<ViewTab>(initialTab)
   const [selectedTime, setSelectedTime] = useState<number | null>(null)
   const [imuCoverageRanges, setImuCoverageRanges] = useState<Array<{ start: number; end: number }>>([])
   const [sharedZoomRange, setSharedZoomRange] = useState<{ start: string; end: string } | null>(null)
-  const [activeDataTab, setActiveDataTab] = useState<'imu' | 'analytics'>('imu')
-  const [selectedMetric, setSelectedMetric] = useState<string | null>('pedalingEfficiency')
+  const [mapZoom, setMapZoom] = useState<number | null>(null)
+
+  // Persist tab to URL query param
+  const handleTabChange = useCallback((tab: ViewTab) => {
+    setActiveTab(tab)
+    const params = new URLSearchParams(searchParams.toString())
+    params.set('tab', tab)
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
+  }, [searchParams, router, pathname])
 
   // Fetch ride samples once - shared between map and charts
   const { samples, loading, error } = useRideSamples(rideId, fitRecordingId)
 
-  // Determine which metric to fetch for map overlay
-  // Only fetch when in analytics tab, and fetch the currently selected metric
-  const shouldFetchEfficiency = activeDataTab === 'analytics' && (selectedMetric === 'pedalingEfficiency' || selectedMetric === null)
-  const shouldFetchPosition = activeDataTab === 'analytics' && selectedMetric === 'ridingPosition'
+  // Determine what to fetch for map overlay
+  const isAnalyticsTab = ANALYTICS_TABS.includes(activeTab)
+  const isImuTab = IMU_TABS.includes(activeTab)
+  const selectedMetric = TAB_TO_METRIC[activeTab] ?? null
+
+  const shouldFetchEfficiency = activeTab === 'efficiency'
+  const shouldFetchPosition = activeTab === 'position'
 
   // Fetch pedaling efficiency data for map overlay (1 Hz to match GPS frequency)
   const {
@@ -67,9 +131,9 @@ export function RideVisualizationsClient({
   } = useDerivedMetric({
     rideId,
     metric: 'pedalingEfficiency',
-    timeRange: null, // Always fetch full ride for map
+    timeRange: null,
     fitRecordingId,
-    resolution: 1, // 1 sample per second (matches GPS frequency)
+    resolution: 1,
     enabled: shouldFetchEfficiency
   })
 
@@ -80,13 +144,13 @@ export function RideVisualizationsClient({
   } = useDerivedMetric({
     rideId,
     metric: 'ridingPosition',
-    timeRange: null, // Always fetch full ride for map
+    timeRange: null,
     fitRecordingId,
-    resolution: 1, // Position data is already at 1 Hz
+    resolution: 1,
     enabled: shouldFetchPosition
   })
 
-  // Cast to position-specific type (samples include all original fields from API)
+  // Cast to position-specific type
   const positionSamples = positionSamplesRaw as Array<{
     timestamp: string
     position: 'standing' | 'seated' | null
@@ -96,7 +160,6 @@ export function RideVisualizationsClient({
   }>
 
   // Calculate IMU time ranges for GPS color coding
-  // Use coverage ranges from VTX data if available, otherwise fall back to full recording ranges
   const imuTimeRanges = useMemo(() => {
     if (imuCoverageRanges.length > 0) {
       return imuCoverageRanges
@@ -104,20 +167,48 @@ export function RideVisualizationsClient({
     return getVtxTimeRanges(vtxRecordings)
   }, [imuCoverageRanges, vtxRecordings])
 
-  // Check if we have VTX data to display
-  const hasVtxData = vtxRecordings.length > 0
+  const vtxRecordingsForChart = vtxRecordings
 
-  // Memoize the mapped vtx recordings to avoid recreating on every render
-  const vtxRecordingsForChart = useMemo(() => {
-    return vtxRecordings.map(vtx => ({
-      id: vtx.id,
-      start_time: vtx.start_time,
-      end_time: vtx.end_time
-    }))
-  }, [vtxRecordings])
+  // Determine map mode and color based on active tab
+  const mapMode = isAnalyticsTab
+    ? (selectedMetric as 'pedalingEfficiency' | 'ridingPosition') ?? 'pedalingEfficiency'
+    : 'vtx'
+  const imuColor = IMU_TAB_COLORS[activeTab]
 
   return (
     <>
+      {/* Top-level tabs — only shown when VTX data exists */}
+      {hasVtxData && (
+        <div className="mb-4">
+          <div className="flex gap-1">
+            {TAB_CONFIG.map(tab => {
+              // Disable analytics tabs if missing FIT+GPS data
+              const disabled = ANALYTICS_TABS.includes(tab.id) && !hasAnalyticsData
+
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => handleTabChange(tab.id)}
+                  disabled={disabled}
+                  className={`px-4 py-2 text-sm font-medium transition-colors relative ${
+                    activeTab === tab.id
+                      ? 'text-primary'
+                      : disabled
+                        ? 'text-muted-foreground/40 cursor-not-allowed'
+                        : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {tab.label}
+                  {activeTab === tab.id && (
+                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
       {/* GPS Map */}
       <div className="mb-8">
         {fitRecordingId && hasGpsData ? (
@@ -128,14 +219,16 @@ export function RideVisualizationsClient({
               fitRecordingId={fitRecordingId}
               highlightTime={selectedTime}
               imuTimeRanges={imuTimeRanges}
+              imuColor={imuColor}
               samples={samples}
               loading={loading}
               error={error}
-              mapMode={activeDataTab === 'analytics' ? (selectedMetric as 'pedalingEfficiency' | 'ridingPosition' | null) || 'pedalingEfficiency' : 'vtx'}
+              mapMode={mapMode}
               efficiencySamples={efficiencySamples}
               efficiencyLoading={efficiencyLoading}
               positionSamples={positionSamples}
               positionLoading={positionLoading}
+              onZoomChange={setMapZoom}
             />
           </MapErrorBoundary>
         ) : (
@@ -154,24 +247,100 @@ export function RideVisualizationsClient({
           endTime={rideEndTime}
           selectedTime={selectedTime}
           onTimeChange={setSelectedTime}
+          mapZoom={mapZoom}
+          initialMapZoom={13}
         />
       </div>
 
-      {/* Unified IMU Chart & Analytics */}
+      {/* Chart content — controlled by active tab, only when VTX data exists */}
       {hasVtxData && (
         <div className="mb-8">
-          <RideDataTabs
-            vtxRecordings={vtxRecordingsForChart}
-            rideId={rideId}
-            rideName={rideName}
-            fitRecordingId={fitRecordingId}
-            highlightTime={selectedTime}
-            onCoverageUpdate={setImuCoverageRanges}
-            zoomRange={sharedZoomRange}
-            onZoomChange={setSharedZoomRange}
-            onTabChange={setActiveDataTab}
-            onMetricChange={setSelectedMetric}
-          />
+          {isImuTab && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between">
+                  <span>
+                    {activeTab === 'orientation' ? 'Orientation (BNO055)' :
+                     activeTab === 'acceleration' ? 'Accelerometer' : 'Gyroscope'}
+                    {vtxRecordings.length > 1 && (
+                      <span className="text-sm font-normal text-muted-foreground ml-2">
+                        ({vtxRecordings.length} recordings merged)
+                      </span>
+                    )}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    {sharedZoomRange && (
+                      <button
+                        onClick={() => setSharedZoomRange(null)}
+                        className="px-3 py-1.5 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-950/30 rounded-md transition-colors"
+                      >
+                        Reset Zoom
+                      </button>
+                    )}
+                    {vtxRecordings.length === 1 && (
+                      <a
+                        href={`/recordings/${vtxRecordings[0].id}`}
+                        className="px-3 py-1 text-sm bg-muted border border-border rounded hover:bg-muted/80 text-foreground"
+                      >
+                        View Full Detail
+                      </a>
+                    )}
+                  </div>
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <IMUSensorChart
+                  rideId={rideId}
+                  recordings={vtxRecordingsForChart}
+                  dataType={TAB_TO_IMU_TYPE[activeTab]}
+                  highlightTime={selectedTime}
+                  zoomRange={sharedZoomRange}
+                  onZoomChange={setSharedZoomRange}
+                  onCoverageUpdate={setImuCoverageRanges}
+                />
+              </CardContent>
+            </Card>
+          )}
+
+          {isAnalyticsTab && hasAnalyticsData && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center justify-between">
+                  <span>{activeTab === 'efficiency' ? 'Pedaling Efficiency' : 'Riding Position'}</span>
+                  {sharedZoomRange && (
+                    <button
+                      onClick={() => setSharedZoomRange(null)}
+                      className="px-3 py-1.5 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-950/30 rounded-md transition-colors"
+                    >
+                      Reset Zoom
+                    </button>
+                  )}
+                </CardTitle>
+                <div className="text-sm text-muted-foreground">
+                  Computed metrics from combined IMU and GPS data
+                </div>
+              </CardHeader>
+              <CardContent>
+                <DerivedMetricsChart
+                  rideId={rideId}
+                  rideName={rideName}
+                  fitRecordingId={fitRecordingId}
+                  selectedMetric={TAB_TO_METRIC[activeTab]}
+                  highlightTime={selectedTime}
+                  zoomRange={sharedZoomRange}
+                  onZoomChange={setSharedZoomRange}
+                />
+              </CardContent>
+            </Card>
+          )}
+
+          {isAnalyticsTab && !hasAnalyticsData && (
+            <Card>
+              <CardContent className="h-[200px] flex items-center justify-center">
+                <p className="text-muted-foreground">Analytics require both IMU and GPS data</p>
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
 

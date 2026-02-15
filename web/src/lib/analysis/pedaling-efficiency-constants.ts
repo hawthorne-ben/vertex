@@ -138,10 +138,11 @@ export const MAX_GRADE_PERCENT = 30
  *
  * Tuning guide:
  * - 1.0 m/s²: Very sensitive, may detect seated rocking
- * - 1.5 m/s²: Balanced (default) - most normal seated riding is below this
+ * - 1.5 m/s²: Sensitive - may detect aggressive seated pedaling
+ * - 2.2 m/s²: Balanced (default) - filters out most seated rocking
  * - 2.5 m/s²: Conservative, only very aggressive standing
  */
-export const Y_AXIS_STANDING_THRESHOLD = 1.5
+export const Y_AXIS_STANDING_THRESHOLD = 2.2
 
 /**
  * Window size for position calculation in seconds

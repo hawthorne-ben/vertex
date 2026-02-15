@@ -21,7 +21,7 @@ export const maxDuration = 60 // Allow up to 60 seconds for large rides
  *   parameters: {
  *     hpfCutoff?: number       // HPF cutoff Hz (default: 0.5)
  *     windowSize?: number      // Efficiency window seconds (default: 3)
- *     yAxisThreshold?: number  // Standing detection threshold (default: 2.5)
+ *     yAxisThreshold?: number  // Standing detection threshold (default: 2.2)
  *   },
  *   saveToDatabase?: boolean  // If true, overwrites existing analyses
  * }

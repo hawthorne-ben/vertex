@@ -14,6 +14,7 @@ export interface DerivedMetricsChartProps {
   rideId: string
   rideName?: string
   fitRecordingId?: string | null
+  selectedMetric?: DerivedMetricType  // Controlled metric from parent
   highlightTime?: number | null
   zoomRange?: { start: string; end: string } | null
   onZoomChange?: (range: { start: string; end: string } | null) => void
@@ -30,20 +31,23 @@ export function DerivedMetricsChart({
   rideId,
   rideName,
   fitRecordingId,
+  selectedMetric: controlledMetric,
   highlightTime,
   zoomRange = null,
   onZoomChange,
   onMetricChange,
   className = ''
 }: DerivedMetricsChartProps) {
-  const [metric, setMetric] = useState<DerivedMetricType>('pedalingEfficiency')
+  const [internalMetric, setInternalMetric] = useState<DerivedMetricType>('pedalingEfficiency')
+  const metric = controlledMetric ?? internalMetric
+  const isControlled = controlledMetric !== undefined
   const [showTuningModal, setShowTuningModal] = useState(false)
   const [retrying, setRetrying] = useState(false)
   const { authFetch } = useAuthFetch()
 
-  // Notify parent when metric changes (for map overlay sync)
+  // Notify parent when metric changes (for map overlay sync, only in uncontrolled mode)
   const handleMetricChange = (newMetric: DerivedMetricType) => {
-    setMetric(newMetric)
+    setInternalMetric(newMetric)
     onMetricChange?.(newMetric)
   }
 
@@ -187,37 +191,53 @@ export function DerivedMetricsChart({
 
   return (
     <div className={`space-y-4 ${className}`}>
-      {/* Metric selector */}
-      <div className="flex gap-4 items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <label className="text-sm font-medium text-muted-foreground">Metric:</label>
-            <select
-              value={metric}
-              onChange={(e) => handleMetricChange(e.target.value as DerivedMetricType)}
-              className="px-3 py-2 pr-8 rounded-md text-sm bg-background border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2012%2012%22%3E%3Cpath%20fill%3D%22%23666%22%20d%3D%22M6%209L1%204h10z%22%2F%3E%3C%2Fsvg%3E')] bg-[length:12px] bg-[position:right_0.5rem_center] bg-no-repeat"
-              disabled={loading}
-            >
-              <option value="pedalingEfficiency">Pedaling Efficiency</option>
-              <option value="ridingPosition">Riding Position</option>
-              {/* Future metrics will go here */}
-            </select>
+      {/* Metric selector (only shown in uncontrolled mode) */}
+      {!isControlled ? (
+        <div className="flex gap-4 items-center justify-between">
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-muted-foreground">Metric:</label>
+              <select
+                value={metric}
+                onChange={(e) => handleMetricChange(e.target.value as DerivedMetricType)}
+                className="px-3 py-2 pr-8 rounded-md text-sm bg-background border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2012%2012%22%3E%3Cpath%20fill%3D%22%23666%22%20d%3D%22M6%209L1%204h10z%22%2F%3E%3C%2Fsvg%3E')] bg-[length:12px] bg-[position:right_0.5rem_center] bg-no-repeat"
+                disabled={loading}
+              >
+                <option value="pedalingEfficiency">Pedaling Efficiency</option>
+                <option value="ridingPosition">Riding Position</option>
+              </select>
+            </div>
+
+            {loading && <span className="text-xs text-muted-foreground animate-pulse">Calculating...</span>}
           </div>
 
-          {loading && <span className="text-xs text-muted-foreground animate-pulse">Calculating...</span>}
+          {/* DEV ONLY: Tuning button */}
+          {isDev && metric === 'pedalingEfficiency' && (
+            <button
+              onClick={() => setShowTuningModal(true)}
+              className="flex items-center gap-2 px-3 py-2 text-sm bg-primary/10 text-primary border border-primary/20 rounded-lg hover:bg-primary/20 transition-colors"
+            >
+              <Settings className="w-4 h-4" />
+              Tune Algorithm
+            </button>
+          )}
         </div>
+      ) : (
+        <div className="flex gap-4 items-center justify-between">
+          {loading && <span className="text-xs text-muted-foreground animate-pulse">Calculating...</span>}
 
-        {/* DEV ONLY: Tuning button */}
-        {isDev && metric === 'pedalingEfficiency' && (
-          <button
-            onClick={() => setShowTuningModal(true)}
-            className="flex items-center gap-2 px-3 py-2 text-sm bg-primary/10 text-primary border border-primary/20 rounded-lg hover:bg-primary/20 transition-colors"
-          >
-            <Settings className="w-4 h-4" />
-            Tune Algorithm
-          </button>
-        )}
-      </div>
+          {/* DEV ONLY: Tuning button */}
+          {isDev && metric === 'pedalingEfficiency' && (
+            <button
+              onClick={() => setShowTuningModal(true)}
+              className="flex items-center gap-2 px-3 py-2 text-sm bg-primary/10 text-primary border border-primary/20 rounded-lg hover:bg-primary/20 transition-colors"
+            >
+              <Settings className="w-4 h-4" />
+              Tune Algorithm
+            </button>
+          )}
+        </div>
+      )}
 
       {/* DEV ONLY: Tuning Modal */}
       {isDev && (
@@ -303,7 +323,7 @@ export function DerivedMetricsChart({
           {metric === 'ridingPosition' && metadata && 'standingPercent' in metadata && (
             <div className="grid grid-cols-3 gap-4">
               <div className="text-center p-3 bg-muted rounded-lg">
-                <div className="text-2xl font-bold text-orange-500">
+                <div className="text-2xl font-bold text-red-500">
                   {metadata.standingPercent?.toFixed(1)}%
                 </div>
                 <div className="text-xs text-muted-foreground mt-1">Time Standing</div>

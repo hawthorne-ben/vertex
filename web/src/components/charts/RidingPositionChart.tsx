@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, useRef, useState, useCallback } from 'react'
 
 interface RidingPositionSample {
   timestamp: string
@@ -19,6 +19,7 @@ interface RidingPositionChartProps {
 /**
  * Bar chart visualization for riding position (standing vs. seated)
  * Renders horizontal bars over time instead of scatter plot
+ * Supports click-and-drag zoom that persists via shared zoom state
  */
 export function RidingPositionChart({
   samples,
@@ -26,6 +27,9 @@ export function RidingPositionChart({
   zoomRange,
   onZoom
 }: RidingPositionChartProps) {
+  const chartRef = useRef<HTMLDivElement>(null)
+  const [dragStart, setDragStart] = useState<number | null>(null)
+  const [dragCurrent, setDragCurrent] = useState<number | null>(null)
 
   // Group samples into continuous position segments for bar rendering
   const segments = useMemo(() => {
@@ -82,27 +86,130 @@ export function RidingPositionChart({
     return result
   }, [samples])
 
-  // Compute highlight position as a clamped percentage (only when we have data)
-  const highlightPercent = useMemo(() => {
-    if (highlightTime === null || highlightTime === undefined || samples.length === 0) return null
+  // Compute the visible time range (zoom or full)
+  const timeRange = useMemo(() => {
+    if (samples.length === 0) return null
 
-    const startMs = new Date(samples[0].timestamp).getTime()
-    const endMs = new Date(samples[samples.length - 1].timestamp).getTime()
-    const totalDuration = endMs - startMs
+    const fullStart = new Date(samples[0].timestamp).getTime()
+    const fullEnd = new Date(samples[samples.length - 1].timestamp).getTime()
+
+    if (zoomRange) {
+      const zoomStart = new Date(zoomRange.start).getTime()
+      const zoomEnd = new Date(zoomRange.end).getTime()
+      return { start: zoomStart, end: zoomEnd }
+    }
+
+    return { start: fullStart, end: fullEnd }
+  }, [samples, zoomRange])
+
+  // Clip segments to the visible time range
+  const visibleSegments = useMemo(() => {
+    if (!timeRange) return []
+    const { start, end } = timeRange
+
+    return segments
+      .map(seg => ({
+        ...seg,
+        start: Math.max(seg.start, start),
+        end: Math.min(seg.end, end),
+        position: seg.position,
+      }))
+      .filter(seg => seg.start < seg.end && seg.end > start && seg.start < end)
+  }, [segments, timeRange])
+
+  // Compute highlight position as a clamped percentage within visible range
+  const highlightPercent = useMemo(() => {
+    if (highlightTime === null || highlightTime === undefined || !timeRange) return null
+
+    const totalDuration = timeRange.end - timeRange.start
     if (totalDuration <= 0) return null
 
-    const pct = ((highlightTime * 1000 - startMs) / totalDuration) * 100
-    // Clamp to chart bounds
+    const pct = ((highlightTime * 1000 - timeRange.start) / totalDuration) * 100
     if (pct < 0 || pct > 100) return null
     return pct
-  }, [highlightTime, samples])
+  }, [highlightTime, timeRange])
+
+  // Convert pixel X position to timestamp within the visible range
+  const pxToTime = useCallback((clientX: number): number | null => {
+    if (!chartRef.current || !timeRange) return null
+    const rect = chartRef.current.getBoundingClientRect()
+    const pct = (clientX - rect.left) / rect.width
+    if (pct < 0 || pct > 1) return null
+    return timeRange.start + pct * (timeRange.end - timeRange.start)
+  }, [timeRange])
+
+  // Drag-to-zoom handlers
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (!onZoom) return
+    const time = pxToTime(e.clientX)
+    if (time !== null) {
+      setDragStart(time)
+      setDragCurrent(time)
+    }
+  }, [onZoom, pxToTime])
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (dragStart === null) return
+    const time = pxToTime(e.clientX)
+    if (time !== null) {
+      setDragCurrent(time)
+    }
+  }, [dragStart, pxToTime])
+
+  const handleMouseUp = useCallback(() => {
+    if (dragStart === null || dragCurrent === null || !onZoom || !timeRange) {
+      setDragStart(null)
+      setDragCurrent(null)
+      return
+    }
+
+    const selStart = Math.min(dragStart, dragCurrent)
+    const selEnd = Math.max(dragStart, dragCurrent)
+    const totalDuration = timeRange.end - timeRange.start
+
+    // Only zoom if selection is at least 1% of visible range
+    if ((selEnd - selStart) / totalDuration > 0.01) {
+      onZoom(new Date(selStart).toISOString(), new Date(selEnd).toISOString())
+    }
+
+    setDragStart(null)
+    setDragCurrent(null)
+  }, [dragStart, dragCurrent, onZoom, timeRange])
+
+  const handleMouseLeave = useCallback(() => {
+    setDragStart(null)
+    setDragCurrent(null)
+  }, [])
+
+  // Compute drag selection overlay position
+  const selectionStyle = useMemo(() => {
+    if (dragStart === null || dragCurrent === null || !timeRange) return null
+    const totalDuration = timeRange.end - timeRange.start
+    if (totalDuration <= 0) return null
+
+    const left = ((Math.min(dragStart, dragCurrent) - timeRange.start) / totalDuration) * 100
+    const width = (Math.abs(dragCurrent - dragStart) / totalDuration) * 100
+
+    return {
+      left: `${Math.max(0, left)}%`,
+      width: `${Math.min(width, 100 - Math.max(0, left))}%`,
+    }
+  }, [dragStart, dragCurrent, timeRange])
 
   return (
     <div className="space-y-4">
       {/* Bar chart visualization */}
       <div className="border border-border rounded-lg p-6 bg-card">
-        <div className="relative overflow-hidden" style={{ height: '200px' }}>
-          {segments.length === 0 ? (
+        <div
+          ref={chartRef}
+          className="relative overflow-hidden select-none"
+          style={{ height: '200px', cursor: onZoom ? 'crosshair' : 'default' }}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseLeave}
+        >
+          {visibleSegments.length === 0 ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
               No position data available (not pedaling)
             </div>
@@ -114,12 +221,11 @@ export function RidingPositionChart({
               </div>
 
               {/* Position bars */}
-              {segments.map((segment, idx) => {
-                const startTime = new Date(samples[0].timestamp).getTime()
-                const endTime = new Date(samples[samples.length - 1].timestamp).getTime()
-                const totalDuration = endTime - startTime
+              {visibleSegments.map((segment, idx) => {
+                if (!timeRange) return null
+                const totalDuration = timeRange.end - timeRange.start
 
-                const leftPercent = ((segment.start - startTime) / totalDuration) * 100
+                const leftPercent = ((segment.start - timeRange.start) / totalDuration) * 100
                 const widthPercent = ((segment.end - segment.start) / totalDuration) * 100
 
                 const positionLabel = segment.position
@@ -134,13 +240,21 @@ export function RidingPositionChart({
                       left: `${leftPercent}%`,
                       width: `${widthPercent}%`,
                       backgroundColor: segment.position === 'standing'
-                        ? 'hsl(25, 90%, 55%)'
+                        ? 'hsl(0, 84%, 60%)'
                         : 'hsl(145, 70%, 50%)',
                     }}
                     title={`${positionLabel}: ${new Date(segment.start).toLocaleTimeString()} - ${new Date(segment.end).toLocaleTimeString()}`}
                   />
                 )
               })}
+
+              {/* Drag selection overlay */}
+              {selectionStyle && (
+                <div
+                  className="absolute top-0 bottom-0 z-20 pointer-events-none bg-blue-500/20 border-l border-r border-blue-500/50"
+                  style={selectionStyle}
+                />
+              )}
 
               {/* Highlight indicator — dashed blue, bounded */}
               {highlightPercent !== null && (
@@ -164,17 +278,17 @@ export function RidingPositionChart({
             <span className="text-muted-foreground">Seated</span>
           </div>
           <div className="flex items-center gap-2">
-            <div className="w-4 h-4 rounded" style={{ backgroundColor: 'hsl(25, 90%, 55%)' }}></div>
+            <div className="w-4 h-4 rounded" style={{ backgroundColor: 'hsl(0, 84%, 60%)' }}></div>
             <span className="text-muted-foreground">Standing</span>
           </div>
         </div>
       </div>
 
       {/* Time axis labels */}
-      {samples.length > 0 && (
+      {timeRange && (
         <div className="flex justify-between text-xs text-muted-foreground px-6">
-          <span>{new Date(samples[0].timestamp).toLocaleTimeString()}</span>
-          <span>{new Date(samples[samples.length - 1].timestamp).toLocaleTimeString()}</span>
+          <span>{new Date(timeRange.start).toLocaleTimeString()}</span>
+          <span>{new Date(timeRange.end).toLocaleTimeString()}</span>
         </div>
       )}
     </div>

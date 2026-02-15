@@ -14,6 +14,7 @@ export interface VTXRecording {
 export interface IMUSensorChartProps {
   rideId?: string  // Preferred: fetch from ride-level merged VTX endpoint
   recordings: VTXRecording[]  // Legacy: for backward compatibility
+  dataType?: IMUDataType  // Controlled data type from parent (overrides internal state)
   highlightTime?: number | null
   zoomRange?: { start: string; end: string } | null
   onZoomChange?: (range: { start: string; end: string } | null) => void
@@ -31,6 +32,7 @@ export interface IMUSensorChartProps {
 export function IMUSensorChart({
   rideId,
   recordings,
+  dataType: controlledDataType,
   highlightTime,
   zoomRange = null,
   onZoomChange,
@@ -39,7 +41,9 @@ export function IMUSensorChart({
   initialSamples,
   originalCount: propOriginalCount
 }: IMUSensorChartProps) {
-  const [dataType, setDataType] = useState<IMUDataType>('accel')
+  const [internalDataType, setInternalDataType] = useState<IMUDataType>('accel')
+  const dataType = controlledDataType ?? internalDataType
+  const isControlled = controlledDataType !== undefined
 
   // Fetch data using hook
   // Skip fetching if initialSamples are provided (recording detail page)
@@ -88,35 +92,39 @@ export function IMUSensorChart({
 
   const hasOrientationData = samples.some(s => s.roll !== null && s.pitch !== null)
 
-  // Auto-switch to accel if orientation data is not available
+  // Auto-switch to accel if orientation data is not available (only in uncontrolled mode)
   useEffect(() => {
-    if (!loading && samples.length > 0 && !hasOrientationData && dataType === 'orientation') {
-      setDataType('accel')
+    if (!isControlled && !loading && samples.length > 0 && !hasOrientationData && dataType === 'orientation') {
+      setInternalDataType('accel')
     }
-  }, [loading, samples.length, hasOrientationData, dataType])
+  }, [isControlled, loading, samples.length, hasOrientationData, dataType])
 
   return (
     <div className={`space-y-4 ${className}`}>
-      {/* Data source selector */}
-      <div className="flex gap-4 items-center">
-        <div className="flex items-center gap-2">
-          <label className="text-sm font-medium text-muted-foreground">Data Source:</label>
-          <select
-            value={dataType}
-            onChange={(e) => setDataType(e.target.value as IMUDataType)}
-            className="px-3 py-2 pr-8 rounded-md text-sm bg-background border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2012%2012%22%3E%3Cpath%20fill%3D%22%23666%22%20d%3D%22M6%209L1%204h10z%22%2F%3E%3C%2Fsvg%3E')] bg-[length:12px] bg-[position:right_0.5rem_center] bg-no-repeat"
-            disabled={loading}
-          >
-            {hasOrientationData && (
-              <option value="orientation">Orientation (BNO055)</option>
-            )}
-            <option value="accel">Accelerometer</option>
-            <option value="gyro">Gyroscope</option>
-          </select>
-        </div>
+      {/* Data source selector (only shown in uncontrolled mode) */}
+      {!isControlled ? (
+        <div className="flex gap-4 items-center">
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-muted-foreground">Data Source:</label>
+            <select
+              value={dataType}
+              onChange={(e) => setInternalDataType(e.target.value as IMUDataType)}
+              className="px-3 py-2 pr-8 rounded-md text-sm bg-background border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2012%2012%22%3E%3Cpath%20fill%3D%22%23666%22%20d%3D%22M6%209L1%204h10z%22%2F%3E%3C%2Fsvg%3E')] bg-[length:12px] bg-[position:right_0.5rem_center] bg-no-repeat"
+              disabled={loading}
+            >
+              {hasOrientationData && (
+                <option value="orientation">Orientation (BNO055)</option>
+              )}
+              <option value="accel">Accelerometer</option>
+              <option value="gyro">Gyroscope</option>
+            </select>
+          </div>
 
-        {loading && <span className="text-xs text-muted-foreground animate-pulse">Loading...</span>}
-      </div>
+          {loading && <span className="text-xs text-muted-foreground animate-pulse">Loading...</span>}
+        </div>
+      ) : (
+        loading && <div className="flex gap-4 items-center"><span className="text-xs text-muted-foreground animate-pulse">Loading...</span></div>
+      )}
 
       {/* Chart */}
       <div className="border border-border rounded-lg p-6 bg-card relative min-h-[400px]">

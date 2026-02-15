@@ -1,16 +1,18 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Clock } from 'lucide-react'
+import { Clock, ChevronLeft, ChevronRight } from 'lucide-react'
 
 interface TimeSliderProps {
   startTime: string // ISO timestamp
   endTime: string // ISO timestamp
   selectedTime: number | null // Unix timestamp in seconds, or null
   onTimeChange: (timestamp: number | null) => void
+  mapZoom?: number | null
+  initialMapZoom?: number
 }
 
-export function TimeSlider({ startTime, endTime, selectedTime, onTimeChange }: TimeSliderProps) {
+export function TimeSlider({ startTime, endTime, selectedTime, onTimeChange, mapZoom, initialMapZoom }: TimeSliderProps) {
   const startMs = new Date(startTime).getTime()
   const endMs = new Date(endTime).getTime()
   const durationMs = endMs - startMs
@@ -40,6 +42,20 @@ export function TimeSlider({ startTime, endTime, selectedTime, onTimeChange }: T
 
   const handleClear = () => {
     onTimeChange(null)
+  }
+
+  // Step scales with map zoom: 0.1% at initial zoom, down to 0.001% when zoomed in
+  const zoomRatio = (mapZoom != null && initialMapZoom != null && mapZoom > initialMapZoom)
+    ? Math.min((mapZoom - initialMapZoom) / 6, 1) // normalize over ~6 zoom levels
+    : 0
+  // Interpolate between 0.1% (0.001) and 0.001% (0.00001) on a log scale
+  const stepPercent = 0.001 * Math.pow(0.01, zoomRatio)
+  const stepAmount = durationMs * stepPercent
+
+  const handleStep = (direction: -1 | 1) => {
+    const currentMs = selectedTime !== null ? selectedTime * 1000 : startMs
+    const newMs = Math.max(startMs, Math.min(endMs, currentMs + direction * stepAmount))
+    onTimeChange(newMs / 1000)
   }
 
   const formatTime = (timestamp: number | null) => {
@@ -88,6 +104,15 @@ export function TimeSlider({ startTime, endTime, selectedTime, onTimeChange }: T
               })}
             </div>
 
+            {/* Prev step button */}
+            <button
+              onClick={() => handleStep(-1)}
+              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="Step backward"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+
             {/* Slider */}
             <div className="flex-1 relative">
               <input
@@ -128,6 +153,15 @@ export function TimeSlider({ startTime, endTime, selectedTime, onTimeChange }: T
                 style={{ width: `${position}%` }}
               />
             </div>
+
+            {/* Next step button */}
+            <button
+              onClick={() => handleStep(1)}
+              className="p-1 rounded hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+              aria-label="Step forward"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
 
             {/* End time label */}
             <div className="text-xs text-muted-foreground hidden md:block">

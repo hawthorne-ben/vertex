@@ -69,7 +69,7 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
         const sharedParameters = {
           hpfCutoff: 0.5,
           windowSize: 3,
-          yAxisThreshold: 1.5,
+          yAxisThreshold: 2.2,
         }
 
         const { data: efficiencyAnalysis, error: efficiencyError } = await supabase
@@ -251,7 +251,7 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
           options: {
             hpfCutoff: 0.5,
             windowSize: 3,
-            yAxisThreshold: 1.5,
+            yAxisThreshold: 2.2,
             includeDebug: false, // Don't store debug stats
           },
         })

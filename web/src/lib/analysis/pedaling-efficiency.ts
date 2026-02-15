@@ -53,7 +53,7 @@ export interface PedalingEfficiencyInput {
     windowSize?: number          // Smoothness window in seconds (default: 3)
     syncTolerance?: number       // Max time diff for sync in ms (default: 100)
     includeDebug?: boolean       // Include debug statistics in response (default: false)
-    yAxisThreshold?: number      // Y-axis rocking threshold for standing detection (default: 2.5)
+    yAxisThreshold?: number      // Y-axis rocking threshold for standing detection (default: 2.2)
   }
 }
 

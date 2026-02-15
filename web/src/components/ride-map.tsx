@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useState, useRef, useMemo } from 'react'
-import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap, ZoomControl } from 'react-leaflet'
+import { useEffect, useState, useRef, useMemo, memo } from 'react'
+import { MapContainer, TileLayer, Polyline, Marker, Popup, useMap, useMapEvents, ZoomControl } from 'react-leaflet'
 import L from 'leaflet'
 import { Home } from 'lucide-react'
 import { renderToStaticMarkup } from 'react-dom/server'
@@ -105,12 +105,12 @@ const getEfficiencyColor = (efficiency: number): string => {
 }
 
 // Helper: Map riding position to color
-// Green = Seated, Orange = Standing
+// Green = Seated, Red = Standing
 const getPositionColor = (position: 'standing' | 'seated' | null): string | null => {
   if (position === 'seated') {
     return '#22c55e' // Green - hsl(145, 70%, 50%)
   } else if (position === 'standing') {
-    return '#fb923c' // Orange - hsl(25, 90%, 55%)
+    return '#ef4444' // Red - Tailwind red-500
   }
   return null // No pedaling
 }
@@ -295,8 +295,20 @@ interface RideMapProps {
   colorBy?: 'speed' | 'elevation' | 'none'
   className?: string
   imuTimeRanges?: IMUTimeRange[] // Time ranges where IMU data exists
+  imuColor?: string // Color for IMU coverage overlay (default: green)
   efficiencySamples?: EfficiencySample[] // Pedaling efficiency samples for heatmap overlay
   positionSamples?: PositionSample[] // Riding position samples for heatmap overlay
+  onZoomChange?: (zoom: number) => void
+}
+
+// Track map zoom level changes and report to parent
+function ZoomTracker({ onZoomChange }: { onZoomChange: (zoom: number) => void }) {
+  useMapEvents({
+    zoomend: (e) => {
+      onZoomChange(e.target.getZoom())
+    }
+  })
+  return null
 }
 
 // Component to fit bounds only on initial mount
@@ -318,7 +330,8 @@ function FitBounds({ positions }: { positions: [number, number][] }) {
 }
 
 // Component to render polylines with gap detection
-function RoutePolylines({
+// Memoized to prevent re-rendering when only hoverIndex changes
+const RoutePolylines = memo(function RoutePolylines({
   fullTrack,
   imuTimeRanges,
   defaultColor,
@@ -481,7 +494,7 @@ function RoutePolylines({
       ))}
     </>
   )
-}
+})
 
 export function RideMap({
   gpsTrack,
@@ -490,8 +503,10 @@ export function RideMap({
   colorBy = 'speed',
   className = '',
   imuTimeRanges = [],
+  imuColor: imuColorProp,
   efficiencySamples,
-  positionSamples
+  positionSamples,
+  onZoomChange
 }: RideMapProps) {
   const [mounted, setMounted] = useState(false)
   const [isDark, setIsDark] = useState(false)
@@ -524,7 +539,12 @@ export function RideMap({
     return () => observer.disconnect()
   }, [])
 
-  // No need for static simplification - DynamicPolylines will handle it based on zoom
+  // Calculate bounds from original track (memoized to avoid recreating on scrub)
+  // Must be before conditional returns to follow Rules of Hooks
+  const positions = useMemo<[number, number][]>(
+    () => gpsTrack.map(p => [p.lat, p.lon]),
+    [gpsTrack]
+  )
 
   if (!mounted) {
     return (
@@ -541,9 +561,6 @@ export function RideMap({
       </div>
     )
   }
-
-  // Calculate bounds from original track
-  const positions: [number, number][] = gpsTrack.map(p => [p.lat, p.lon])
 
   // Theme-aware tile layer
   const tileUrl = isDark
@@ -590,10 +607,10 @@ export function RideMap({
 
   // Theme-aware colors
   const defaultRouteColor = isDark ? '#ffffff' : '#000000'
-  const imuRouteColor = '#22c55e' // Green for IMU coverage
+  const imuRouteColor = imuColorProp ?? '#22c55e' // Default green for IMU coverage
 
   return (
-    <div className={`${className} relative`} style={{ zIndex: 1 }}>
+    <div className={`${className} relative rounded-lg`} style={{ zIndex: 1 }}>
       <MapContainer
         key="ride-map" // Stable key to prevent remounting when overlay props change
         center={initialCenter}
@@ -612,6 +629,7 @@ export function RideMap({
         <ZoomControl position="topright" />
 
         <FitBounds positions={positions} />
+        {onZoomChange && <ZoomTracker onZoomChange={onZoomChange} />}
 
         {/* Route polylines - full resolution */}
         <RoutePolylines
