@@ -2,6 +2,7 @@
 
 import { memo, useCallback } from 'react'
 import { FileText, CheckCircle2, AlertCircle, Loader2, Clock, Check } from 'lucide-react'
+import Link from 'next/link'
 import { Recording } from '@/types/recordings'
 import { formatFileSize, formatTimeRange, formatDurationFromTimestamps } from '@/lib/utils/formatting'
 import { ProcessingProgress } from './ProcessingProgress'
@@ -126,7 +127,7 @@ export const RecordingCard = memo(function RecordingCard({
         </button>
       </div>
 
-      <a
+      <Link
         href={`/recordings/${recording.id}`}
         className="block"
         onClick={handleClick}
@@ -193,7 +194,7 @@ export const RecordingCard = memo(function RecordingCard({
             )}
           </div>
         </div>
-      </a>
+      </Link>
     </div>
   )
 })

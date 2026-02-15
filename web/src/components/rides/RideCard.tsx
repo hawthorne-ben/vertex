@@ -1,7 +1,6 @@
 'use client'
 
 import { memo, useCallback } from 'react'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Bike, Clock, MapPin, TrendingUp, Check } from 'lucide-react'
 import Link from 'next/link'
 import { Ride } from '@/types/rides'
@@ -66,64 +65,55 @@ export const RideCard = memo(function RideCard({
         </button>
       </div>
 
-      <Card className="hover:shadow-lg transition-shadow">
-        <Link href={`/rides/${ride.id}`} onClick={handleClick}>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div className="flex-1">
-                <CardTitle className="flex items-center">
-                  <Bike className="h-5 w-5 mr-2" />
-                  {ride.name}
-                </CardTitle>
-                <CardDescription>
-                  {formatDate(ride.start_time)}
-                </CardDescription>
-              </div>
-            </div>
-          </CardHeader>
-        </Link>
-        <CardContent>
-          {/* Ride Metrics */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div className="flex items-center">
-              <MapPin className="h-4 w-4 mr-2 text-gray-500" />
-              <div>
-                <div className="text-sm text-gray-500">Distance</div>
-                <div className="font-semibold">{formatDistance(ride.distance_meters)}</div>
-              </div>
-            </div>
-            <div className="flex items-center">
-              <TrendingUp className="h-4 w-4 mr-2 text-gray-500" />
-              <div>
-                <div className="text-sm text-gray-500">Elevation</div>
-                <div className="font-semibold">{formatElevation(ride.elevation_gain_meters)}</div>
-              </div>
-            </div>
-            <div className="flex items-center">
-              <Clock className="h-4 w-4 mr-2 text-gray-500" />
-              <div>
-                <div className="text-sm text-gray-500">Duration</div>
-                <div className="font-semibold">{formatDurationSeconds(ride.duration_seconds)}</div>
-              </div>
-            </div>
-            {ride.analysis_results?.avg_speed_mph && (
-              <div className="flex items-center">
-                <div>
-                  <div className="text-sm text-gray-500">Avg Speed</div>
-                  <div className="font-semibold">{ride.analysis_results.avg_speed_mph.toFixed(1)} mph</div>
-                </div>
-              </div>
-            )}
-          </div>
+      <Link href={`/rides/${ride.id}`} onClick={handleClick} className="block card-interactive rounded-lg p-6">
+        <div className="flex items-center mb-2">
+          <Bike className="h-5 w-5 mr-2 text-primary" />
+          <h3 className="text-lg font-medium text-primary">{ride.name}</h3>
+        </div>
+        <div className="text-sm text-secondary mb-4">
+          {formatDate(ride.start_time)}
+        </div>
 
-          {/* Source FIT file */}
-          {ride.fit_filename && (
-            <div className="text-xs text-gray-500">
-              Source: {ride.fit_filename}
+        {/* Ride Metrics */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+          <div className="flex items-center">
+            <MapPin className="h-4 w-4 mr-2 text-secondary" />
+            <div>
+              <div className="text-sm text-secondary">Distance</div>
+              <div className="font-semibold text-primary">{formatDistance(ride.distance_meters)}</div>
+            </div>
+          </div>
+          <div className="flex items-center">
+            <TrendingUp className="h-4 w-4 mr-2 text-secondary" />
+            <div>
+              <div className="text-sm text-secondary">Elevation</div>
+              <div className="font-semibold text-primary">{formatElevation(ride.elevation_gain_meters)}</div>
+            </div>
+          </div>
+          <div className="flex items-center">
+            <Clock className="h-4 w-4 mr-2 text-secondary" />
+            <div>
+              <div className="text-sm text-secondary">Duration</div>
+              <div className="font-semibold text-primary">{formatDurationSeconds(ride.duration_seconds)}</div>
+            </div>
+          </div>
+          {ride.analysis_results?.avg_speed_mph && (
+            <div className="flex items-center">
+              <div>
+                <div className="text-sm text-secondary">Avg Speed</div>
+                <div className="font-semibold text-primary">{ride.analysis_results.avg_speed_mph.toFixed(1)} mph</div>
+              </div>
             </div>
           )}
-        </CardContent>
-      </Card>
+        </div>
+
+        {/* Source FIT file */}
+        {ride.fit_filename && (
+          <div className="text-xs text-secondary">
+            Source: {ride.fit_filename}
+          </div>
+        )}
+      </Link>
     </div>
   )
 })
