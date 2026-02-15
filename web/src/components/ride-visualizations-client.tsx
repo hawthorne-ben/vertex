@@ -90,9 +90,8 @@ export function RideVisualizationsClient({
   const positionSamples = positionSamplesRaw as Array<{
     timestamp: string
     position: 'standing' | 'seated' | null
-    confidence: number
     rockingMagnitude: number
-    detectedCadence: number | null
+    cadence: number | null
     value: number | null
   }>
 

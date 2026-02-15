@@ -11,10 +11,8 @@ function averageSamples(samples: any[]): any {
   if (samples.length === 1) return samples[0]
 
   let sumEfficiency = 0
-  let sumConfidence = 0
   let sumCadence = 0
   let countEfficiency = 0
-  let countConfidence = 0
   let countCadence = 0
 
   for (const s of samples) {
@@ -22,12 +20,8 @@ function averageSamples(samples: any[]): any {
       sumEfficiency += s.efficiency
       countEfficiency++
     }
-    if (s.confidence !== null && s.confidence !== undefined) {
-      sumConfidence += s.confidence
-      countConfidence++
-    }
-    if (s.detectedCadence !== null && s.detectedCadence !== undefined) {
-      sumCadence += s.detectedCadence
+    if (s.cadence !== null && s.cadence !== undefined) {
+      sumCadence += s.cadence
       countCadence++
     }
   }
@@ -39,8 +33,8 @@ function averageSamples(samples: any[]): any {
     timestamp: middleSample.timestamp,
     efficiency: countEfficiency > 0 ? sumEfficiency / countEfficiency : null,
     efficiencyPercent: countEfficiency > 0 ? (sumEfficiency / countEfficiency) * 100 : null,
-    confidence: countConfidence > 0 ? sumConfidence / countConfidence : null,
-    detectedCadence: countCadence > 0 ? sumCadence / countCadence : null,
+    isPedaling: middleSample.isPedaling,
+    cadence: countCadence > 0 ? sumCadence / countCadence : null,
     // Keep other fields from middle sample
     rawAccel: middleSample.rawAccel,
     filteredAccel: middleSample.filteredAccel,

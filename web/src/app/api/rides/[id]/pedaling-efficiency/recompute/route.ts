@@ -19,14 +19,9 @@ export const maxDuration = 60 // Allow up to 60 seconds for large rides
  * Body:
  * {
  *   parameters: {
- *     hpfCutoff?: number
- *     windowSize?: number
- *     fftWindowSize?: number
- *     confidenceThreshold?: number
- *     minCadence?: number
- *     maxCadence?: number
- *     useMagnitude?: boolean
- *     yAxisThreshold?: number
+ *     hpfCutoff?: number       // HPF cutoff Hz (default: 0.5)
+ *     windowSize?: number      // Efficiency window seconds (default: 3)
+ *     yAxisThreshold?: number  // Standing detection threshold (default: 2.5)
  *   },
  *   saveToDatabase?: boolean  // If true, overwrites existing analyses
  * }
@@ -154,6 +149,7 @@ export async function POST(
           timestamp: record.timestamp,
           grade: record.grade ?? null,
           altitude: record.altitude ?? null,
+          cadence: record.cadence ?? null,
         }))
 
         resolve(samples)

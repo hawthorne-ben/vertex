@@ -5,9 +5,8 @@ import { useMemo } from 'react'
 interface RidingPositionSample {
   timestamp: string
   position: 'standing' | 'seated' | null
-  confidence: number
   rockingMagnitude: number
-  detectedCadence: number | null
+  cadence: number | null
 }
 
 interface RidingPositionChartProps {

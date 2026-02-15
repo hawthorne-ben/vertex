@@ -16,11 +16,6 @@ interface EfficiencyTuningModalProps {
 interface TuningParameters {
   hpfCutoff: number
   windowSize: number
-  fftWindowSize: number
-  confidenceThreshold: number
-  minCadence: number
-  maxCadence: number
-  useMagnitude: boolean
   yAxisThreshold: number
 }
 
@@ -33,8 +28,7 @@ interface RecomputeResult {
       pedalingPercent: number
       smoothPercent: number
       roughPercent: number
-      avgConfidence: number
-      avgDetectedCadence: number | null
+      avgCadence: number | null
     }
     sampleCount: number
   }
@@ -59,11 +53,6 @@ export function EfficiencyTuningModal({
   const [parameters, setParameters] = useState<TuningParameters>({
     hpfCutoff: CONSTANTS.HPF_CUTOFF_HZ,
     windowSize: CONSTANTS.EFFICIENCY_WINDOW_SECONDS,
-    fftWindowSize: CONSTANTS.FFT_WINDOW_SECONDS,
-    confidenceThreshold: CONSTANTS.CONFIDENCE_THRESHOLD,
-    minCadence: CONSTANTS.MIN_CADENCE_RPM,
-    maxCadence: CONSTANTS.MAX_CADENCE_RPM,
-    useMagnitude: CONSTANTS.USE_MAGNITUDE,
     yAxisThreshold: CONSTANTS.Y_AXIS_STANDING_THRESHOLD,
   })
 
@@ -88,11 +77,6 @@ export function EfficiencyTuningModal({
           parameters: {
             hpfCutoff: parameters.hpfCutoff,
             windowSize: parameters.windowSize,
-            fftWindowSize: parameters.fftWindowSize,
-            confidenceThreshold: parameters.confidenceThreshold,
-            minCadence: parameters.minCadence,
-            maxCadence: parameters.maxCadence,
-            useMagnitude: parameters.useMagnitude,
             yAxisThreshold: parameters.yAxisThreshold,
           },
           saveToDatabase,
@@ -123,11 +107,6 @@ export function EfficiencyTuningModal({
     setParameters({
       hpfCutoff: CONSTANTS.HPF_CUTOFF_HZ,
       windowSize: CONSTANTS.EFFICIENCY_WINDOW_SECONDS,
-      fftWindowSize: CONSTANTS.FFT_WINDOW_SECONDS,
-      confidenceThreshold: CONSTANTS.CONFIDENCE_THRESHOLD,
-      minCadence: CONSTANTS.MIN_CADENCE_RPM,
-      maxCadence: CONSTANTS.MAX_CADENCE_RPM,
-      useMagnitude: CONSTANTS.USE_MAGNITUDE,
       yAxisThreshold: CONSTANTS.Y_AXIS_STANDING_THRESHOLD,
     })
     setResult(null)
@@ -170,38 +149,18 @@ export function EfficiencyTuningModal({
             </div>
           </div>
 
-          {/* Road Bike Preset Suggestion */}
-          <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-4">
-            <div className="flex gap-3">
-              <Settings className="w-5 h-5 text-blue-500 flex-shrink-0 mt-0.5" />
-              <div className="text-sm">
-                <p className="font-medium text-blue-500 mb-2">Suggested Settings for Road Bike</p>
-                <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-secondary">
-                  <div>HPF Cutoff: <span className="text-primary font-medium">0.3-0.4 Hz</span></div>
-                  <div>FFT Window: <span className="text-primary font-medium">6-8 seconds</span></div>
-                  <div>Confidence: <span className="text-primary font-medium">0.20-0.30</span></div>
-                  <div>Use Magnitude: <span className="text-primary font-medium">true</span></div>
-                </div>
-                <p className="text-xs text-secondary mt-2">
-                  Road bikes have cleaner pedaling signals. Lower HPF = preserve more signal.
-                  Higher confidence = stricter detection.
-                </p>
-              </div>
-            </div>
-          </div>
-
           {/* Parameters Grid */}
           <div className="space-y-4">
             <h3 className="text-sm font-medium text-primary">Signal Processing</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <FormField
-                label="High-Pass Filter Cutoff (Hz)"
+                label="HPF Cutoff (Hz)"
                 value={parameters.hpfCutoff}
                 onChange={(v) => setParameters({ ...parameters, hpfCutoff: v })}
                 min={0.1}
-                max={2.0}
+                max={1.0}
                 step={0.1}
-                hint="Road: 0.3-0.4 Hz. MTB: 0.5-0.6 Hz. Lower = more signal"
+                hint="Removes gravity. Lower = more aggressive. Default: 0.5 Hz"
               />
               <FormField
                 label="Efficiency Window (seconds)"
@@ -212,60 +171,6 @@ export function EfficiencyTuningModal({
                 step={0.5}
                 hint="Smoothness window. Road: 2-3s. MTB: 3-5s"
               />
-              <FormField
-                label="FFT Window (seconds)"
-                value={parameters.fftWindowSize}
-                onChange={(v) => setParameters({ ...parameters, fftWindowSize: v })}
-                min={5}
-                max={20}
-                step={1}
-                hint="Cadence detection. Road: 6-8s. MTB: 10-12s"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-4">
-            <h3 className="text-sm font-medium text-primary">Pedaling Detection</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <FormField
-                label="Confidence Threshold"
-                value={parameters.confidenceThreshold}
-                onChange={(v) => setParameters({ ...parameters, confidenceThreshold: v })}
-                min={0.05}
-                max={0.5}
-                step={0.05}
-                hint="Road: 0.20-0.30 (strict). MTB: 0.10-0.15 (loose)"
-              />
-              <FormField
-                label="Min Cadence (RPM)"
-                value={parameters.minCadence}
-                onChange={(v) => setParameters({ ...parameters, minCadence: v })}
-                min={20}
-                max={60}
-                step={5}
-                hint="Minimum reasonable cadence"
-              />
-              <FormField
-                label="Max Cadence (RPM)"
-                value={parameters.maxCadence}
-                onChange={(v) => setParameters({ ...parameters, maxCadence: v })}
-                min={100}
-                max={180}
-                step={5}
-                hint="Maximum reasonable cadence"
-              />
-              <div className="flex items-center gap-2 p-3 bg-muted rounded-lg">
-                <input
-                  type="checkbox"
-                  id="useMagnitude"
-                  checked={parameters.useMagnitude}
-                  onChange={(e) => setParameters({ ...parameters, useMagnitude: e.target.checked })}
-                  className="w-4 h-4 rounded border-border"
-                />
-                <label htmlFor="useMagnitude" className="text-sm text-primary cursor-pointer">
-                  Use 3-axis magnitude
-                </label>
-              </div>
             </div>
           </div>
 
@@ -294,19 +199,9 @@ export function EfficiencyTuningModal({
           <div className="space-y-4">
             <h3 className="text-sm font-medium text-primary">Current Algorithm Constants (FYI)</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <InfoField label="Stationary Threshold" value={`${CONSTANTS.STATIONARY_THRESHOLD} m/s²`} />
-              <InfoField label="Method 1 Peak Ratio" value={`${CONSTANTS.METHOD_1_PEAK_TO_MEDIAN} (road)`} />
-              <InfoField label="Method 2 Peak Ratio" value={`${CONSTANTS.METHOD_2_PEAK_TO_MEDIAN} (mtb)`} />
-              <InfoField label="Method 3 Peak Ratio" value={`${CONSTANTS.METHOD_3_PEAK_TO_MEDIAN} (rough)`} />
+              <InfoField label="Cadence Source" value="FIT sensor (cadence > 0 = pedaling)" />
               <InfoField label="Decay Constant (k)" value={`${CONSTANTS.EFFICIENCY_DECAY_CONSTANT}`} />
-              <InfoField label="Rescale Range" value={`${CONSTANTS.RESCALE_MIN * 100}%-${CONSTANTS.RESCALE_MAX * 100}%`} />
-            </div>
-            <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
-              <p className="text-xs text-blue-700 dark:text-blue-400">
-                <strong>Note:</strong> Method-specific thresholds and preprocessing filters (bandpass, notch, etc.)
-                require code changes in pedaling-efficiency-constants.ts. These parameters control the basic
-                signal processing and detection windows.
-              </p>
+              <InfoField label="Algorithm Version" value={CONSTANTS.ALGORITHM_VERSION} />
             </div>
           </div>
 
@@ -326,9 +221,8 @@ export function EfficiencyTuningModal({
                       <div>Pedaling Time: <span className="text-primary font-medium">{result.efficiency.metadata.pedalingPercent.toFixed(1)}%</span></div>
                       <div>Smooth: <span className="text-primary font-medium">{result.efficiency.metadata.smoothPercent.toFixed(1)}%</span></div>
                       <div>Rough: <span className="text-primary font-medium">{result.efficiency.metadata.roughPercent.toFixed(1)}%</span></div>
-                      <div>Avg Confidence: <span className="text-primary font-medium">{result.efficiency.metadata.avgConfidence.toFixed(2)}</span></div>
-                      <div>Avg Cadence: <span className="text-primary font-medium">{result.efficiency.metadata.avgDetectedCadence?.toFixed(0) || 'N/A'} RPM</span></div>
-                      <div className="col-span-2">Sample Count: <span className="text-primary font-medium">{result.efficiency.sampleCount.toLocaleString()}</span></div>
+                      <div>Avg Cadence: <span className="text-primary font-medium">{result.efficiency.metadata.avgCadence?.toFixed(0) || 'N/A'} RPM</span></div>
+                      <div>Sample Count: <span className="text-primary font-medium">{result.efficiency.sampleCount.toLocaleString()}</span></div>
                     </div>
                   </div>
 

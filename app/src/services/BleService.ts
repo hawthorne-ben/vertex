@@ -367,10 +367,9 @@ class BleService {
                   const parsedData = this.parseIMU(data);
                   onDataReceived(parsedData);
                 } catch (parseError: any) {
-                  console.error('[BLE] Parse error:', parseError.message);
-                  if (onError) {
-                    onError(new Error(`Parse error: ${parseError.message}`));
-                  }
+                  // Log and skip malformed packets — don't propagate to onError
+                  // since parse errors are transient (e.g. partial BLE notification)
+                  console.warn('[BLE] Skipping malformed packet:', parseError.message);
                 }
               }
             } catch (callbackError: any) {
@@ -801,8 +800,10 @@ class BleService {
     const now = Date.now();
     if (this.lastNotificationTime > 0) {
       const deltaMs = now - this.lastNotificationTime;
-      const rate = 1000 / deltaMs; // Hz
-      this.notificationRates.push(rate);
+      if (deltaMs > 0) {
+        const rate = 1000 / deltaMs; // Hz
+        this.notificationRates.push(rate);
+      }
 
       // Keep last 50 samples for average calculation
       if (this.notificationRates.length > 50) {

@@ -69,12 +69,7 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
         const sharedParameters = {
           hpfCutoff: 0.5,
           windowSize: 3,
-          fftWindowSize: 10,
-          confidenceThreshold: 0.15,
-          minCadence: 40,
-          maxCadence: 130,
-          useMagnitude: true,
-          yAxisThreshold: 0.8,
+          yAxisThreshold: 1.5,
         }
 
         const { data: efficiencyAnalysis, error: efficiencyError } = await supabase
@@ -221,6 +216,7 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
             timestamp: r.timestamp ? new Date(r.timestamp).toISOString() : null,
             grade: r.grade || null,
             altitude: r.enhanced_altitude ?? r.altitude ?? null,
+            cadence: r.cadence ?? null,
           }))
           .filter((s: any) => s.timestamp)
 
@@ -255,12 +251,7 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
           options: {
             hpfCutoff: 0.5,
             windowSize: 3,
-            fftWindowSize: 10,
-            confidenceThreshold: 0.15,
-            minCadence: 40,
-            maxCadence: 130,
-            useMagnitude: true,
-            yAxisThreshold: 0.8,
+            yAxisThreshold: 1.5,
             includeDebug: false, // Don't store debug stats
           },
         })

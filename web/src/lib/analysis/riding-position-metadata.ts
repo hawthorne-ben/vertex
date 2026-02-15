@@ -22,7 +22,6 @@ export function calculateRidingPositionMetadata(
       pedalingSamples: 0,
       avgCadenceStanding: null,
       avgCadenceSeated: null,
-      avgConfidence: 0,
       sampleRate
     }
   }
@@ -37,24 +36,20 @@ export function calculateRidingPositionMetadata(
   let seatedCadenceSum = 0
   let seatedCadenceCount = 0
 
-  let confidenceSum = 0
-
   for (const sample of samples) {
-    confidenceSum += sample.confidence
-
     if (sample.position !== null) {
       pedalingCount++
 
       if (sample.position === 'standing') {
         standingCount++
-        if (sample.detectedCadence !== null) {
-          standingCadenceSum += sample.detectedCadence
+        if (sample.cadence !== null) {
+          standingCadenceSum += sample.cadence
           standingCadenceCount++
         }
       } else if (sample.position === 'seated') {
         seatedCount++
-        if (sample.detectedCadence !== null) {
-          seatedCadenceSum += sample.detectedCadence
+        if (sample.cadence !== null) {
+          seatedCadenceSum += sample.cadence
           seatedCadenceCount++
         }
       }
@@ -72,7 +67,6 @@ export function calculateRidingPositionMetadata(
     pedalingSamples: pedalingCount,
     avgCadenceStanding: standingCadenceCount > 0 ? standingCadenceSum / standingCadenceCount : null,
     avgCadenceSeated: seatedCadenceCount > 0 ? seatedCadenceSum / seatedCadenceCount : null,
-    avgConfidence: samples.length > 0 ? confidenceSum / samples.length : 0,
     sampleRate
   }
 }

@@ -3,6 +3,8 @@
  *
  * Centralized configuration for easy tuning without hunting through code.
  * Adjust these values to calibrate algorithm for different riding styles.
+ *
+ * v3.0.0: FIT cadence for pedaling detection, removed FFT/BPF
  */
 
 // ============================================
@@ -13,7 +15,7 @@
  * Version string for cache invalidation
  * Bump this when changing any constants or algorithm logic
  */
-export const ALGORITHM_VERSION = '1.2.0'  // Added riding position detection
+export const ALGORITHM_VERSION = '3.0.0'  // FIT cadence, no FFT
 
 // ============================================
 // SIGNAL PROCESSING
@@ -44,131 +46,6 @@ export const HPF_CUTOFF_HZ = 0.5
  */
 export const EFFICIENCY_WINDOW_SECONDS = 3
 
-/**
- * Window size for FFT cadence detection in seconds
- * Larger = better frequency resolution but less responsive
- * Smaller = faster updates but less accurate cadence
- *
- * Tuning guide:
- * - 5 seconds: Minimum for reliable cadence detection
- * - 10 seconds: Balanced (default) - good resolution
- * - 15 seconds: Maximum resolution, slow to respond
- */
-export const FFT_WINDOW_SECONDS = 10
-
-/**
- * Use 3-axis acceleration magnitude vs single axis
- * true = captures pedaling forces in any direction (recommended)
- * false = uses only accel_x (bike orientation dependent)
- */
-export const USE_MAGNITUDE = true
-
-// ============================================
-// PEDALING DETECTION THRESHOLDS
-// ============================================
-
-/**
- * Minimum confidence threshold to report efficiency
- * Lower = more sensitive (may include coasting)
- * Higher = more strict (only confident pedaling)
- *
- * Tuning guide:
- * - 0.10: Very sensitive, may show false positives
- * - 0.15: Balanced (default) - good for mountain biking
- * - 0.25: Strict, only very clear pedaling
- */
-export const CONFIDENCE_THRESHOLD = 0.15
-
-/**
- * Standard deviation threshold for stationary detection (m/s²)
- * Below this value, assume bike is stationary (not pedaling)
- *
- * INCREASED from 0.05 to fix false positives when stationary
- *
- * Tuning guide:
- * - 0.05: Too sensitive - shows pedaling when stationary
- * - 0.15: Balanced (new default) - rejects stationary periods
- * - 0.25: Very strict, may miss gentle pedaling
- */
-export const STATIONARY_THRESHOLD = 0.15
-
-/**
- * Minimum reasonable cadence in RPM
- * Below this is likely noise, not pedaling
- */
-export const MIN_CADENCE_RPM = 40
-
-/**
- * Maximum reasonable cadence in RPM
- * Above this is likely noise, not pedaling
- */
-export const MAX_CADENCE_RPM = 130
-
-// ============================================
-// FFT CONFIDENCE CALCULATION
-// ============================================
-
-/**
- * Method 1: Strong periodic signal (road cycling, smooth trails)
- * Peak must be this many times higher than median power
- */
-export const METHOD_1_PEAK_TO_MEDIAN = 2.5
-
-/**
- * Method 1: Minimum standard deviation (m/s²)
- */
-export const METHOD_1_MIN_STDDEV = 0.15
-
-/**
- * Method 1: Bonus confidence multiplier for very strong peaks
- */
-export const METHOD_1_STRONG_PEAK_THRESHOLD = 5.0
-export const METHOD_1_STRONG_PEAK_BONUS = 0.2
-
-/**
- * Method 2: Moderate signal (mountain biking)
- * TIGHTENED: Peak to median ratio requirement
- */
-export const METHOD_2_PEAK_TO_MEDIAN = 1.5
-
-/**
- * Method 2: Minimum standard deviation (m/s²)
- */
-export const METHOD_2_MIN_STDDEV = 0.2
-
-/**
- * Method 2: Cadence range for validation
- */
-export const METHOD_2_MIN_CADENCE = 50
-export const METHOD_2_MAX_CADENCE = 110
-
-/**
- * Method 2: Maximum confidence (capped because signal is moderate)
- */
-export const METHOD_2_MAX_CONFIDENCE = 0.6
-
-/**
- * Method 3: High variance with weak periodic component (very rough terrain)
- * TIGHTENED: Increased from 1.2 to 2.0 to reduce false positives on descents
- */
-export const METHOD_3_PEAK_TO_MEDIAN = 2.0
-
-/**
- * Method 3: Minimum standard deviation (m/s²)
- */
-export const METHOD_3_MIN_STDDEV = 0.5
-
-/**
- * Method 3: Cadence range for validation
- */
-export const METHOD_3_MIN_CADENCE = 40
-export const METHOD_3_MAX_CADENCE = 120
-
-/**
- * Method 3: Maximum confidence (very uncertain due to noise)
- */
-export const METHOD_3_MAX_CONFIDENCE = 0.4
-
 // ============================================
 // EFFICIENCY FORMULA
 // ============================================
@@ -192,21 +69,6 @@ export const EFFICIENCY_DECAY_CONSTANT = 0.18
  */
 export const EFFICIENCY_FLOOR = 0.15
 
-/**
- * Efficiency rescaling parameters
- * Maps raw efficiency range to more motivating output range
- *
- * NEW: Linear rescaling to make good riders feel better
- * [EFFICIENCY_FLOOR, 1.0] → [RESCALE_MIN, RESCALE_MAX]
- *
- * Current: [15%, 100%] → [30%, 100%]
- * - Your 70% becomes 82% (more motivating!)
- * - Your 85% becomes 92% (rare perfection)
- * - Floor of 15% becomes 30% (shows bad segments, not too discouraging)
- * - Better heatmap resolution with 70% range instead of 50%
- */
-export const RESCALE_MIN = 0.30  // Output minimum (30%)
-export const RESCALE_MAX = 1.00  // Output maximum (100%)
 
 // ============================================
 // TIME SYNCHRONIZATION
@@ -250,18 +112,6 @@ export const DEBUG_WINDOW_SECONDS = 5
  */
 export const DEFAULT_SAMPLE_RATE_HZ = 25
 
-/**
- * Minimum samples required for FFT analysis
- * Below this, skip FFT and return zero confidence
- */
-export const MIN_FFT_SAMPLES = 32
-
-/**
- * Minimum frequency to analyze in FFT (Hz)
- * Skip DC component and very low frequencies
- */
-export const MIN_FFT_FREQUENCY_HZ = 0.1
-
 // ============================================
 // GRADE SMOOTHING
 // ============================================
@@ -287,13 +137,11 @@ export const MAX_GRADE_PERCENT = 30
  * Standing creates lateral rocking motion not present when seated
  *
  * Tuning guide:
- * - 1.5 m/s²: Very sensitive, may detect seated rocking
- * - 2.5 m/s²: Balanced (default) - most normal seated riding is below this
- * - 4.0 m/s²: Conservative, only very aggressive standing
- *
- * Note: Initial value of 0.8 was far too low, causing false positives
+ * - 1.0 m/s²: Very sensitive, may detect seated rocking
+ * - 1.5 m/s²: Balanced (default) - most normal seated riding is below this
+ * - 2.5 m/s²: Conservative, only very aggressive standing
  */
-export const Y_AXIS_STANDING_THRESHOLD = 2.5
+export const Y_AXIS_STANDING_THRESHOLD = 1.5
 
 /**
  * Window size for position calculation in seconds

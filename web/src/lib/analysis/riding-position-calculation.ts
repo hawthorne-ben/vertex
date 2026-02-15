@@ -10,22 +10,18 @@ import * as CONSTANTS from './pedaling-efficiency-constants'
  * Calculate riding position from Y-axis acceleration data
  *
  * @param yAxisWindow - Array of Y-axis acceleration values in the analysis window
- * @param confidence - Pedaling detection confidence (from FFT)
- * @param cadence - Detected cadence (from FFT)
- * @param confidenceThreshold - Minimum confidence to report position
+ * @param isPedaling - Whether the rider is currently pedaling (from FIT cadence)
  * @param yAxisThreshold - Y-axis magnitude threshold for standing detection
  * @returns Position ('standing', 'seated', or null if not pedaling)
  */
 export function calculateRidingPosition(
   yAxisWindow: number[],
-  confidence: number,
-  cadence: number | null,
-  confidenceThreshold: number = CONSTANTS.CONFIDENCE_THRESHOLD,
+  isPedaling: boolean,
   yAxisThreshold: number = CONSTANTS.Y_AXIS_STANDING_THRESHOLD
 ): { position: 'standing' | 'seated' | null; rockingMagnitude: number } {
 
   // Not pedaling - return null (matches efficiency behavior)
-  if (confidence < confidenceThreshold || cadence === null) {
+  if (!isPedaling) {
     return {
       position: null,
       rockingMagnitude: 0
@@ -36,8 +32,6 @@ export function calculateRidingPosition(
   const rockingMagnitude = calculateStdDev(yAxisWindow)
 
   // Determine position based on lateral rocking
-  // Standing creates significant side-to-side motion not present when seated
-  // Threshold needs to be higher - most seated riding has Y-axis stddev < 0.8
   const position = rockingMagnitude >= yAxisThreshold ? 'standing' : 'seated'
 
   return {
@@ -65,9 +59,9 @@ function calculateStdDev(values: number[]): number {
  * @returns Downsampled samples with majority position per bucket
  */
 export function downsamplePositionByMajorityVote(
-  samples: Array<{ timestamp: string; position: 'standing' | 'seated' | null; rockingMagnitude: number; confidence: number; detectedCadence: number | null }>,
+  samples: Array<{ timestamp: string; position: 'standing' | 'seated' | null; rockingMagnitude: number; cadence: number | null }>,
   bucketMs: number = 1000
-): Array<{ timestamp: string; position: 'standing' | 'seated' | null; rockingMagnitude: number; confidence: number; detectedCadence: number | null }> {
+): Array<{ timestamp: string; position: 'standing' | 'seated' | null; rockingMagnitude: number; cadence: number | null }> {
 
   if (samples.length === 0) return []
 
@@ -96,7 +90,6 @@ export function downsamplePositionByMajorityVote(
     }
 
     let sumRocking = 0
-    let sumConfidence = 0
     let sumCadence = 0
     let cadenceCount = 0
 
@@ -106,9 +99,8 @@ export function downsamplePositionByMajorityVote(
       else counts.null++
 
       sumRocking += s.rockingMagnitude
-      sumConfidence += s.confidence
-      if (s.detectedCadence !== null) {
-        sumCadence += s.detectedCadence
+      if (s.cadence !== null) {
+        sumCadence += s.cadence
         cadenceCount++
       }
     }
@@ -130,8 +122,7 @@ export function downsamplePositionByMajorityVote(
       timestamp: middleSample.timestamp,
       position: majorityPosition,
       rockingMagnitude: sumRocking / bucketSamples.length,
-      confidence: sumConfidence / bucketSamples.length,
-      detectedCadence: cadenceCount > 0 ? sumCadence / cadenceCount : null
+      cadence: cadenceCount > 0 ? sumCadence / cadenceCount : null
     })
   }
 

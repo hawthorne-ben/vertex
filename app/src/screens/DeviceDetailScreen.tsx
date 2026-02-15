@@ -83,9 +83,8 @@ const DeviceDetailScreenContent: React.FC = () => {
 
   // Track if component is mounted to prevent state updates after unmount
   const isMountedRef = useRef(true);
-  const lastUpdateTimeRef = useRef<number>(0);
-  const updateCountRef = useRef<number>(0);
   const sampleRateHistoryRef = useRef<number[]>([]);
+  const updateCountRef = useRef<number>(0);
   const readingBufferRef = useRef<any[]>([]);
   const streamSubscriptionRef = useRef<any>(null);
 
@@ -120,9 +119,8 @@ const DeviceDetailScreenContent: React.FC = () => {
           // Clear local state
           safeSetState(setLastReadingTime, null);
           sampleRateHistoryRef.current = [];
-          readingBufferRef.current = [];
           updateCountRef.current = 0;
-          lastUpdateTimeRef.current = 0;
+          readingBufferRef.current = [];
         } else {
           safeSetState(setError, null);
         }
@@ -427,31 +425,24 @@ const DeviceDetailScreenContent: React.FC = () => {
             safeSetState(setBatteryVoltage, data.batteryVoltage);
           }
 
-          // Calculate sample rate with rolling average (updates every 10 samples)
+          // Calculate sample rate: collect timestamps, update UI every 100 samples
           const now = Date.now();
+          sampleRateHistoryRef.current.push(now);
+          if (sampleRateHistoryRef.current.length > 100) {
+            sampleRateHistoryRef.current.shift();
+          }
+
+          // Only update state every 100th sample to avoid thrashing React renders
           updateCountRef.current++;
-
-          if (updateCountRef.current >= 10) {
-            if (lastUpdateTimeRef.current > 0) {
-              const deltaMs = now - lastUpdateTimeRef.current;
-              const instantRate = (10 * 1000) / deltaMs; // 10 samples over deltaMs
-
-              // Add to rolling average (keep last 5 measurements = 50 samples)
-              sampleRateHistoryRef.current.push(instantRate);
-              if (sampleRateHistoryRef.current.length > 5) {
-                sampleRateHistoryRef.current.shift();
-              }
-
-              // Calculate average and bucket to nearest 10 Hz
-              const avgRate = sampleRateHistoryRef.current.reduce((a, b) => a + b, 0) / sampleRateHistoryRef.current.length;
-              const bucketedRate = Math.round(avgRate / 10) * 10; // Round to nearest 10
-              safeSetState(setSampleRate, bucketedRate);
-
-              // Update global deviceStore so RecordScreen can use the measured rate
-              useDeviceStore.getState().setSampleRate(bucketedRate);
-            }
-            lastUpdateTimeRef.current = now;
+          if (updateCountRef.current >= 100 && sampleRateHistoryRef.current.length >= 2) {
             updateCountRef.current = 0;
+            const timestamps = sampleRateHistoryRef.current;
+            const deltaMs = timestamps[timestamps.length - 1] - timestamps[0];
+            if (deltaMs > 0) {
+              const avgRate = Math.round(((timestamps.length - 1) * 1000) / deltaMs);
+              safeSetState(setSampleRate, avgRate);
+              useDeviceStore.getState().setSampleRate(avgRate);
+            }
           }
         },
         (error) => {

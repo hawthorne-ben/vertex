@@ -33,11 +33,9 @@ interface PedalingEfficiencyMetadata {
   smoothPercent: number
   roughPercent: number
   pedalingPercent: number
-  avgConfidence: number
-  avgDetectedCadence: number | null
+  avgCadence: number | null
   totalSamples: number
   pedalingSamples: number
-  hasCadence: boolean
   hasGrade: boolean
   sampleRate: number | null
 }
@@ -49,7 +47,6 @@ interface RidingPositionMetadata {
   pedalingSamples: number
   avgCadenceStanding: number | null
   avgCadenceSeated: number | null
-  avgConfidence: number
   sampleRate: number | null
 }
 

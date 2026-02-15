@@ -18,7 +18,6 @@ function averageSamples(samples: any[]): any {
   }
 
   let sumRocking = 0
-  let sumConfidence = 0
   let sumCadence = 0
   let cadenceCount = 0
 
@@ -28,9 +27,8 @@ function averageSamples(samples: any[]): any {
     else counts.null++
 
     sumRocking += s.rockingMagnitude || 0
-    sumConfidence += s.confidence || 0
-    if (s.detectedCadence !== null && s.detectedCadence !== undefined) {
-      sumCadence += s.detectedCadence
+    if (s.cadence !== null && s.cadence !== undefined) {
+      sumCadence += s.cadence
       cadenceCount++
     }
   }
@@ -52,8 +50,7 @@ function averageSamples(samples: any[]): any {
     timestamp: middleSample.timestamp,
     position: majorityPosition,
     rockingMagnitude: sumRocking / samples.length,
-    confidence: sumConfidence / samples.length,
-    detectedCadence: cadenceCount > 0 ? sumCadence / cadenceCount : null
+    cadence: cadenceCount > 0 ? sumCadence / cadenceCount : null
   }
 }
 

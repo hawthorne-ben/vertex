@@ -144,7 +144,9 @@ export class Butterworth2ndOrder {
     const ita = 1.0 / Math.tan(omega * dt / 2.0)
     const q = Math.sqrt(2.0)
 
-    this.b1 = 2.0 * (1.0 - ita * ita) / (1.0 + q * ita + ita * ita)
+    // Feedback coefficients: maps to scipy's -a[1] and -a[2]
+    // y[n] = a0*x[n] + a1*x[n-1] + a2*x[n-2] + b1*y[n-1] + b2*y[n-2]
+    this.b1 = -2.0 * (1.0 - ita * ita) / (1.0 + q * ita + ita * ita)
     this.b2 = -(1.0 - q * ita + ita * ita) / (1.0 + q * ita + ita * ita)
     this.a0 = 1.0 / (1.0 + q * ita + ita * ita)
     this.a1 = 2.0 * this.a0

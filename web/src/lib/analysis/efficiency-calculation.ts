@@ -13,30 +13,15 @@ import * as CONSTANTS from './pedaling-efficiency-constants'
  * Uses exponential decay formula: efficiency = exp(-k * stdDev)
  * where k is tuned so that typical good pedaling shows 70-85% efficiency.
  *
- * TUNING FIX: Now applies rescaling to make output more motivating.
- * Raw efficiency range [15%, 100%] is mapped to [50%, 100%]:
- * - Your 70% becomes 85%
- * - Your 85% becomes 94%
- * - Floor of 15% becomes 50%
- *
  * @param stdDev - Standard deviation of high-pass filtered acceleration (m/s²)
  * @returns Efficiency score 0-1
  */
 export function calculateEfficiency(stdDev: number): number {
   // Apply exponential decay formula
-  let rawEfficiency = Math.exp(-CONSTANTS.EFFICIENCY_DECAY_CONSTANT * stdDev)
+  const efficiency = Math.exp(-CONSTANTS.EFFICIENCY_DECAY_CONSTANT * stdDev)
 
   // Apply floor to prevent extremely low scores
-  rawEfficiency = Math.max(CONSTANTS.EFFICIENCY_FLOOR, rawEfficiency)
-
-  // TUNING FIX: Rescale to more motivating range
-  // Linear mapping: [EFFICIENCY_FLOOR, 1.0] → [RESCALE_MIN, RESCALE_MAX]
-  const rescaledEfficiency = CONSTANTS.RESCALE_MIN +
-    (rawEfficiency - CONSTANTS.EFFICIENCY_FLOOR) *
-    (CONSTANTS.RESCALE_MAX - CONSTANTS.RESCALE_MIN) /
-    (1.0 - CONSTANTS.EFFICIENCY_FLOOR)
-
-  return rescaledEfficiency
+  return Math.max(CONSTANTS.EFFICIENCY_FLOOR, efficiency)
 }
 
 /**

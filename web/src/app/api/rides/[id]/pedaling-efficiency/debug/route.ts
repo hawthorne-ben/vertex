@@ -17,9 +17,7 @@ export const dynamic = 'force-dynamic'
  *
  * Returns detailed diagnostics including:
  * - Full sample data with all intermediate values
- * - FFT spectrum at multiple points
  * - Signal statistics
- * - Filter response visualization
  */
 export async function GET(
   request: NextRequest,
@@ -122,11 +120,11 @@ export async function GET(
       )
     }
 
-    // Fetch FIT samples
+    // Fetch FIT samples (include cadence)
     const fitSamplesUrl = new URL(`${request.url.split('/pedaling-efficiency')[0]}/samples`, request.url)
     fitSamplesUrl.searchParams.set('start', startTime)
     fitSamplesUrl.searchParams.set('end', endTime)
-    fitSamplesUrl.searchParams.set('fields', 'grade,altitude')
+    fitSamplesUrl.searchParams.set('fields', 'grade,altitude,cadence')
 
     const fitResponse = await fetch(fitSamplesUrl, {
       headers: { 'Authorization': request.headers.get('authorization')! }
@@ -176,7 +174,8 @@ export async function GET(
       fitSamples: fitSamples.map((s: any) => ({
         timestamp: s.timestamp,
         grade: s.grade,
-        altitude: s.altitude
+        altitude: s.altitude,
+        cadence: s.cadence ?? null
       })),
       options: {
         windowSize,

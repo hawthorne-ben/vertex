@@ -80,7 +80,6 @@ class NotificationService {
             foregroundServiceTypes: [
               AndroidForegroundServiceType.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
               AndroidForegroundServiceType.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
-              AndroidForegroundServiceType.FOREGROUND_SERVICE_TYPE_LOCATION,
             ],
           }),
           style: {

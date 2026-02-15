@@ -7,9 +7,8 @@
 export interface RidingPositionSample {
   timestamp: string
   position: 'standing' | 'seated' | null  // null when not pedaling
-  confidence: number  // Pedaling detection confidence (shared with efficiency)
   rockingMagnitude: number  // Y-axis oscillation amplitude
-  detectedCadence: number | null  // RPM
+  cadence: number | null  // RPM from FIT sensor
 }
 
 export interface RidingPositionMetadata {
@@ -24,6 +23,5 @@ export interface RidingPositionMetadata {
   avgCadenceSeated: number | null    // Average cadence when seated
 
   // Detection quality
-  avgConfidence: number
   sampleRate: number | null
 }

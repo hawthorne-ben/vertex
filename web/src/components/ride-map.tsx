@@ -284,9 +284,8 @@ interface EfficiencySample {
 interface PositionSample {
   timestamp: string
   position: 'standing' | 'seated' | null
-  confidence: number
   rockingMagnitude: number
-  detectedCadence: number | null
+  cadence: number | null
 }
 
 interface RideMapProps {
