@@ -1,0 +1,29 @@
+{
+  "migIndex": 1,
+  "data": [
+    {
+      "path": "assets/fonts/JetBrainsMono-Regular.ttf",
+      "sha1": "d6f1f912710bba58f54bc397bee06776c2a76eb1"
+    },
+    {
+      "path": "assets/fonts/CrimsonPro-Regular.ttf",
+      "sha1": "a16a6de85e439c95a8261a41febeb4e81acb95da"
+    },
+    {
+      "path": "assets/fonts/CrimsonPro-SemiBold.ttf",
+      "sha1": "44dc7c064877a176668cbce272a6d2955ac0e1b4"
+    },
+    {
+      "path": "assets/fonts/crimsonpro.zip",
+      "sha1": "8be40370e4c4830bd56c2d4cf77570d716e11cdd"
+    },
+    {
+      "path": "assets/fonts/CrimsonPro-Medium.ttf",
+      "sha1": "4b6b4429202be561ab20e4e31b24a5c39fdb107f"
+    },
+    {
+      "path": "assets/fonts/CrimsonPro-Light.ttf",
+      "sha1": "bc95ce73edd5ced930d19b8f6249ffede8e28e13"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { X, AlertTriangle, CheckCircle2 } from 'lucide-react'
+import { X, AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react'
 
 export type ConfirmationType = 'delete' | 'warning' | 'success'
 
@@ -118,7 +118,7 @@ export function ConfirmationModal({
           >
             {isLoading ? (
               <div className="flex items-center gap-2">
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                <Loader2 className="w-4 h-4 animate-spin" />
                 Loading...
               </div>
             ) : (

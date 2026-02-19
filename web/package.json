@@ -28,6 +28,7 @@
     "@types/archiver": "^7.0.0",
     "@vercel/analytics": "^1.5.0",
     "@vercel/speed-insights": "^1.2.0",
+    "@vertex/ui": "file:../packages/ui",
     "@vertex-pkg/vtx-parser": "^0.6.1",
     "archiver": "^7.0.1",
     "class-variance-authority": "^0.7.1",

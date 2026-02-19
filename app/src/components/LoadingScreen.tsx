@@ -1,14 +1,16 @@
 /**
  * Loading Screen Component
- * 
+ *
  * Elegant loading screen with VERTEX branding
  */
 
 import React, { useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, Animated } from 'react-native';
-import { theme } from '../styles/theme';
+import { theme as staticTheme } from '../styles/theme';
+import { useTheme } from '../contexts/ThemeContext';
 
 const LoadingScreen: React.FC = () => {
+  const { theme } = useTheme();
   const pulseAnim = useRef(new Animated.Value(0.4)).current;
   const rotateAnim = useRef(new Animated.Value(0)).current;
 
@@ -45,13 +47,13 @@ const LoadingScreen: React.FC = () => {
   });
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
       <Animated.View style={{ opacity: pulseAnim }}>
-        <Text style={styles.logo}>VERTEX</Text>
+        <Text style={[styles.logo, { color: theme.colors.textPrimary }]}>VERTEX</Text>
       </Animated.View>
-      
+
       <Animated.View style={[styles.spinner, { transform: [{ rotate: spin }] }]}>
-        <View style={styles.spinnerDot} />
+        <View style={[styles.spinnerDot, { backgroundColor: theme.colors.textSecondary }]} />
       </Animated.View>
     </View>
   );
@@ -60,17 +62,15 @@ const LoadingScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: theme.colors.background,
     justifyContent: 'center',
     alignItems: 'center',
   },
   logo: {
-    fontSize: 48,
-    fontFamily: theme.typography.serif,
-    fontWeight: theme.typography.fontWeight.normal,
+    fontSize: staticTheme.typography.fontSize.xxxl,
+    fontFamily: staticTheme.typography.serif,
+    fontWeight: staticTheme.typography.fontWeight.normal,
     letterSpacing: 2,
-    color: theme.colors.textPrimary,
-    marginBottom: theme.spacing.xl,
+    marginBottom: staticTheme.spacing.xl,
   },
   spinner: {
     width: 40,
@@ -81,10 +81,8 @@ const styles = StyleSheet.create({
   spinnerDot: {
     width: 40,
     height: 4,
-    backgroundColor: theme.colors.textSecondary,
     borderRadius: 2,
   },
 });
 
 export default LoadingScreen;
-

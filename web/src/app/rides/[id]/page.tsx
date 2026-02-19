@@ -91,7 +91,7 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
     <div className="container mx-auto p-4 md:p-6">
       {/* Ride Header */}
       <div className="mb-6 md:mb-8">
-        <h1 className="text-2xl md:text-3xl font-bold mb-2 text-primary">{ride.name}</h1>
+        <h1 className="text-2xl md:text-3xl font-serif font-normal mb-2 text-primary">{ride.name}</h1>
         <div className="flex flex-wrap gap-2 md:gap-4 text-sm md:text-base text-secondary">
           <span>{formatDate(ride.start_time)}</span>
           {ride.bike_type && (

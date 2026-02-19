@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 export default function CreateRidePage() {
   return (
     <div className="container mx-auto p-6 max-w-2xl">
-      <h1 className="text-3xl font-serif font-normal mb-8">Create Ride</h1>
+      <h1 className="text-2xl md:text-3xl font-serif font-normal mb-6 md:mb-8">Create Ride</h1>
       
       <Card>
         <CardHeader>

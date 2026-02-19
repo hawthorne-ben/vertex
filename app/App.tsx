@@ -6,8 +6,32 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { StatusBar, useColorScheme } from 'react-native';
+import { StatusBar, useColorScheme, Text, TextInput } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { theme as staticTheme } from './src/styles/theme';
+
+// Set default font for all Text and TextInput components globally.
+// Uses allowFontScaling as a hook — the actual font is applied via render override.
+const defaultFont = staticTheme.typography.serif;
+const originalTextRender = (Text as any).render;
+if (originalTextRender) {
+  (Text as any).render = function(props: any, ref: any) {
+    const style = [{ fontFamily: defaultFont }, props.style];
+    return originalTextRender.call(this, { ...props, style }, ref);
+  };
+} else {
+  // Fallback for older RN
+  (Text as any).defaultProps = { ...(Text as any).defaultProps, style: { fontFamily: defaultFont } };
+}
+const originalInputRender = (TextInput as any).render;
+if (originalInputRender) {
+  (TextInput as any).render = function(props: any, ref: any) {
+    const style = [{ fontFamily: defaultFont }, props.style];
+    return originalInputRender.call(this, { ...props, style }, ref);
+  };
+} else {
+  (TextInput as any).defaultProps = { ...(TextInput as any).defaultProps, style: { fontFamily: defaultFont } };
+}
 import { NavigationContainer, NavigationContainerRef } from '@react-navigation/native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { AuthProvider } from './src/contexts/AuthContext';

@@ -291,7 +291,7 @@ export default function UploadPage() {
   return (
     <div className="container mx-auto px-4 md:px-6 py-8 max-w-4xl">
       <div className="mb-8">
-        <h1 className="text-3xl font-normal text-primary mb-2">Upload Recordings</h1>
+        <h1 className="text-2xl md:text-3xl font-serif font-normal text-primary mb-2">Upload Recordings</h1>
         <p className="text-secondary">
           Upload VTX recordings from your IMU sensor or FIT files from your cycling computer. Files will be automatically processed and analyzed.
         </p>

@@ -11,6 +11,12 @@
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
 		761780ED2CA45674006654EE /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 761780EC2CA45674006654EE /* AppDelegate.swift */; };
 		81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */; };
+		45DAB5958A7942BA84D6AC1F /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 20177768AD12498AB32D919D /* JetBrainsMono-Regular.ttf */; };
+		8CE23DFB60E94FDAAA1BB117 /* CrimsonPro-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = DE55C2EE300246B0A8A67B19 /* CrimsonPro-Regular.ttf */; };
+		B39730629ADE4468BEC1C59A /* CrimsonPro-SemiBold.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 47F578FD760849D5A27BE75F /* CrimsonPro-SemiBold.ttf */; };
+		5AC3969889644F4C8D606502 /* CrimsonPro-Medium.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 2C1E2E2A69714B0A8AF1263C /* CrimsonPro-Medium.ttf */; };
+		E50397F045264261B24BA038 /* CrimsonPro-Light.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 9C2AA273618D44508ED17A2C /* CrimsonPro-Light.ttf */; };
+		7C66F82D5FE44696B597BF66 /* crimsonpro.zip in Resources */ = {isa = PBXBuildFile; fileRef = E5021CA7B9854C68BD616647 /* crimsonpro.zip */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -24,6 +30,12 @@
 		761780EC2CA45674006654EE /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = vertex/AppDelegate.swift; sourceTree = "<group>"; };
 		81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = LaunchScreen.storyboard; path = vertex/LaunchScreen.storyboard; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
+		20177768AD12498AB32D919D /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; name = "JetBrainsMono-Regular.ttf"; path = "../assets/fonts/JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		DE55C2EE300246B0A8A67B19 /* CrimsonPro-Regular.ttf */ = {isa = PBXFileReference; name = "CrimsonPro-Regular.ttf"; path = "../assets/fonts/CrimsonPro-Regular.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		47F578FD760849D5A27BE75F /* CrimsonPro-SemiBold.ttf */ = {isa = PBXFileReference; name = "CrimsonPro-SemiBold.ttf"; path = "../assets/fonts/CrimsonPro-SemiBold.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		2C1E2E2A69714B0A8AF1263C /* CrimsonPro-Medium.ttf */ = {isa = PBXFileReference; name = "CrimsonPro-Medium.ttf"; path = "../assets/fonts/CrimsonPro-Medium.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		9C2AA273618D44508ED17A2C /* CrimsonPro-Light.ttf */ = {isa = PBXFileReference; name = "CrimsonPro-Light.ttf"; path = "../assets/fonts/CrimsonPro-Light.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		E5021CA7B9854C68BD616647 /* crimsonpro.zip */ = {isa = PBXFileReference; name = "crimsonpro.zip"; path = "../assets/fonts/crimsonpro.zip"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -74,6 +86,7 @@
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
 				BBD78D7AC51CEA395F1C20DB /* Pods */,
+				06D5FB50888344F0B0ACBF23 /* Resources */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -96,6 +109,20 @@
 			);
 			path = Pods;
 			sourceTree = "<group>";
+		};
+		06D5FB50888344F0B0ACBF23 /* Resources */ = {
+			isa = "PBXGroup";
+			children = (
+				20177768AD12498AB32D919D /* JetBrainsMono-Regular.ttf */,
+				DE55C2EE300246B0A8A67B19 /* CrimsonPro-Regular.ttf */,
+				47F578FD760849D5A27BE75F /* CrimsonPro-SemiBold.ttf */,
+				2C1E2E2A69714B0A8AF1263C /* CrimsonPro-Medium.ttf */,
+				9C2AA273618D44508ED17A2C /* CrimsonPro-Light.ttf */,
+				E5021CA7B9854C68BD616647 /* crimsonpro.zip */,
+			);
+			name = Resources;
+			sourceTree = "<group>";
+			path = "";
 		};
 /* End PBXGroup section */
 
@@ -159,6 +186,12 @@
 			files = (
 				81AB9BB82411601600AC10FF /* LaunchScreen.storyboard in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
+				45DAB5958A7942BA84D6AC1F /* JetBrainsMono-Regular.ttf in Resources */,
+				8CE23DFB60E94FDAAA1BB117 /* CrimsonPro-Regular.ttf in Resources */,
+				B39730629ADE4468BEC1C59A /* CrimsonPro-SemiBold.ttf in Resources */,
+				5AC3969889644F4C8D606502 /* CrimsonPro-Medium.ttf in Resources */,
+				E50397F045264261B24BA038 /* CrimsonPro-Light.ttf in Resources */,
+				7C66F82D5FE44696B597BF66 /* crimsonpro.zip in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

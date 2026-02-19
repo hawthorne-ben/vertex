@@ -72,7 +72,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: theme.typography.fontSize.xl,
-    fontWeight: theme.typography.fontWeight.bold,
+    fontWeight: theme.typography.fontWeight.semibold,
     color: theme.colors.foreground,
     marginBottom: theme.spacing.md,
     fontFamily: theme.typography.serif,

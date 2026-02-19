@@ -101,7 +101,7 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
         />
       ) : (
         <div className="mb-8">
-          <h1 className="text-3xl font-normal text-primary mb-2">
+          <h1 className="text-2xl md:text-3xl font-serif font-normal text-primary mb-2">
             Recording Detail
           </h1>
         </div>

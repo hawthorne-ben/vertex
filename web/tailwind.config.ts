@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss"
+import { fontFamily, radius } from "@vertex/ui"
 
 const config: Config = {
   darkMode: ["class"],
@@ -10,8 +11,8 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        serif: ['var(--font-serif)', 'Georgia', 'serif'],
-        mono: ['var(--font-mono)', 'Consolas', 'monospace'],
+        serif: ['var(--font-serif)', fontFamily.serif, 'Georgia', 'serif'],
+        mono: ['var(--font-mono)', fontFamily.mono, 'Consolas', 'monospace'],
       },
       colors: {
         background: "hsl(var(--background))",
@@ -107,9 +108,9 @@ const config: Config = {
         },
       },
       borderRadius: {
-        lg: "var(--radius)",
-        md: "calc(var(--radius) - 2px)",
-        sm: "calc(var(--radius) - 4px)",
+        lg: `${radius.lg}px`,
+        md: `${radius.md}px`,
+        sm: `${radius.sm}px`,
       },
     },
   },
