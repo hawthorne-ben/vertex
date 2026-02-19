@@ -3,9 +3,8 @@
 import { useState, useMemo } from 'react'
 import { UPlotBase } from './UPlotBase'
 import { RidingPositionChart } from './RidingPositionChart'
-import { useDerivedMetric, DerivedMetricType } from './hooks/useDerivedMetric'
-import { AlertCircle, Settings, RefreshCw } from 'lucide-react'
-import { EfficiencyTuningModal } from '@/components/dev/efficiency-tuning-modal'
+import { useDerivedMetric, DerivedMetricType, DerivedMetricSample } from './hooks/useDerivedMetric'
+import { AlertCircle, RefreshCw } from 'lucide-react'
 import { useAuthFetch } from '@/hooks/useAuthFetch'
 import { apiCache } from '@/lib/cache/api-cache'
 import uPlot from 'uplot'
@@ -20,6 +19,11 @@ export interface DerivedMetricsChartProps {
   onZoomChange?: (range: { start: string; end: string } | null) => void
   onMetricChange?: (metric: string | null) => void
   className?: string
+  // Parent-provided data (fetched once, shared across tab switches)
+  parentSamples?: DerivedMetricSample[]
+  parentMetadata?: any
+  parentLoading?: boolean
+  parentError?: string | null
 }
 
 /**
@@ -36,12 +40,15 @@ export function DerivedMetricsChart({
   zoomRange = null,
   onZoomChange,
   onMetricChange,
-  className = ''
+  className = '',
+  parentSamples,
+  parentMetadata,
+  parentLoading,
+  parentError
 }: DerivedMetricsChartProps) {
   const [internalMetric, setInternalMetric] = useState<DerivedMetricType>('pedalingEfficiency')
   const metric = controlledMetric ?? internalMetric
   const isControlled = controlledMetric !== undefined
-  const [showTuningModal, setShowTuningModal] = useState(false)
   const [retrying, setRetrying] = useState(false)
   const { authFetch } = useAuthFetch()
 
@@ -76,16 +83,23 @@ export function DerivedMetricsChart({
     }
   }
 
-  // Check if we're in development mode
-  const isDev = process.env.NODE_ENV === 'development'
+  // Only fetch internally when zoomed — otherwise use parent-provided data
+  const hasParentData = parentSamples !== undefined
+  const isZoomed = !!zoomRange
 
-  // Fetch data using hook
-  const { samples, loading, error, metadata } = useDerivedMetric({
+  const { samples: zoomSamples, loading: zoomLoading, error: zoomError, metadata: zoomMetadata } = useDerivedMetric({
     rideId,
     metric,
     timeRange: zoomRange,
-    fitRecordingId
+    fitRecordingId,
+    enabled: isZoomed // Only fetch when zoomed
   })
+
+  // Use zoom data when zoomed, otherwise fall back to parent data (or internal for standalone usage)
+  const samples = isZoomed ? zoomSamples : (hasParentData ? parentSamples! : zoomSamples)
+  const metadata = isZoomed ? zoomMetadata : (hasParentData ? parentMetadata : zoomMetadata)
+  const loading = isZoomed ? zoomLoading : (hasParentData ? (parentLoading ?? false) : zoomLoading)
+  const error = isZoomed ? zoomError : (hasParentData ? (parentError ?? null) : zoomError)
 
   // Process data for chart
   const chartData = useMemo((): { data: uPlot.AlignedData; series: uPlot.Series[]; yAxisLabel: string; scales: Record<string, uPlot.Scale> } => {
@@ -211,42 +225,11 @@ export function DerivedMetricsChart({
             {loading && <span className="text-xs text-muted-foreground animate-pulse">Calculating...</span>}
           </div>
 
-          {/* DEV ONLY: Tuning button */}
-          {isDev && metric === 'pedalingEfficiency' && (
-            <button
-              onClick={() => setShowTuningModal(true)}
-              className="flex items-center gap-2 px-3 py-2 text-sm bg-primary/10 text-primary border border-primary/20 rounded-lg hover:bg-primary/20 transition-colors"
-            >
-              <Settings className="w-4 h-4" />
-              Tune Algorithm
-            </button>
-          )}
         </div>
       ) : (
         <div className="flex gap-4 items-center justify-between">
           {loading && <span className="text-xs text-muted-foreground animate-pulse">Calculating...</span>}
-
-          {/* DEV ONLY: Tuning button */}
-          {isDev && metric === 'pedalingEfficiency' && (
-            <button
-              onClick={() => setShowTuningModal(true)}
-              className="flex items-center gap-2 px-3 py-2 text-sm bg-primary/10 text-primary border border-primary/20 rounded-lg hover:bg-primary/20 transition-colors"
-            >
-              <Settings className="w-4 h-4" />
-              Tune Algorithm
-            </button>
-          )}
         </div>
-      )}
-
-      {/* DEV ONLY: Tuning Modal */}
-      {isDev && (
-        <EfficiencyTuningModal
-          isOpen={showTuningModal}
-          onClose={() => setShowTuningModal(false)}
-          rideId={rideId}
-          rideName={rideName}
-        />
       )}
 
       {/* Loading state */}

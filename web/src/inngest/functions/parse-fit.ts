@@ -270,10 +270,10 @@ export const parseFitFile = inngest.createFunction(
               latitude: record.position_lat ? record.position_lat * (180 / Math.pow(2, 31)) : null,
               longitude: record.position_long ? record.position_long * (180 / Math.pow(2, 31)) : null,
               altitude: record.altitude || record.enhanced_altitude || null,
-              speed_ms: record.speed ? record.speed / 1000 : null, // Convert mm/s to m/s
-              power_watts: record.power || null,
-              heart_rate: record.heart_rate || null,
-              cadence: record.cadence || null,
+              speed_ms: record.speed ? record.speed / 3.6 : null, // Convert km/h to m/s
+              power_watts: record.power ?? null,
+              heart_rate: record.heart_rate ?? null,
+              cadence: record.cadence ?? null,
               temperature: record.temperature || null,
               grade: record.grade || null,
             }
@@ -307,28 +307,32 @@ export const parseFitFile = inngest.createFunction(
         const elevationGainFeet = Math.round(elevationGainMeters * 3.28084)
 
         // Calculate averages and maximums from data points
+        // For power average, include zeros when moving (coasting) but exclude stationary points
+        // 1 m/s ≈ 2.2 mph — below this the rider is effectively stopped
+        const STATIONARY_SPEED_THRESHOLD = 1.0
         const validPowerPoints = dataPoints.filter(p => p.power_watts !== null)
+        const movingPowerPoints = validPowerPoints.filter(p => p.speed_ms === null || p.speed_ms >= STATIONARY_SPEED_THRESHOLD)
         const validHRPoints = dataPoints.filter(p => p.heart_rate !== null)
         const validCadencePoints = dataPoints.filter(p => p.cadence !== null)
         const validSpeedPoints = dataPoints.filter(p => p.speed_ms !== null)
 
         const maxPowerWatts = validPowerPoints.length > 0 ? Math.max(...validPowerPoints.map(p => p.power_watts)) : null
-        const avgPowerWatts = validPowerPoints.length > 0 ? Math.round(validPowerPoints.reduce((sum, p) => sum + p.power_watts, 0) / validPowerPoints.length) : null
+        const avgPowerWatts = movingPowerPoints.length > 0 ? Math.round(movingPowerPoints.reduce((sum, p) => sum + p.power_watts, 0) / movingPowerPoints.length) : null
         const maxHeartRate = validHRPoints.length > 0 ? Math.max(...validHRPoints.map(p => p.heart_rate)) : null
         const avgHeartRate = validHRPoints.length > 0 ? Math.round(validHRPoints.reduce((sum, p) => sum + p.heart_rate, 0) / validHRPoints.length) : null
         const maxCadence = validCadencePoints.length > 0 ? Math.max(...validCadencePoints.map(p => p.cadence)) : null
         const avgCadence = validCadencePoints.length > 0 ? Math.round(validCadencePoints.reduce((sum, p) => sum + p.cadence, 0) / validCadencePoints.length) : null
 
         // Use session speed data (parser configured for km/h, we need mph)
-        let maxSpeedKmh = session.max_speed || null
-        let avgSpeedKmh = session.avg_speed || null
+        let maxSpeedKmh = session.max_speed ?? null
+        let avgSpeedKmh = session.avg_speed ?? null
 
-        // If session speeds not available, calculate from data points
-        if (!maxSpeedKmh && validSpeedPoints.length > 0) {
-          maxSpeedKmh = Math.max(...validSpeedPoints.map(p => p.speed_ms))
+        // If session speeds not available, calculate from data points (speed_ms is m/s, convert to km/h)
+        if (maxSpeedKmh == null && validSpeedPoints.length > 0) {
+          maxSpeedKmh = Math.max(...validSpeedPoints.map(p => p.speed_ms)) * 3.6
         }
-        if (!avgSpeedKmh && validSpeedPoints.length > 0) {
-          avgSpeedKmh = validSpeedPoints.reduce((sum, p) => sum + p.speed_ms, 0) / validSpeedPoints.length
+        if (avgSpeedKmh == null && validSpeedPoints.length > 0) {
+          avgSpeedKmh = (validSpeedPoints.reduce((sum, p) => sum + p.speed_ms, 0) / validSpeedPoints.length) * 3.6
         }
 
         // Convert speeds from km/h to mph and m/s for storage

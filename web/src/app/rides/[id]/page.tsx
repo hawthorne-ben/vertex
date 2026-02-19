@@ -1,9 +1,7 @@
 import { Suspense } from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { notFound, redirect } from 'next/navigation'
-import { headers } from 'next/headers'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { Bike, Clock, MapPin, TrendingUp, Zap, Heart, Activity } from 'lucide-react'
 import { AddVtxDataButton } from '@/components/add-vtx-data-button'
 import { RideVisualizationsClient } from '@/components/ride-visualizations-client'
 import { formatDurationFromSeconds } from '@/lib/utils/formatting'
@@ -87,12 +85,6 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
     if (!meters) return 'N/A'
     const feet = meters * 3.28084
     return `${feet.toFixed(0)} ft`
-  }
-
-  const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
 
   return (

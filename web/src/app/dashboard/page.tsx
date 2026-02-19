@@ -1,8 +1,10 @@
 import Link from 'next/link'
+import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { createClient } from '@/lib/supabase/server'
 import { formatDurationFromTimestamps as formatDurationFromTimestampsUtil, formatDurationFromSeconds } from '@/lib/utils/formatting'
+import { EfficiencyTrendChart } from '@/components/efficiency-trend-chart'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -24,17 +26,19 @@ export default async function DashboardPage() {
     console.error('Error fetching rides:', ridesError)
   }
 
-  // Fetch recordings data (VTX only)
-  const { data: recordings, error: recordingsError } = await supabase
+  // Fetch all recordings (for storage stats)
+  const { data: allRecordings, error: recordingsError } = await supabase
     .from('recordings')
     .select('*')
     .eq('user_id', user.id)
-    .eq('file_type', 'vtx')
     .order('start_time', { ascending: false })
 
   if (recordingsError) {
     console.error('Error fetching recordings:', recordingsError)
   }
+
+  // Split by type for display
+  const recordings = allRecordings?.filter(r => r.file_type === 'vtx') || []
 
   // Calculate statistics
   const totalRides = rides?.length || 0
@@ -43,8 +47,8 @@ export default async function DashboardPage() {
   const totalSeconds = rides?.reduce((sum, ride) => sum + (ride.duration_seconds || 0), 0) || 0
   const totalHours = (totalSeconds / 3600).toFixed(1)
 
-  // Total storage used (sum of all recordings file sizes)
-  const totalBytes = recordings?.reduce((sum, rec) => sum + (rec.file_size_bytes || 0), 0) || 0
+  // Total storage used (sum of all recordings file sizes — FIT + VTX)
+  const totalBytes = allRecordings?.reduce((sum, rec) => sum + (rec.file_size_bytes || 0), 0) || 0
   const storageGB = (totalBytes / (1024 * 1024 * 1024)).toFixed(2)
 
   // Total recordings length (duration in hours, duration_ms in recordings table)
@@ -205,6 +209,19 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* Efficiency Trend */}
+      <Suspense>
+        <Card className="mb-6 md:mb-8">
+          <CardHeader>
+            <CardTitle className="text-xl font-serif">Pedaling Efficiency</CardTitle>
+            <p className="text-sm text-muted-foreground">Last 8 weeks</p>
+          </CardHeader>
+          <CardContent>
+            <EfficiencyTrendChart />
+          </CardContent>
+        </Card>
+      </Suspense>
     </div>
   )
 }

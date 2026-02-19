@@ -81,11 +81,8 @@ export function useDerivedMetric({
   const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
-    // Don't fetch if disabled
+    // Don't fetch if disabled — but preserve existing data for cache-hit on re-enable
     if (!enabled) {
-      setSamples([])
-      setMetadata(null)
-      setError(null)
       setLoading(false)
       return
     }

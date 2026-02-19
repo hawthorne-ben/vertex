@@ -304,13 +304,97 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
           efficiencySampleCount: computeResult.efficiency.samples.length,
           positionSampleCount: computeResult.position.samples.length,
           avgEfficiency: computeResult.efficiency.metadata.avgEfficiencyPercent,
+          smoothPercent: computeResult.efficiency.metadata.smoothPercent,
+          roughPercent: computeResult.efficiency.metadata.roughPercent,
           pedalingPercent: computeResult.efficiency.metadata.pedalingPercent,
           standingPercent: computeResult.position.metadata.standingPercent,
           seatedPercent: computeResult.position.metadata.seatedPercent,
+          avgCadenceStanding: computeResult.position.metadata.avgCadenceStanding,
+          avgCadenceSeated: computeResult.position.metadata.avgCadenceSeated,
         }
       })
 
       console.log(`[Ride Analysis] Completed efficiency and position for ride ${rideId}`, result)
+
+      // Step 3: Upsert ride_summaries (denormalized summary for longitudinal trends)
+      await step.run('upsert-ride-summary', async () => {
+        // 1. Get ride context
+        const { data: ride, error: rideError } = await supabase
+          .from('rides')
+          .select('user_id, start_time, duration_seconds, distance_meters, elevation_gain_meters')
+          .eq('id', rideId)
+          .single()
+
+        if (rideError || !ride) {
+          console.warn(`[Ride Summary] Could not fetch ride ${rideId}, skipping summary upsert`)
+          return
+        }
+
+        // 2. Get FIT recording's analysis_results for FIT-derived stats
+        let fitStats: any = null
+        const { data: rideRecs } = await supabase
+          .from('ride_recordings')
+          .select('recording_id')
+          .eq('ride_id', rideId)
+
+        if (rideRecs && rideRecs.length > 0) {
+          const { data: fitRec } = await supabase
+            .from('recordings')
+            .select('analysis_results')
+            .in('id', rideRecs.map((r: any) => r.recording_id))
+            .eq('file_type', 'fit')
+            .maybeSingle()
+
+          fitStats = fitRec?.analysis_results
+        }
+
+        // 3. Build summary row from computed metadata + ride context + FIT stats
+        const summaryRow = {
+          ride_id: rideId,
+          user_id: ride.user_id,
+          ride_started_at: ride.start_time,
+          duration_seconds: ride.duration_seconds,
+          distance_meters: ride.distance_meters,
+          elevation_gain_meters: ride.elevation_gain_meters,
+
+          // FIT-derived (nullable)
+          avg_speed_ms: fitStats?.avg_speed_ms ?? null,
+          avg_heart_rate: fitStats?.avg_heart_rate ?? null,
+          avg_power_watts: fitStats?.avg_power_watts ?? null,
+          avg_cadence: fitStats?.avg_cadence ?? null,
+          max_heart_rate: fitStats?.max_heart_rate ?? null,
+          max_power_watts: fitStats?.max_power_watts ?? null,
+          max_cadence: fitStats?.max_cadence ?? null,
+
+          // IMU-derived: Efficiency
+          avg_efficiency_percent: result.avgEfficiency ?? null,
+          smooth_percent: result.smoothPercent ?? null,
+          rough_percent: result.roughPercent ?? null,
+          pedaling_percent: result.pedalingPercent ?? null,
+
+          // IMU-derived: Position
+          standing_percent: result.standingPercent ?? null,
+          seated_percent: result.seatedPercent ?? null,
+          avg_cadence_standing: result.avgCadenceStanding ?? null,
+          avg_cadence_seated: result.avgCadenceSeated ?? null,
+
+          // Algorithm versions
+          efficiency_version: ALGORITHM_VERSION,
+          position_version: ALGORITHM_VERSION,
+          computed_at: new Date().toISOString(),
+        }
+
+        const { error: upsertError } = await supabase
+          .from('ride_summaries')
+          .upsert(summaryRow, { onConflict: 'ride_id' })
+
+        if (upsertError) {
+          // Log but don't fail the job — summary is supplementary
+          console.error(`[Ride Summary] Failed to upsert for ride ${rideId}:`, upsertError.message)
+        } else {
+          console.log(`[Ride Summary] Upserted summary for ride ${rideId}`)
+        }
+      })
 
       return {
         success: true,

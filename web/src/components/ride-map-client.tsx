@@ -44,7 +44,7 @@ interface RideMapClientProps {
   samples: Sample[]
   loading: boolean
   error: string | null
-  mapMode?: 'vtx' | 'efficiency' | 'pedalingEfficiency' | 'ridingPosition' // Map overlay mode
+  mapMode?: 'route' | 'vtx' | 'efficiency' | 'pedalingEfficiency' | 'ridingPosition' // Map overlay mode
   efficiencySamples?: EfficiencySample[] // Pedaling efficiency data for heatmap
   efficiencyLoading?: boolean // Loading state for efficiency data
   positionSamples?: PositionSample[] // Riding position data for heatmap
@@ -95,8 +95,8 @@ export function RideMapClient({
     return result?.index ?? null
   }, [highlightTime, gpsTrack])
 
-  // Overlay data is still loading (GPS track already available)
-  const isOverlayLoading = !loading && gpsTrack.length > 0 && (
+  // Overlay data is still loading (GPS track already available, route mode has no overlay)
+  const isOverlayLoading = !loading && gpsTrack.length > 0 && mapMode !== 'route' && (
     ((mapMode === 'efficiency' || mapMode === 'pedalingEfficiency') && efficiencyLoading) ||
     (mapMode === 'ridingPosition' && positionLoading)
   )
@@ -155,9 +155,9 @@ export function RideMapClient({
         hoverIndex={highlightIndex !== null && highlightIndex !== -1 ? highlightIndex : null}
         className="w-full"
         imuTimeRanges={deferredMode === 'vtx' ? imuTimeRanges : []}
-        imuColor={deferredImuColor}
-        efficiencySamples={isOverlayLoading ? undefined : ((deferredMode === 'efficiency' || deferredMode === 'pedalingEfficiency') ? efficiencySamples : undefined)}
-        positionSamples={isOverlayLoading ? undefined : (deferredMode === 'ridingPosition' ? positionSamples : undefined)}
+        imuColor={deferredMode === 'route' ? undefined : deferredImuColor}
+        efficiencySamples={isOverlayLoading || deferredMode === 'route' ? undefined : ((deferredMode === 'efficiency' || deferredMode === 'pedalingEfficiency') ? efficiencySamples : undefined)}
+        positionSamples={isOverlayLoading || deferredMode === 'route' ? undefined : (deferredMode === 'ridingPosition' ? positionSamples : undefined)}
         onZoomChange={onZoomChange}
       />
 
