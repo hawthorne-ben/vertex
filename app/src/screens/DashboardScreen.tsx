@@ -6,7 +6,7 @@
  */
 
 import React, { useState } from 'react';
-import { View, Text, ScrollView, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, ScrollView, StyleSheet, TouchableOpacity, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import { Circle, Bluetooth } from 'lucide-react-native';
@@ -19,7 +19,7 @@ import { useDataStore } from '../stores/dataStore';
 
 const DashboardScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
   const navigation = useNavigation<RootStackNavigationProp<'Tabs'>>();
 
   // Use deviceStore for connection and saved devices
@@ -95,18 +95,14 @@ const DashboardScreen: React.FC = () => {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      {/* Fixed Header */}
-      <View style={[styles.header, {
-        paddingTop: insets.top,
-        backgroundColor: theme.colors.background,
-        borderBottomColor: theme.colors.border
-      }]}>
+      {/* Translucent Header */}
+      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: isDark ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.92)' }]}>
         <Text style={[styles.title, { color: theme.colors.textPrimary }]}>
           Dashboard
         </Text>
       </View>
 
-      <ScrollView style={styles.scrollView}>
+      <ScrollView style={styles.scrollView} contentContainerStyle={{ paddingTop: insets.top + 56 }}>
         <View style={styles.content}>
           {/* Record Button - Show when Vertex device is connected */}
           {isVertexConnected && (
@@ -262,9 +258,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
     paddingHorizontal: 24,
     paddingVertical: 16,
-    borderBottomWidth: 1,
   },
   title: {
     fontSize: 32,

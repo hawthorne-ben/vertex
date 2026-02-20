@@ -4,7 +4,7 @@
  * Manages IMU data recording sessions with bike and position selection
  */
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -26,7 +26,6 @@ import {
   Bluetooth,
   Activity,
   WifiOff,
-  ChevronDown,
   Settings,
   HardDrive,
   Battery,
@@ -34,10 +33,9 @@ import {
 } from 'lucide-react-native';
 import { theme as staticTheme } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
-import { BackButton, Card, ConfirmDialog, ErrorDialog, BottomSheet } from '../components/ui';
-import type { BottomSheetOption } from '../components/ui';
+import { BackButton, Card, ConfirmDialog, ErrorDialog } from '../components/ui';
 import { useToast } from '../contexts/ToastContext';
-import RecordingService, { RecordingSession, RecordingFormat } from '../services/RecordingService';
+import RecordingService, { RecordingSession } from '../services/RecordingService';
 import BleService from '../services/BleService';
 import NotificationService from '../services/NotificationService';
 import BatteryOptimizationService from '../services/BatteryOptimizationService';
@@ -55,11 +53,9 @@ const BIKES = ['Bike 1', 'Bike 2', 'Bike 3'];
 const POSITIONS = ['Body', 'Seatpost'];
 const ZERO_POINT_KEY = '@vertex_zero_point_';
 
-type BottomSheetType = 'format' | null;
-
 const RecordScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
   const { showToast } = useToast();
   const navigation = useNavigation();
   const route = useRoute<RecordRouteProp>();
@@ -89,10 +85,8 @@ const RecordScreen: React.FC = () => {
   const {
     selectedBike,
     selectedPosition,
-    recordingFormat,
     setSelectedBike,
     setSelectedPosition,
-    setRecordingFormat,
   } = useAppStore();
 
   // Local UI state (dialogs, etc)
@@ -106,7 +100,6 @@ const RecordScreen: React.FC = () => {
   const [errorDialogMessage, setErrorDialogMessage] = useState<string | null>(null);
   const [showBackDialog, setShowBackDialog] = useState(false);
   const [stoppedSession, setStoppedSession] = useState<RecordingSession | null>(null);
-  const [activeSheet, setActiveSheet] = useState<BottomSheetType>(null);
   const [hasShownConnectionLostToast, setHasShownConnectionLostToast] = useState(false);
   const [showBatteryExemptionDialog, setShowBatteryExemptionDialog] = useState(false);
   const [showBatteryInstructionsDialog, setShowBatteryInstructionsDialog] = useState(false);
@@ -118,11 +111,6 @@ const RecordScreen: React.FC = () => {
   const reconnectAttemptsRef = useRef(0);
   const hasShownDisconnectNotificationRef = useRef(false);
 
-  // Format selector options
-  const formatOptions: BottomSheetOption[] = useMemo(() => [
-    { label: 'VTX (Binary)', value: 'vtx', description: '60-70% smaller file size' },
-    { label: 'CSV (Text)', value: 'csv', description: 'Compatible with spreadsheets' },
-  ], []);
 
   // Poll recording stats every second (instead of callback-driven updates)
   useEffect(() => {
@@ -136,7 +124,7 @@ const RecordScreen: React.FC = () => {
         setSession(currentSession);
 
         // Calculate derived stats
-        const bytesPerSample = currentSession.format === 'vtx' ? 28 : 200;
+        const bytesPerSample = 28;
         const estimatedSize = currentSession.sampleCount * bytesPerSample;
         const duration = Date.now() - currentSession.startTime.getTime();
 
@@ -340,7 +328,6 @@ const RecordScreen: React.FC = () => {
         deviceId,
         deviceName,
         zeroPointRef.current, // Pass current zero point to recording service
-        recordingFormat, // Recording format (csv or vtx)
         sampleRate || 10 // Use measured sample rate from device, fallback to 10 Hz
       );
 
@@ -445,9 +432,8 @@ const RecordScreen: React.FC = () => {
       if (stoppedSession && fileName && isMountedRef.current) {
         // Rename the file if user changed the name
         const originalFileName = stoppedSession.fileName;
-        // Use the correct extension based on recording format
-        const extension = recordingFormat === 'vtx' ? '.vtx' : '.csv';
-        const hasExtension = fileName.endsWith('.csv') || fileName.endsWith('.vtx');
+        const extension = '.vtx';
+        const hasExtension = fileName.endsWith('.vtx');
         const newFileName = hasExtension ? fileName : `${fileName}${extension}`;
 
         if (originalFileName !== newFileName) {
@@ -730,9 +716,9 @@ const RecordScreen: React.FC = () => {
   const connectionLost = session?.isPaused && session?.connectionLostTime;
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.colors.background, paddingTop: insets.top }]}>
-      {/* Header */}
-      <View style={[styles.header, { backgroundColor: theme.colors.background, borderBottomColor: theme.colors.border }]}>
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      {/* Translucent Header */}
+      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: isDark ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.92)' }]}>
         <BackButton onPress={handleBackPress} />
         <View style={styles.headerCenter}>
           <Text style={[styles.title, { color: theme.colors.textPrimary }]}>Record Session</Text>
@@ -742,14 +728,6 @@ const RecordScreen: React.FC = () => {
         </View>
         <View style={styles.headerActions}>
           <TouchableOpacity
-            onPress={() => setActiveSheet('format')}
-            style={styles.formatButton}
-            disabled={isRecording}
-          >
-            <Activity size={20} color={isRecording ? theme.colors.textTertiary : theme.colors.primary} />
-            <ChevronDown size={16} color={isRecording ? theme.colors.textTertiary : theme.colors.textSecondary} />
-          </TouchableOpacity>
-          <TouchableOpacity
             onPress={() => (navigation as any).navigate('DeviceSettings')}
             style={styles.settingsButton}
           >
@@ -758,7 +736,7 @@ const RecordScreen: React.FC = () => {
         </View>
       </View>
 
-      <ScrollView style={styles.content}>
+      <ScrollView style={styles.content} contentContainerStyle={{ paddingTop: insets.top + 56 }}>
         {/* Device Status - Combined */}
         <View style={[styles.card, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}>
           {session && session.isRecording ? (
@@ -991,7 +969,7 @@ const RecordScreen: React.FC = () => {
               }]}
               value={fileName}
               onChangeText={setFileName}
-              placeholder="File name (without .csv)"
+              placeholder="File name (without .vtx)"
               placeholderTextColor={theme.colors.textTertiary}
               autoFocus
               selectTextOnFocus
@@ -1093,19 +1071,6 @@ const RecordScreen: React.FC = () => {
         message={errorDialogMessage || ''}
       />
 
-      {/* Bottom Sheets */}
-      <BottomSheet
-        visible={activeSheet === 'format'}
-        onClose={() => setActiveSheet(null)}
-        title="Select Format"
-        options={formatOptions}
-        selectedValue={recordingFormat}
-        onSelect={(value) => {
-          setRecordingFormat(value as RecordingFormat);
-          setActiveSheet(null);
-        }}
-      />
-
       {/* Battery Optimization Exemption Dialog */}
       <ConfirmDialog
         visible={showBatteryExemptionDialog}
@@ -1160,11 +1125,15 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: staticTheme.spacing.lg,
     paddingVertical: staticTheme.spacing.md,
-    borderBottomWidth: 1,
   },
   headerCenter: {
     flex: 1,
@@ -1174,12 +1143,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: staticTheme.spacing.xs,
-  },
-  formatButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: staticTheme.spacing.sm,
-    gap: 4,
   },
   settingsButton: {
     padding: staticTheme.spacing.sm,

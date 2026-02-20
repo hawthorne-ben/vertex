@@ -67,13 +67,13 @@ const ProfileScreen: React.FC = () => {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      {/* Static Header */}
-      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: theme.colors.background, borderBottomColor: theme.colors.border }]}>
+      {/* Translucent Header */}
+      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: isDark ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.92)' }]}>
         <Text style={[styles.title, { color: theme.colors.textPrimary }]}>Settings</Text>
       </View>
 
       {/* Tab Selector - Compact style matching chart switcher */}
-      <View style={styles.tabSelectorWrapper}>
+      <View style={[styles.tabSelectorWrapper, { paddingTop: insets.top + 56 }]}>
         <View style={[styles.tabSelector, { backgroundColor: theme.colors.muted }]}>
           <TouchableOpacity
             style={[styles.tabButton, activeTab === 'profile' && { backgroundColor: theme.colors.card }]}
@@ -271,9 +271,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
     paddingHorizontal: staticTheme.spacing.lg,
     paddingVertical: staticTheme.spacing.md,
-    borderBottomWidth: 1,
   },
   title: {
     fontSize: staticTheme.typography.fontSize.xxl,

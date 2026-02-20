@@ -100,7 +100,7 @@ const styles = StyleSheet.create({
   },
 
   value: {
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: '600',
     fontFamily: staticTheme.typography.mono,
   },

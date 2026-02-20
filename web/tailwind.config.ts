@@ -1,5 +1,8 @@
 import type { Config } from "tailwindcss"
-import { fontFamily, radius } from "@vertex/ui"
+
+// Design tokens (inlined from @vertex/ui for Vercel compatibility)
+const fontFamily = { serif: 'Crimson Pro', mono: 'JetBrains Mono' } as const
+const radius = { sm: 4, md: 8, lg: 12 } as const
 
 const config: Config = {
   darkMode: ["class"],

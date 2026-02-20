@@ -314,6 +314,7 @@ export const parseFitFile = inngest.createFunction(
         const movingPowerPoints = validPowerPoints.filter(p => p.speed_ms === null || p.speed_ms >= STATIONARY_SPEED_THRESHOLD)
         const validHRPoints = dataPoints.filter(p => p.heart_rate !== null)
         const validCadencePoints = dataPoints.filter(p => p.cadence !== null)
+        const pedalingCadencePoints = validCadencePoints.filter(p => p.cadence > 0)
         const validSpeedPoints = dataPoints.filter(p => p.speed_ms !== null)
 
         const maxPowerWatts = validPowerPoints.length > 0 ? Math.max(...validPowerPoints.map(p => p.power_watts)) : null
@@ -321,7 +322,7 @@ export const parseFitFile = inngest.createFunction(
         const maxHeartRate = validHRPoints.length > 0 ? Math.max(...validHRPoints.map(p => p.heart_rate)) : null
         const avgHeartRate = validHRPoints.length > 0 ? Math.round(validHRPoints.reduce((sum, p) => sum + p.heart_rate, 0) / validHRPoints.length) : null
         const maxCadence = validCadencePoints.length > 0 ? Math.max(...validCadencePoints.map(p => p.cadence)) : null
-        const avgCadence = validCadencePoints.length > 0 ? Math.round(validCadencePoints.reduce((sum, p) => sum + p.cadence, 0) / validCadencePoints.length) : null
+        const avgCadence = pedalingCadencePoints.length > 0 ? Math.round(pedalingCadencePoints.reduce((sum, p) => sum + p.cadence, 0) / pedalingCadencePoints.length) : null
 
         // Use session speed data (parser configured for km/h, we need mph)
         let maxSpeedKmh = session.max_speed ?? null

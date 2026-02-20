@@ -40,7 +40,7 @@ interface ScannedDevice {
 
 const DevicesScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
   const { showToast } = useToast();
   const navigation = useNavigation<RootStackNavigationProp<'Tabs'>>();
 
@@ -344,15 +344,15 @@ const DevicesScreen: React.FC = () => {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      {/* Fixed Header */}
-      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: theme.colors.background, borderBottomColor: theme.colors.border }]}>
+      {/* Translucent Header */}
+      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: isDark ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.92)' }]}>
         <Text style={[styles.headerTitle, { color: theme.colors.textPrimary }]}>
           My Devices
         </Text>
       </View>
 
       {/* Scrollable Content */}
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
+      <ScrollView style={styles.scrollView} contentContainerStyle={[styles.content, { paddingTop: insets.top + 56 }]}>
         {savedDevices.length === 0 ? (
           <EmptyState
             icon={<Bluetooth size={48} color={theme.colors.textTertiary} />}
@@ -413,9 +413,13 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
     paddingHorizontal: 24,
     paddingVertical: 16,
-    borderBottomWidth: 1,
   },
   headerTitle: {
     fontSize: 32,

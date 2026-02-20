@@ -64,12 +64,7 @@ export const useDataStore = create<DataState>((set, get) => ({
         throw new Error('Recording not found');
       }
 
-      // Delete using the appropriate service based on file extension
-      if (fileName.endsWith('.vtx')) {
-        await VTXFileService.deleteRecording(recording.filePath);
-      } else {
-        await FileService.deleteRecording(fileName);
-      }
+      await VTXFileService.deleteRecording(recording.filePath);
 
       // Remove from state
       const updatedRecordings = get().recordings.filter(r => r.fileName !== fileName);

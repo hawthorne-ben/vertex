@@ -273,51 +273,6 @@ class VTXFileService {
   }
 
   /**
-   * Convert VTX file to CSV format (for backward compatibility)
-   */
-  async convertToCSV(
-    vtxFilePath: string,
-    csvFilePath?: string
-  ): Promise<string> {
-    const vtxFile = await this.readVTXFile(vtxFilePath);
-
-    // Generate CSV file path if not provided
-    const outputPath =
-      csvFilePath ||
-      vtxFilePath.replace('.vtx', '.csv').replace(/\.vtx$/, '_converted.csv');
-
-    // Create CSV header
-    let csv =
-      'timestamp_ms,accel_x,accel_y,accel_z,gyro_x,gyro_y,gyro_z,mag_x,mag_y,mag_z,quat_w,quat_x,quat_y,quat_z\n';
-
-    // Add data rows
-    for (const record of vtxFile.records) {
-      const row = [
-        record.timestamp,
-        record.accelX,
-        record.accelY,
-        record.accelZ,
-        record.gyroX,
-        record.gyroY,
-        record.gyroZ,
-        record.magX ?? '',
-        record.magY ?? '',
-        record.magZ ?? '',
-        record.quatW ?? '',
-        record.quatX ?? '',
-        record.quatY ?? '',
-        record.quatZ ?? '',
-      ].join(',');
-      csv += row + '\n';
-    }
-
-    // Write CSV file
-    await RNFS.writeFile(outputPath, csv, 'utf8');
-
-    return outputPath;
-  }
-
-  /**
    * Recover corrupted VTX file by scanning actual records and rebuilding header
    * Use this when header says 0 samples but file has data
    */

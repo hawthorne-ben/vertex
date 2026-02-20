@@ -6,11 +6,11 @@
  * - Large buffers (1000 samples = 10 seconds @ 100Hz)
  * - Async file writes that yield to event loop
  * - Handles connection interruptions gracefully
- * - Supports both CSV and VTX binary formats
+ * - VTX binary format
  */
 
-import FileService, { IMUSensorData } from './FileService';
 import VTXFileService from './VTXFileService';
+import { IMUSensorData } from './FileService';
 import BleService from './BleService';
 import { IMURecord, VTXMetadata, VTXStreamEncoder } from '@vertex-pkg/vtx-parser';
 import { useDeviceStore } from '../stores/deviceStore';
@@ -19,7 +19,7 @@ import RNFS from 'react-native-fs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import NotificationService from './NotificationService';
 
-export type RecordingFormat = 'csv' | 'vtx';
+export type RecordingFormat = 'vtx';
 
 export interface RecordingSession {
   id: string;
@@ -144,14 +144,13 @@ class RecordingService {
     deviceId: string,
     deviceName: string,
     zeroPoint?: any,
-    format: RecordingFormat = 'vtx',
     sampleRate: number = this.DEFAULT_SAMPLE_RATE
   ): Promise<RecordingSession> {
     if (this.currentSession?.isRecording) {
       throw new Error('Recording already in progress');
     }
 
-    console.log(`[RecordingService] Starting ${format.toUpperCase()} recording for device: ${deviceName}`);
+    console.log(`[RecordingService] Starting VTX recording for device: ${deviceName}`);
 
     this.zeroPoint = zeroPoint || null;
 
@@ -160,51 +159,45 @@ class RecordingService {
       let filePath: string;
       let fileName: string;
 
-      if (format === 'vtx') {
-        filePath = await VTXFileService.createRecordingFile(deviceName, sampleRate);
-        fileName = filePath.split('/').pop() || 'recording.vtx';
+      filePath = await VTXFileService.createRecordingFile(deviceName, sampleRate);
+      fileName = filePath.split('/').pop() || 'recording.vtx';
 
-        // Initialize VTX stream encoder
-        const writeCallback = async (chunk: Uint8Array) => {
-          let binary = '';
-          for (let i = 0; i < chunk.byteLength; i++) {
-            binary += String.fromCharCode(chunk[i]);
-          }
-          const base64 = btoa(binary);
-          await RNFS.appendFile(filePath, base64, 'base64');
-        };
+      // Initialize VTX stream encoder
+      const writeCallback = async (chunk: Uint8Array) => {
+        let binary = '';
+        for (let i = 0; i < chunk.byteLength; i++) {
+          binary += String.fromCharCode(chunk[i]);
+        }
+        const base64 = btoa(binary);
+        await RNFS.appendFile(filePath, base64, 'base64');
+      };
 
-        const vtxMetadata: VTXMetadata = {
-          device: {
-            id: deviceId,
-            name: deviceName,
-          },
-          session: {
-            createdAt: new Date().toISOString(),
-          },
-          calibration: this.zeroPoint ? {
-            zeroPoint: this.zeroPoint,
-            applied: true,
-          } : undefined,
-        };
+      const vtxMetadata: VTXMetadata = {
+        device: {
+          id: deviceId,
+          name: deviceName,
+        },
+        session: {
+          createdAt: new Date().toISOString(),
+        },
+        calibration: this.zeroPoint ? {
+          zeroPoint: this.zeroPoint,
+          applied: true,
+        } : undefined,
+      };
 
-        this.vtxStreamEncoder = new VTXStreamEncoder({
-          sampleRate,
-          includeMag: false,  // Magnetometer removed - using 6DoF mode
-          includeQuat: false,
-          includeEuler: true,  // Enable Euler angles (roll, pitch, yaw)
-          includeGPS: false,
-          metadata: vtxMetadata,
-          writeCallback,
-        });
+      this.vtxStreamEncoder = new VTXStreamEncoder({
+        sampleRate,
+        includeMag: false,  // Magnetometer removed - using 6DoF mode
+        includeQuat: false,
+        includeEuler: true,  // Enable Euler angles (roll, pitch, yaw)
+        includeGPS: false,
+        metadata: vtxMetadata,
+        writeCallback,
+      });
 
-        await this.vtxStreamEncoder.initialize();
-        console.log('[RecordingService] VTX stream encoder initialized');
-      } else {
-        const result = await FileService.createRecordingFile(deviceName);
-        filePath = result.filePath;
-        fileName = result.fileName;
-      }
+      await this.vtxStreamEncoder.initialize();
+      console.log('[RecordingService] VTX stream encoder initialized');
 
       // Initialize session
       this.currentSession = {
@@ -218,7 +211,7 @@ class RecordingService {
         isRecording: true,
         isPaused: false,
         zeroPoint: this.zeroPoint,
-        format,
+        format: 'vtx' as RecordingFormat,
         sampleRate
       };
 
@@ -286,7 +279,7 @@ class RecordingService {
 
       // Header is already kept up-to-date by periodic updates in flushBuffer(),
       // so no full-file rewrite is needed here.
-      if (session.format === 'vtx' && this.vtxStreamEncoder) {
+      if (this.vtxStreamEncoder) {
         console.log('[RecordingService] VTX file finalized (header already current)');
       }
 
@@ -551,7 +544,7 @@ class RecordingService {
     this.writeBuffer = [];
 
     try {
-      if (this.currentSession.format === 'vtx' && this.vtxStreamEncoder) {
+      if (this.vtxStreamEncoder) {
         // Write to VTX stream in chunks to avoid blocking
         const CHUNK_SIZE = 100;
         const encoder = this.vtxStreamEncoder; // Cache reference to avoid null check issues
@@ -593,25 +586,10 @@ class RecordingService {
             await new Promise(resolve => setImmediate(resolve));
           }
         }
-      } else {
-        // CSV: Write in chunks
-        const CHUNK_SIZE = 100;
-        for (let i = 0; i < dataToWrite.length; i += CHUNK_SIZE) {
-          const chunk = dataToWrite.slice(i, i + CHUNK_SIZE);
-
-          for (const data of chunk) {
-            await FileService.appendIMUData(this.currentSession.filePath, data);
-          }
-
-          // Yield to event loop every chunk
-          if (i + CHUNK_SIZE < dataToWrite.length) {
-            await new Promise(resolve => setImmediate(resolve));
-          }
-        }
       }
 
       // Periodic header update: keep VTX header current so file is valid if app is killed
-      if (this.currentSession.format === 'vtx' && this.vtxStreamEncoder && this.currentSession.sampleCount > 0) {
+      if (this.vtxStreamEncoder && this.currentSession.sampleCount > 0) {
         try {
           const header = this.vtxStreamEncoder.finalize();
           let binary = '';
@@ -625,7 +603,7 @@ class RecordingService {
         }
       }
 
-      console.log(`[RecordingService] Flushed ${dataToWrite.length} samples to ${this.currentSession.format} file`);
+      console.log(`[RecordingService] Flushed ${dataToWrite.length} samples to VTX file`);
     } catch (error: any) {
       console.error('[RecordingService] Write error:', error);
 

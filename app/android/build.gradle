@@ -10,11 +10,37 @@ buildscript {
     repositories {
         google()
         mavenCentral()
+        maven {
+            url 'https://api.mapbox.com/downloads/v2/releases/maven'
+            authentication {
+                basic(BasicAuthentication)
+            }
+            credentials {
+                // Mapbox SDK download token from ~/.gradle/gradle.properties
+                username = 'mapbox'
+                password = project.properties['MAPBOX_DOWNLOADS_TOKEN'] ?: ""
+            }
+        }
     }
     dependencies {
         classpath("com.android.tools.build:gradle")
         classpath("com.facebook.react:react-native-gradle-plugin")
         classpath("org.jetbrains.kotlin:kotlin-gradle-plugin")
+    }
+}
+
+allprojects {
+    repositories {
+        maven {
+            url 'https://api.mapbox.com/downloads/v2/releases/maven'
+            authentication {
+                basic(BasicAuthentication)
+            }
+            credentials {
+                username = 'mapbox'
+                password = project.properties['MAPBOX_DOWNLOADS_TOKEN'] ?: ""
+            }
+        }
     }
 }
 

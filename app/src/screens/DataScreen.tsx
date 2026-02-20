@@ -9,7 +9,7 @@ import { View, Text, ScrollView, StyleSheet, TouchableOpacity, RefreshControl, A
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { FileText, Trash2, RefreshCw, Clock, Database, Activity, AlertCircle, CheckCircle } from 'lucide-react-native';
+import { Trash2, RefreshCw, Clock, Database, Activity, AlertCircle, CheckCircle } from 'lucide-react-native';
 import { theme as staticTheme } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
@@ -23,7 +23,7 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 const DataScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
   const { showToast } = useToast();
   const navigation = useNavigation<NavigationProp>();
 
@@ -71,7 +71,7 @@ const DataScreen: React.FC = () => {
     if (!recordingToDelete) return;
 
     try {
-      // Delete using dataStore (handles both CSV and VTX)
+      // Delete using dataStore
       await deleteRecording(recordingToDelete.fileName);
 
       setRecordingToDelete(null);
@@ -169,8 +169,8 @@ const DataScreen: React.FC = () => {
   };
 
   const getDisplayName = (fileName: string): string => {
-    // Remove .csv or .vtx extension
-    const nameWithoutExt = fileName.replace(/\.(csv|vtx)$/, '');
+    // Remove .vtx extension
+    const nameWithoutExt = fileName.replace(/\.vtx$/, '');
 
     // Check if it's a default filename pattern: [device_]imu_YYYY-MM-DD_HH-MM-SS
     const defaultPattern = /^(?:.+?_)?imu_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/;
@@ -195,8 +195,8 @@ const DataScreen: React.FC = () => {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      {/* Static Header */}
-      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: theme.colors.background, borderBottomColor: theme.colors.border }]}>
+      {/* Translucent Header */}
+      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: isDark ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.92)' }]}>
         <Text style={[styles.title, { color: theme.colors.textPrimary }]}>Data</Text>
         <TouchableOpacity onPress={handleRefresh} disabled={isRefreshing}>
           <RefreshCw
@@ -212,11 +212,11 @@ const DataScreen: React.FC = () => {
         refreshControl={
           <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} tintColor={theme.colors.primary} />
         }>
-        <View style={styles.content}>
+        <View style={[styles.content, { paddingTop: insets.top + 56 }]}>
 
         {recordings.length === 0 ? (
           <View style={styles.emptyState}>
-            <FileText size={64} color={theme.colors.textTertiary} />
+            <Activity size={64} color={theme.colors.textTertiary} />
             <Text style={[styles.emptyTitle, { color: theme.colors.textPrimary }]}>No Data</Text>
             <Text style={[styles.emptyText, { color: theme.colors.textSecondary }]}>
               Start recording from a connected device to save sensor data
@@ -249,11 +249,7 @@ const DataScreen: React.FC = () => {
                   })}>
                   <View style={styles.fileRowContent}>
                     <View style={styles.fileRowLeft}>
-                      {recording.fileName.endsWith('.vtx') ? (
-                        <Activity size={20} color={theme.colors.primary} />
-                      ) : (
-                        <FileText size={20} color={theme.colors.textSecondary} />
-                      )}
+                      <Activity size={20} color={theme.colors.primary} />
                       <View style={styles.fileRowInfo}>
                         <View style={styles.fileRowTitle}>
                           <Text style={[styles.fileRowName, { color: theme.colors.textPrimary }]} numberOfLines={1}>
@@ -360,14 +356,16 @@ const styles = StyleSheet.create({
     padding: staticTheme.spacing.lg,
   },
   header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: staticTheme.spacing.lg,
     paddingVertical: staticTheme.spacing.md,
-    backgroundColor: staticTheme.colors.background,
-    borderBottomWidth: 1,
-    borderBottomColor: staticTheme.colors.border,
   },
   title: {
     fontSize: staticTheme.typography.fontSize.xxl,

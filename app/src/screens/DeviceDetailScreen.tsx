@@ -52,7 +52,7 @@ type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
 const DeviceDetailScreenContent: React.FC = () => {
   const insets = useSafeAreaInsets();
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
   const { showToast } = useToast();
   const navigation = useNavigation<NavigationProp>();
   const route = useRoute<DeviceDetailRouteProp>();
@@ -869,9 +869,9 @@ const DeviceDetailScreenContent: React.FC = () => {
   };
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top, backgroundColor: theme.colors.background }]}>
-      {/* Header */}
-      <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
+    <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
+      {/* Translucent Header */}
+      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: isDark ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.92)' }]}>
         <BackButton onPress={() => navigation.goBack()} />
         <View style={styles.headerInfo}>
           <Text style={[styles.title, { color: theme.colors.textPrimary }]}>{deviceName}</Text>
@@ -887,7 +887,7 @@ const DeviceDetailScreenContent: React.FC = () => {
 
       <ScrollView
         style={styles.content}
-        contentContainerStyle={{ paddingBottom: insets.bottom + staticTheme.spacing.xxl }}
+        contentContainerStyle={{ paddingTop: insets.top + 56, paddingBottom: insets.bottom + staticTheme.spacing.xxl }}
       >
         {/* Error Banner */}
         {error && (
@@ -1081,12 +1081,15 @@ const styles = StyleSheet.create({
     backgroundColor: staticTheme.colors.background,
   },
   header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: staticTheme.spacing.lg,
     paddingVertical: staticTheme.spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: staticTheme.colors.border,
   },
   backButton: {
     marginRight: staticTheme.spacing.md,

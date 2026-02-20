@@ -16,12 +16,12 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
-import { Activity, FileText, Trash2, CloudUpload, CheckCircle } from 'lucide-react-native';
+import { Activity, Trash2, CloudUpload, CheckCircle } from 'lucide-react-native';
 import { LineChart } from 'react-native-gifted-charts';
 import { theme as staticTheme } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { BackButton, ErrorDialog, ConfirmDialog, InfoDialog, UploadProgressDialog } from '../components/ui';
-import FileService, { IMUSensorData, RecordingMetadata } from '../services/FileService';
+import { IMUSensorData } from '../services/FileService';
 import VTXFileService from '../services/VTXFileService';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import RNFS from 'react-native-fs';
@@ -47,7 +47,7 @@ interface Statistics {
 
 const DataDetailScreen: React.FC = () => {
   const insets = useSafeAreaInsets();
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
   const { showToast } = useToast();
   const navigation = useNavigation();
   const route = useRoute<DataDetailRouteProp>();
@@ -92,37 +92,26 @@ const DataDetailScreen: React.FC = () => {
     try {
       setIsLoading(true);
 
-      // Check if it's a VTX file based on extension
-      const isVTX = filePath.endsWith('.vtx');
-      let recordingData: IMUSensorData[];
+      // Read VTX file using VTXFileService
+      const vtxData = await VTXFileService.readVTXFile(filePath);
 
-      if (isVTX) {
-        // Read VTX file using VTXFileService
-        const vtxData = await VTXFileService.readVTXFile(filePath);
-
-        // Convert VTX records to IMUSensorData format
-        recordingData = vtxData.records.map(record => ({
-          timestamp: new Date(record.timestamp),
-          accel_x: record.accelX,
-          accel_y: record.accelY,
-          accel_z: record.accelZ,
-          gyro_x: record.gyroX,
-          gyro_y: record.gyroY,
-          gyro_z: record.gyroZ,
-          // Magnetometer removed - using 6DoF mode
-          quat_w: record.quatW,
-          quat_x: record.quatX,
-          quat_y: record.quatY,
-          quat_z: record.quatZ,
-          roll: record.roll,
-          pitch: record.pitch,
-          yaw: record.yaw,
-        }));
-
-      } else {
-        // Read CSV file
-        recordingData = await FileService.readRecordingData(filePath);
-      }
+      // Convert VTX records to IMUSensorData format
+      const recordingData: IMUSensorData[] = vtxData.records.map(record => ({
+        timestamp: new Date(record.timestamp),
+        accel_x: record.accelX,
+        accel_y: record.accelY,
+        accel_z: record.accelZ,
+        gyro_x: record.gyroX,
+        gyro_y: record.gyroY,
+        gyro_z: record.gyroZ,
+        quat_w: record.quatW,
+        quat_x: record.quatX,
+        quat_y: record.quatY,
+        quat_z: record.quatZ,
+        roll: record.roll,
+        pitch: record.pitch,
+        yaw: record.yaw,
+      }));
 
       setData(recordingData);
       calculateStatistics(recordingData);
@@ -136,7 +125,7 @@ const DataDetailScreen: React.FC = () => {
                             errorMsg.includes('corrupted') ||
                             errorMsg.includes('incomplete');
 
-      if (isCorruptFile && fileName.endsWith('.vtx')) {
+      if (isCorruptFile) {
         // Corrupt/in-progress file - navigate to RecordScreen as fallback
         console.log('[DataDetailScreen] Detected corrupt/in-progress file, navigating to RecordScreen');
         navigation.replace('Record', {
@@ -232,15 +221,6 @@ const DataDetailScreen: React.FC = () => {
         console.error('[DataDetailScreen] Auth error:', sessionError);
         showToast({
           message: 'Not authenticated. Please log in.',
-          variant: 'error',
-        });
-        return;
-      }
-
-      // Only support VTX files
-      if (!fileName.toLowerCase().endsWith('.vtx')) {
-        showToast({
-          message: 'Only VTX files can be uploaded',
           variant: 'error',
         });
         return;
@@ -538,8 +518,8 @@ const DataDetailScreen: React.FC = () => {
 
   return (
     <View style={[styles.container, { backgroundColor: theme.colors.background }]}>
-      {/* Header */}
-      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: theme.colors.background }]}>
+      {/* Translucent Header */}
+      <View style={[styles.header, { paddingTop: insets.top, backgroundColor: isDark ? 'rgba(0,0,0,0.85)' : 'rgba(255,255,255,0.92)' }]}>
         <BackButton onPress={() => navigation.goBack()} />
         <Text style={[styles.title, { color: theme.colors.textPrimary }]} numberOfLines={1}>Detail</Text>
         <View style={styles.headerActions}>
@@ -557,11 +537,11 @@ const DataDetailScreen: React.FC = () => {
             <TouchableOpacity
               style={styles.actionButton}
               onPress={() => setShowUploadDialog(true)}
-              disabled={isUploading || !fileName.toLowerCase().endsWith('.vtx')}
+              disabled={isUploading}
             >
               <CloudUpload
                 size={20}
-                color={isUploading || !fileName.toLowerCase().endsWith('.vtx') ? theme.colors.textSecondary : theme.colors.primary}
+                color={isUploading ? theme.colors.textSecondary : theme.colors.primary}
               />
             </TouchableOpacity>
           )}
@@ -575,7 +555,7 @@ const DataDetailScreen: React.FC = () => {
         </View>
       </View>
 
-      <ScrollView style={styles.scrollView}>
+      <ScrollView style={styles.scrollView} contentContainerStyle={{ paddingTop: insets.top + 56 }}>
         <View style={styles.content}>
 
         {/* File Info */}
@@ -584,13 +564,9 @@ const DataDetailScreen: React.FC = () => {
             {/* Row 1: Icon + Filename (no extension) */}
             <View style={styles.infoGridRow}>
               <View style={styles.infoGridItem}>
-                {filePath.endsWith('.vtx') ? (
-                  <Activity size={18} color={theme.colors.primary} style={styles.infoIcon} />
-                ) : (
-                  <FileText size={18} color={theme.colors.textSecondary} style={styles.infoIcon} />
-                )}
+                <Activity size={18} color={theme.colors.primary} style={styles.infoIcon} />
                 <Text style={[styles.infoValue, { color: theme.colors.textPrimary }]} numberOfLines={1}>
-                  {fileName.replace(/\.(csv|vtx)$/, '')}
+                  {fileName.replace(/\.vtx$/, '')}
                 </Text>
               </View>
             </View>
@@ -855,7 +831,7 @@ const DataDetailScreen: React.FC = () => {
       visible={showDeleteDialog}
       onDismiss={() => setShowDeleteDialog(false)}
       title="Delete Recording"
-      message={`Delete local recording "${fileName.replace(/\.(csv|vtx)$/, '')}"? This only deletes the file from your device. Cloud recordings can be managed through the web app.`}
+      message={`Delete local recording "${fileName.replace(/\.vtx$/, '')}"? This only deletes the file from your device. Cloud recordings can be managed through the web app.`}
       icon={<Trash2 size={48} color={theme.colors.error} />}
       actions={[
         {
@@ -885,7 +861,7 @@ const DataDetailScreen: React.FC = () => {
       visible={showUploadDialog}
       onDismiss={() => setShowUploadDialog(false)}
       title="Upload Recording"
-      message={`Upload "${fileName.replace(/\.(csv|vtx)$/, '')}" to cloud storage?`}
+      message={`Upload "${fileName.replace(/\.vtx$/, '')}" to cloud storage?`}
       icon={<CloudUpload size={48} color={theme.colors.primary} />}
       actions={[
         {
@@ -927,13 +903,15 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   header: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: staticTheme.spacing.lg,
     paddingVertical: staticTheme.spacing.md,
-    backgroundColor: staticTheme.colors.background,
-    borderBottomWidth: 1,
-    borderBottomColor: staticTheme.colors.border,
   },
   backButton: {
     marginRight: staticTheme.spacing.md,

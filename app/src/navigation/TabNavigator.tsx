@@ -1,14 +1,14 @@
 /**
  * Tab Navigator
- * 
+ *
  * Bottom tab navigation for authenticated users
  */
 
 import React from 'react';
+import { View, StyleSheet } from 'react-native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '../contexts/ThemeContext';
-import { theme as staticTheme } from '../styles/theme';
 import { Home, Bike, FileText, Wifi, User } from 'lucide-react-native';
 
 // Screens
@@ -28,9 +28,19 @@ export type TabParamList = {
 
 const Tab = createBottomTabNavigator<TabParamList>();
 
+function TabIcon({ children, focused, activeColor }: { children: React.ReactNode; focused: boolean; activeColor: string }) {
+  return (
+    <View style={[styles.iconWrapper, focused && { backgroundColor: activeColor }]}>
+      {children}
+    </View>
+  );
+}
+
 const TabNavigator: React.FC = () => {
   const insets = useSafeAreaInsets();
-  const { theme } = useTheme();
+  const { theme, isDark } = useTheme();
+
+  const activeBg = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)';
 
   return (
     <Tab.Navigator
@@ -38,24 +48,23 @@ const TabNavigator: React.FC = () => {
         headerShown: false,
         tabBarStyle: {
           paddingBottom: insets.bottom,
+          paddingTop: 8,
           borderTopWidth: 1,
           borderTopColor: theme.colors.border,
           backgroundColor: theme.colors.background,
         },
         tabBarActiveTintColor: theme.colors.textPrimary,
         tabBarInactiveTintColor: theme.colors.textTertiary,
-        tabBarLabelStyle: {
-          fontSize: 12,
-          fontWeight: '500',
-          fontFamily: staticTheme.typography.serif,
-        },
+        tabBarShowLabel: false,
       }}>
       <Tab.Screen
         name="Dashboard"
         component={DashboardScreen}
         options={{
-          tabBarIcon: ({ color, size }) => (
-            <Home size={size || 20} color={color} />
+          tabBarIcon: ({ color, size, focused }) => (
+            <TabIcon focused={focused} activeColor={activeBg}>
+              <Home size={size || 20} color={color} />
+            </TabIcon>
           ),
         }}
       />
@@ -63,8 +72,10 @@ const TabNavigator: React.FC = () => {
         name="Rides"
         component={RidesScreen}
         options={{
-          tabBarIcon: ({ color, size }) => (
-            <Bike size={size || 20} color={color} />
+          tabBarIcon: ({ color, size, focused }) => (
+            <TabIcon focused={focused} activeColor={activeBg}>
+              <Bike size={size || 20} color={color} />
+            </TabIcon>
           ),
         }}
       />
@@ -72,8 +83,10 @@ const TabNavigator: React.FC = () => {
         name="Data"
         component={DataScreen}
         options={{
-          tabBarIcon: ({ color, size }) => (
-            <FileText size={size || 20} color={color} />
+          tabBarIcon: ({ color, size, focused }) => (
+            <TabIcon focused={focused} activeColor={activeBg}>
+              <FileText size={size || 20} color={color} />
+            </TabIcon>
           ),
         }}
       />
@@ -81,8 +94,10 @@ const TabNavigator: React.FC = () => {
         name="Devices"
         component={DevicesScreen}
         options={{
-          tabBarIcon: ({ color, size }) => (
-            <Wifi size={size || 20} color={color} />
+          tabBarIcon: ({ color, size, focused }) => (
+            <TabIcon focused={focused} activeColor={activeBg}>
+              <Wifi size={size || 20} color={color} />
+            </TabIcon>
           ),
         }}
       />
@@ -90,8 +105,10 @@ const TabNavigator: React.FC = () => {
         name="Profile"
         component={ProfileScreen}
         options={{
-          tabBarIcon: ({ color, size }) => (
-            <User size={size || 20} color={color} />
+          tabBarIcon: ({ color, size, focused }) => (
+            <TabIcon focused={focused} activeColor={activeBg}>
+              <User size={size || 20} color={color} />
+            </TabIcon>
           ),
         }}
       />
@@ -99,5 +116,12 @@ const TabNavigator: React.FC = () => {
   );
 };
 
-export default TabNavigator;
+const styles = StyleSheet.create({
+  iconWrapper: {
+    paddingHorizontal: 16,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+});
 
+export default TabNavigator;
