@@ -85,7 +85,6 @@ export function RideComparisonCards({ rideId }: { rideId: string }) {
         .from('ride_summaries')
         .select('avg_efficiency_percent, standing_percent, avg_heart_rate, avg_power_watts')
         .eq('user_id', summary.user_id)
-        .neq('ride_id', rideId)
         .gte('ride_started_at', new Date(Date.now() - 8 * 7 * 24 * 60 * 60 * 1000).toISOString())
 
       if (!others || others.length === 0 || cancelled) return

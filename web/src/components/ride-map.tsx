@@ -288,6 +288,75 @@ interface PositionSample {
   cadence: number | null
 }
 
+export interface FitStatsSample {
+  timestamp: string
+  power_watts?: number | null
+  heart_rate?: number | null
+  cadence?: number | null
+  speed_ms?: number | null
+}
+
+export type FitStatsMetric = 'power' | 'cadence' | 'hr' | 'speed'
+
+// Same 9-stop gradient as efficiency overlay: green (low/cruising) → red (high/intense)
+const FIT_STATS_COLORS = [
+  '#22c55e', // Green — ≤p50
+  '#4ade80',
+  '#84cc16',
+  '#eab308',
+  '#f59e0b',
+  '#f97316',
+  '#fb923c',
+  '#ef4444',
+  '#dc2626', // Dark red — ≥p90
+]
+
+// Compute percentile thresholds from non-zero values.
+// Returns 9 boundaries (p50, p55, p60, p65, p70, p75, p80, p85, p90).
+// Values ≤p50 = full green, ≥p90 = full red.
+const computePercentileThresholds = (values: number[]): number[] => {
+  const sorted = [...values].sort((a, b) => a - b)
+  const n = sorted.length
+  if (n === 0) return []
+  const percentiles = [0.50, 0.55, 0.60, 0.65, 0.70, 0.75, 0.80, 0.85, 0.90]
+  return percentiles.map(p => {
+    const idx = Math.min(Math.floor(p * n), n - 1)
+    return sorted[idx]
+  })
+}
+
+// Map value → color using precomputed thresholds. High = red, low = green.
+const getColorFromThresholds = (value: number, thresholds: number[]): string => {
+  if (thresholds.length === 0) return FIT_STATS_COLORS[0]
+  for (let i = thresholds.length - 1; i >= 0; i--) {
+    if (value >= thresholds[i]) return FIT_STATS_COLORS[i]
+  }
+  return FIT_STATS_COLORS[0] // Below p50 = green
+}
+
+const FIT_STATS_FIELD_KEY: Record<FitStatsMetric, keyof FitStatsSample> = {
+  power: 'power_watts',
+  cadence: 'cadence',
+  hr: 'heart_rate',
+  speed: 'speed_ms',
+}
+
+// Build timestamp→value lookup map for a FIT stats metric (excludes zeros)
+const buildFitStatsMap = (samples: FitStatsSample[], metric: FitStatsMetric): Map<number, number> => {
+  const map = new Map<number, number>()
+  const key = FIT_STATS_FIELD_KEY[metric]
+
+  for (const sample of samples) {
+    const val = sample[key] as number | null | undefined
+    if (val != null && val > 0) {
+      const bucket = Math.round(new Date(sample.timestamp).getTime() / 1000) * 1000
+      map.set(bucket, val)
+    }
+  }
+
+  return map
+}
+
 interface RideMapProps {
   gpsTrack: GPSPoint[]
   hoverIndex?: number | null
@@ -298,6 +367,8 @@ interface RideMapProps {
   imuColor?: string // Color for IMU coverage overlay (default: green)
   efficiencySamples?: EfficiencySample[] // Pedaling efficiency samples for heatmap overlay
   positionSamples?: PositionSample[] // Riding position samples for heatmap overlay
+  fitStatsSamples?: FitStatsSample[] // FIT stats samples for metric overlay
+  fitStatsMetric?: FitStatsMetric // Which FIT metric to overlay
   onZoomChange?: (zoom: number) => void
 }
 
@@ -337,7 +408,9 @@ const RoutePolylines = memo(function RoutePolylines({
   defaultColor,
   imuColor,
   efficiencySamples,
-  positionSamples
+  positionSamples,
+  fitStatsSamples,
+  fitStatsMetric
 }: {
   fullTrack: GPSPoint[]
   imuTimeRanges: IMUTimeRange[]
@@ -345,6 +418,8 @@ const RoutePolylines = memo(function RoutePolylines({
   imuColor: string
   efficiencySamples?: EfficiencySample[]
   positionSamples?: PositionSample[]
+  fitStatsSamples?: FitStatsSample[]
+  fitStatsMetric?: FitStatsMetric
 }) {
   // Use full GPS track (1 Hz, ~6000 points for 2-hour ride)
   const gpsTrack = fullTrack
@@ -417,7 +492,29 @@ const RoutePolylines = memo(function RoutePolylines({
       }
     }
 
-    // Mode 3: VTX overlay - show full route + green IMU segments
+    // Mode 3: FIT stats overlay - percentile-based green→red gradient
+    if (fitStatsSamples && fitStatsSamples.length > 0 && fitStatsMetric) {
+      const statsMap = buildFitStatsMap(fitStatsSamples, fitStatsMetric)
+      const allValues = Array.from(statsMap.values())
+      const thresholds = computePercentileThresholds(allValues)
+
+      const { segments: overlays } = buildOverlaySegments(
+        gpsTrack,
+        (point) => {
+          const pointTime = new Date(point.timestamp!).getTime()
+          const val = getEfficiencyFromMap(pointTime, statsMap, 1000)
+          return val !== null ? getColorFromThresholds(val, thresholds) : null
+        },
+        'FitStatsOverlay'
+      )
+
+      return {
+        baseSegments: baseSegs,
+        overlaySegments: overlays
+      }
+    }
+
+    // Mode 4: VTX overlay - show full route + green IMU segments
     if (imuTimeRanges.length > 0) {
       const overlays: { positions: [number, number][]; color: string }[] = []
       let currentSegment: GPSPoint[] = []
@@ -463,7 +560,7 @@ const RoutePolylines = memo(function RoutePolylines({
       baseSegments: baseSegs,
       overlaySegments: []
     }
-  }, [gpsTrack, imuTimeRanges, efficiencySamples, positionSamples, defaultColor, imuColor])
+  }, [gpsTrack, imuTimeRanges, efficiencySamples, positionSamples, fitStatsSamples, fitStatsMetric, defaultColor, imuColor])
 
   return (
     <>
@@ -506,6 +603,8 @@ export function RideMap({
   imuColor: imuColorProp,
   efficiencySamples,
   positionSamples,
+  fitStatsSamples,
+  fitStatsMetric,
   onZoomChange
 }: RideMapProps) {
   const [mounted, setMounted] = useState(false)
@@ -639,6 +738,8 @@ export function RideMap({
           imuColor={imuRouteColor}
           efficiencySamples={efficiencySamples}
           positionSamples={positionSamples}
+          fitStatsSamples={fitStatsSamples}
+          fitStatsMetric={fitStatsMetric}
         />
 
         {/* Hover marker - zIndex 1000 */}

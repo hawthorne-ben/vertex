@@ -3,6 +3,7 @@
 import { useMemo, useState, useEffect, useRef } from 'react'
 import dynamic from 'next/dynamic'
 import { findClosestByTime } from '@/lib/sync/fit-vtx-sync'
+import type { FitStatsSample, FitStatsMetric } from './ride-map'
 
 // Dynamically import map to avoid SSR issues with Leaflet
 const RideMap = dynamic(
@@ -44,11 +45,13 @@ interface RideMapClientProps {
   samples: Sample[]
   loading: boolean
   error: string | null
-  mapMode?: 'route' | 'vtx' | 'efficiency' | 'pedalingEfficiency' | 'ridingPosition' // Map overlay mode
+  mapMode?: 'route' | 'vtx' | 'efficiency' | 'pedalingEfficiency' | 'ridingPosition' | 'fitStats'
   efficiencySamples?: EfficiencySample[] // Pedaling efficiency data for heatmap
   efficiencyLoading?: boolean // Loading state for efficiency data
   positionSamples?: PositionSample[] // Riding position data for heatmap
   positionLoading?: boolean // Loading state for position data
+  fitStatsSamples?: FitStatsSample[]
+  fitStatsMetric?: FitStatsMetric
   onZoomChange?: (zoom: number) => void
 }
 
@@ -65,6 +68,8 @@ export function RideMapClient({
   efficiencyLoading = false,
   positionSamples = [],
   positionLoading = false,
+  fitStatsSamples,
+  fitStatsMetric,
   imuColor,
   onZoomChange
 }: RideMapClientProps) {
@@ -156,8 +161,10 @@ export function RideMapClient({
         className="w-full"
         imuTimeRanges={deferredMode === 'vtx' ? imuTimeRanges : []}
         imuColor={deferredMode === 'route' ? undefined : deferredImuColor}
-        efficiencySamples={isOverlayLoading || deferredMode === 'route' ? undefined : ((deferredMode === 'efficiency' || deferredMode === 'pedalingEfficiency') ? efficiencySamples : undefined)}
-        positionSamples={isOverlayLoading || deferredMode === 'route' ? undefined : (deferredMode === 'ridingPosition' ? positionSamples : undefined)}
+        efficiencySamples={!isOverlayLoading && (deferredMode === 'efficiency' || deferredMode === 'pedalingEfficiency') ? efficiencySamples : undefined}
+        positionSamples={!isOverlayLoading && deferredMode === 'ridingPosition' ? positionSamples : undefined}
+        fitStatsSamples={deferredMode === 'fitStats' ? fitStatsSamples : undefined}
+        fitStatsMetric={deferredMode === 'fitStats' ? fitStatsMetric : undefined}
         onZoomChange={onZoomChange}
       />
 

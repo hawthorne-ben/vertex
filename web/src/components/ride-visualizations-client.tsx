@@ -17,15 +17,24 @@ import { useDerivedMetric } from './charts/hooks/useDerivedMetric'
 import { useAuthFetch } from '@/hooks/useAuthFetch'
 import { apiCache } from '@/lib/cache/api-cache'
 import { RideComparisonCards } from '@/components/ride-comparison-cards'
-import { RefreshCw, Settings } from 'lucide-react'
+import { RefreshCw, Settings, ChevronDown } from 'lucide-react'
+import type { FitStatsMetric } from './ride-map'
 
-// Unified tab type — the 6 top-level tabs
-type ViewTab = 'route' | 'efficiency' | 'position' | 'orientation' | 'acceleration' | 'rotation'
+// Unified tab type — the 7 top-level tabs
+type ViewTab = 'route' | 'efficiency' | 'position' | 'stats' | 'orientation' | 'acceleration' | 'rotation'
+
+const FIT_STATS_OPTIONS: Array<{ id: FitStatsMetric; label: string }> = [
+  { id: 'power', label: 'Power' },
+  { id: 'cadence', label: 'Cadence' },
+  { id: 'hr', label: 'HR' },
+  { id: 'speed', label: 'Speed' },
+]
 
 const TAB_CONFIG: Array<{ id: ViewTab; label: string }> = [
   { id: 'route', label: 'Route' },
   { id: 'efficiency', label: 'Efficiency' },
   { id: 'position', label: 'Position' },
+  { id: 'stats', label: 'Stats' }, // label is dynamic, overridden in render
   { id: 'orientation', label: 'Orientation' },
   { id: 'acceleration', label: 'Acceleration' },
   { id: 'rotation', label: 'Rotation' },
@@ -99,7 +108,8 @@ export function RideVisualizationsClient({
       const tab = param as ViewTab
       if (tab === 'route') return tab
       const isAvailable = (ANALYTICS_TABS.includes(tab) && hasAnalyticsData) ||
-                          (IMU_TABS.includes(tab) && hasVtxData)
+                          (IMU_TABS.includes(tab) && hasVtxData) ||
+                          (tab === 'stats' && hasFitData && hasGpsData)
       if (isAvailable) return tab
     }
     // Default: Route tab
@@ -107,6 +117,8 @@ export function RideVisualizationsClient({
   })()
 
   const [activeTab, setActiveTab] = useState<ViewTab>(initialTab)
+  const [statsMetric, setStatsMetric] = useState<FitStatsMetric>('power')
+  const [statsDropdownOpen, setStatsDropdownOpen] = useState(false)
   const [selectedTime, setSelectedTime] = useState<number | null>(null)
   const [imuCoverageRanges, setImuCoverageRanges] = useState<Array<{ start: number; end: number }>>([])
   const [sharedZoomRange, setSharedZoomRange] = useState<{ start: string; end: string } | null>(null)
@@ -162,6 +174,7 @@ export function RideVisualizationsClient({
   const isRouteTab = activeTab === ROUTE_TAB
   const isAnalyticsTab = ANALYTICS_TABS.includes(activeTab)
   const isImuTab = IMU_TABS.includes(activeTab)
+  const isStatsTab = activeTab === 'stats'
   const selectedMetric = TAB_TO_METRIC[activeTab] ?? null
 
   // Lazy-fetch: only start when user visits the tab. Data persists across tab switches
@@ -220,12 +233,22 @@ export function RideVisualizationsClient({
 
   const vtxRecordingsForChart = vtxRecordings
 
-  // Determine map mode and color based on active tab
-  const mapMode = isRouteTab
-    ? 'route' as const
-    : isAnalyticsTab
-      ? (selectedMetric as 'pedalingEfficiency' | 'ridingPosition') ?? 'pedalingEfficiency'
-      : 'vtx'
+  const getTabDisabled = (id: ViewTab): boolean => {
+    if (id === 'route') return !hasGpsData
+    if (id === 'stats') return !(hasFitData && hasGpsData)
+    if (ANALYTICS_TABS.includes(id)) return !hasAnalyticsData
+    if (IMU_TABS.includes(id)) return !hasVtxData
+    return false
+  }
+
+  // Determine map mode based on active tab
+  const getMapMode = (): 'route' | 'fitStats' | 'pedalingEfficiency' | 'ridingPosition' | 'vtx' => {
+    if (isRouteTab) return 'route'
+    if (isStatsTab) return 'fitStats'
+    if (isAnalyticsTab) return (selectedMetric as 'pedalingEfficiency' | 'ridingPosition') ?? 'pedalingEfficiency'
+    return 'vtx'
+  }
+  const mapMode = getMapMode()
   const imuColor = IMU_TAB_COLORS[activeTab]
 
   // Determine if derived metrics are available (completed, not loading/polling)
@@ -244,52 +267,73 @@ export function RideVisualizationsClient({
       <div className="mb-4">
         <div className="flex items-center gap-1">
           {TAB_CONFIG.map(tab => {
-            // Route tab is always available if GPS data exists
-            if (tab.id === 'route') {
-              const disabled = !hasGpsData
+            const isStats = tab.id === 'stats'
+
+            const disabled = getTabDisabled(tab.id)
+
+            const isActive = activeTab === tab.id
+            let stateClass = 'text-muted-foreground hover:text-foreground'
+            if (isActive) stateClass = 'text-primary'
+            else if (disabled) stateClass = 'text-muted-foreground/40 cursor-not-allowed'
+            const baseClass = `px-4 py-2 text-sm font-medium transition-colors relative ${stateClass}`
+
+            // Stats tab renders as a dropdown
+            if (isStats) {
+              const selectedLabel = FIT_STATS_OPTIONS.find(o => o.id === statsMetric)!.label
               return (
-                <button
-                  key={tab.id}
-                  onClick={() => handleTabChange(tab.id)}
-                  disabled={disabled}
-                  className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-                    activeTab === tab.id
-                      ? 'text-primary'
-                      : disabled
-                        ? 'text-muted-foreground/40 cursor-not-allowed'
-                        : 'text-muted-foreground hover:text-foreground'
-                  }`}
-                >
-                  {tab.label}
-                  {activeTab === tab.id && (
-                    <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                <div key={tab.id} className="relative">
+                  <button
+                    onClick={() => {
+                      if (disabled) return
+                      if (!isActive) {
+                        handleTabChange('stats')
+                      } else {
+                        setStatsDropdownOpen(prev => !prev)
+                      }
+                    }}
+                    onBlur={() => setTimeout(() => setStatsDropdownOpen(false), 150)}
+                    disabled={disabled}
+                    className={`${baseClass} inline-flex items-center gap-1`}
+                  >
+                    {selectedLabel}
+                    <ChevronDown className={`w-3 h-3 transition-transform ${statsDropdownOpen ? 'rotate-180' : ''}`} />
+                    {isActive && (
+                      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                    )}
+                  </button>
+                  {statsDropdownOpen && (
+                    <div className="absolute top-full left-0 mt-1 z-50 bg-popover border border-border rounded-md shadow-md py-1 min-w-[120px]">
+                      {FIT_STATS_OPTIONS.map(option => (
+                        <button
+                          key={option.id}
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            setStatsMetric(option.id)
+                            setStatsDropdownOpen(false)
+                            if (!isActive) handleTabChange('stats')
+                          }}
+                          className={`w-full text-left px-4 py-2 text-sm hover:bg-accent transition-colors ${
+                            option.id === statsMetric ? 'text-primary' : 'text-foreground'
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
                   )}
-                </button>
+                </div>
               )
             }
-
-            // Disable analytics tabs if missing FIT+GPS data, IMU tabs if no VTX
-            const disabled = ANALYTICS_TABS.includes(tab.id)
-              ? !hasAnalyticsData
-              : IMU_TABS.includes(tab.id)
-                ? !hasVtxData
-                : false
 
             return (
               <button
                 key={tab.id}
                 onClick={() => handleTabChange(tab.id)}
                 disabled={disabled}
-                className={`px-4 py-2 text-sm font-medium transition-colors relative ${
-                  activeTab === tab.id
-                    ? 'text-primary'
-                    : disabled
-                      ? 'text-muted-foreground/40 cursor-not-allowed'
-                      : 'text-muted-foreground hover:text-foreground'
-                }`}
+                className={baseClass}
               >
                 {tab.label}
-                {activeTab === tab.id && (
+                {isActive && (
                   <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
                 )}
               </button>
@@ -360,6 +404,8 @@ export function RideVisualizationsClient({
               efficiencyLoading={isRouteTab ? false : efficiencyLoading}
               positionSamples={isRouteTab ? [] : positionSamples}
               positionLoading={isRouteTab ? false : positionLoading}
+              fitStatsSamples={isStatsTab ? samples : undefined}
+              fitStatsMetric={isStatsTab ? statsMetric : undefined}
               onZoomChange={setMapZoom}
             />
           </MapErrorBoundary>
