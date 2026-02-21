@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect } from 'react'
 import { UPlotBase } from './UPlotBase'
 import { useIMUData, IMUDataType, IMUSample } from './hooks/useIMUData'
 import { processIMUChartData, calculateIMUStats } from '@/lib/charts/processing'
+import type { ChartStat } from './UPlotBase'
 
 export interface VTXRecording {
   id: string
@@ -22,6 +23,7 @@ export interface IMUSensorChartProps {
   className?: string
   initialSamples?: IMUSample[]  // Optional: server-fetched samples (recording detail page)
   originalCount?: number  // Optional: total sample count when initialSamples provided
+  parentLoading?: boolean  // Optional: parent is still fetching initialSamples
 }
 
 /**
@@ -39,7 +41,8 @@ export function IMUSensorChart({
   onCoverageUpdate,
   className = '',
   initialSamples,
-  originalCount: propOriginalCount
+  originalCount: propOriginalCount,
+  parentLoading = false
 }: IMUSensorChartProps) {
   const [internalDataType, setInternalDataType] = useState<IMUDataType>('accel')
   const dataType = controlledDataType ?? internalDataType
@@ -60,7 +63,7 @@ export function IMUSensorChart({
 
   // Use initialSamples if provided (they contain all data types)
   const samples = initialSamples || fetchedSamples
-  const loading = initialSamples ? false : fetchedLoading
+  const loading = initialSamples ? parentLoading : fetchedLoading
   const error = initialSamples ? null : fetchedError
   const originalCount = initialSamples ? (propOriginalCount ?? 0) : fetchedOriginalCount
 
@@ -80,6 +83,23 @@ export function IMUSensorChart({
   const stats = useMemo(() => {
     return calculateIMUStats(samples, dataType)
   }, [samples, dataType])
+
+  // Convert stats to ChartStat format for UPlotBase
+  const chartStats = useMemo((): ChartStat[] => {
+    if (stats.length === 0 || !chartData.series.length) return []
+    // Series colors from processing.ts — series[0] is {}, series[1..3] are the axes
+    return stats.map((s, i) => {
+      const seriesEntry = chartData.series[i + 1]
+      const color = typeof seriesEntry?.stroke === 'string' ? seriesEntry.stroke : '#888'
+      return {
+        label: s.axis,
+        color,
+        avg: s.mean,
+        max: s.max,
+        unit: chartData.yAxisLabel,
+      }
+    })
+  }, [stats, chartData.series, chartData.yAxisLabel])
 
   const getTitle = () => {
     switch (dataType) {
@@ -158,31 +178,18 @@ export function IMUSensorChart({
             data={chartData.data}
             series={chartData.series}
             scales={chartData.scales}
-            title={getTitle()}
-            unit={chartData.yAxisLabel}
             highlightTime={highlightTime}
             onZoom={onZoomChange ? (start, end) => onZoomChange({ start, end }) : undefined}
+            stats={chartStats}
           />
         )}
       </div>
 
-      {/* Stats */}
-      {stats.length > 0 && (
-        <div className="text-sm text-muted-foreground">
-          <div className="grid grid-cols-3 gap-4">
-            {stats.map(stat => (
-              <div key={stat.axis}>
-                <strong>{stat.axis}-axis</strong>
-                <div>Min: {stat.min.toFixed(3)} {chartData.yAxisLabel}</div>
-                <div>Max: {stat.max.toFixed(3)} {chartData.yAxisLabel}</div>
-                <div>Mean: {stat.mean.toFixed(3)} {chartData.yAxisLabel}</div>
-              </div>
-            ))}
-          </div>
-          <div className="mt-2">
-            Displaying {samples.length.toLocaleString()} of {originalCount.toLocaleString()} samples
-            {zoomRange && ' (zoomed)'}
-          </div>
+      {/* Sample count info */}
+      {samples.length > 0 && (
+        <div className="text-xs text-muted-foreground">
+          Displaying {samples.length.toLocaleString()} of {originalCount.toLocaleString()} samples
+          {zoomRange && ' (zoomed)'}
         </div>
       )}
     </div>

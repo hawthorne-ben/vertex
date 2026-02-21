@@ -15,6 +15,10 @@ interface RideComparisons {
   standing: ComparisonData | null
   avgHr: ComparisonData | null
   avgPower: ComparisonData | null
+  smooth: ComparisonData | null
+  rough: ComparisonData | null
+  cadenceStanding: ComparisonData | null
+  cadenceSeated: ComparisonData | null
 }
 
 function ComparisonMetric({
@@ -24,6 +28,7 @@ function ComparisonMetric({
   unit,
   precision,
   colored = false,
+  invertColor = false,
 }: {
   label: string
   value: number
@@ -31,14 +36,20 @@ function ComparisonMetric({
   unit: string
   precision: number
   colored?: boolean
+  invertColor?: boolean
 }) {
   const diff = value - average
   const isUp = diff > 0.05
   const isDown = diff < -0.05
 
-  const trendColor = colored
-    ? isUp ? 'text-emerald-500' : isDown ? 'text-red-400' : 'text-muted-foreground'
-    : 'text-muted-foreground'
+  let trendColor = 'text-muted-foreground'
+  if (colored) {
+    if (invertColor) {
+      trendColor = isUp ? 'text-red-400' : isDown ? 'text-emerald-500' : 'text-muted-foreground'
+    } else {
+      trendColor = isUp ? 'text-emerald-500' : isDown ? 'text-red-400' : 'text-muted-foreground'
+    }
+  }
 
   return (
     <Card>
@@ -74,7 +85,7 @@ export function RideComparisonCards({ rideId }: { rideId: string }) {
       // Fetch this ride's summary
       const { data: summary } = await supabase
         .from('ride_summaries')
-        .select('avg_efficiency_percent, standing_percent, avg_heart_rate, avg_power_watts, user_id')
+        .select('avg_efficiency_percent, standing_percent, avg_heart_rate, avg_power_watts, smooth_percent, rough_percent, avg_cadence_standing, avg_cadence_seated, user_id')
         .eq('ride_id', rideId)
         .maybeSingle()
 
@@ -83,7 +94,7 @@ export function RideComparisonCards({ rideId }: { rideId: string }) {
       // Fetch rolling averages from other rides in the last 8 weeks
       const { data: others } = await supabase
         .from('ride_summaries')
-        .select('avg_efficiency_percent, standing_percent, avg_heart_rate, avg_power_watts')
+        .select('avg_efficiency_percent, standing_percent, avg_heart_rate, avg_power_watts, smooth_percent, rough_percent, avg_cadence_standing, avg_cadence_seated')
         .eq('user_id', summary.user_id)
         .gte('ride_started_at', new Date(Date.now() - 8 * 7 * 24 * 60 * 60 * 1000).toISOString())
 
@@ -98,6 +109,10 @@ export function RideComparisonCards({ rideId }: { rideId: string }) {
       const avgStanding = avg(others.map(r => r.standing_percent))
       const avgHr = avg(others.map(r => r.avg_heart_rate))
       const avgPower = avg(others.map(r => r.avg_power_watts))
+      const avgSmooth = avg(others.map(r => r.smooth_percent))
+      const avgRough = avg(others.map(r => r.rough_percent))
+      const avgCadenceStanding = avg(others.map(r => r.avg_cadence_standing))
+      const avgCadenceSeated = avg(others.map(r => r.avg_cadence_seated))
 
       if (cancelled) return
 
@@ -110,6 +125,14 @@ export function RideComparisonCards({ rideId }: { rideId: string }) {
           ? { value: summary.avg_heart_rate, average: avgHr } : null,
         avgPower: summary.avg_power_watts != null && avgPower != null
           ? { value: summary.avg_power_watts, average: avgPower } : null,
+        smooth: summary.smooth_percent != null && avgSmooth != null
+          ? { value: summary.smooth_percent, average: avgSmooth } : null,
+        rough: summary.rough_percent != null && avgRough != null
+          ? { value: summary.rough_percent, average: avgRough } : null,
+        cadenceStanding: summary.avg_cadence_standing != null && avgCadenceStanding != null
+          ? { value: summary.avg_cadence_standing, average: avgCadenceStanding } : null,
+        cadenceSeated: summary.avg_cadence_seated != null && avgCadenceSeated != null
+          ? { value: summary.avg_cadence_seated, average: avgCadenceSeated } : null,
       })
     }
 
@@ -122,46 +145,94 @@ export function RideComparisonCards({ rideId }: { rideId: string }) {
   const hasAny = data.efficiency || data.standing || data.avgHr || data.avgPower
   if (!hasAny) return null
 
+  const hasAnalysisRow = data.smooth || data.rough || data.cadenceStanding || data.cadenceSeated
+
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-8">
-      {data.efficiency && (
-        <ComparisonMetric
-          label="Efficiency"
-          value={data.efficiency.value}
-          average={data.efficiency.average}
-          unit="%"
-          precision={1}
-          colored
-        />
+    <>
+      <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-4">
+        {data.efficiency && (
+          <ComparisonMetric
+            label="Efficiency"
+            value={data.efficiency.value}
+            average={data.efficiency.average}
+            unit="%"
+            precision={1}
+            colored
+          />
+        )}
+        {data.standing && (
+          <ComparisonMetric
+            label="Standing"
+            value={data.standing.value}
+            average={data.standing.average}
+            unit="%"
+            precision={1}
+          />
+        )}
+        {data.avgHr && (
+          <ComparisonMetric
+            label="Avg HR"
+            value={data.avgHr.value}
+            average={data.avgHr.average}
+            unit=" bpm"
+            precision={0}
+          />
+        )}
+        {data.avgPower && (
+          <ComparisonMetric
+            label="Avg Power"
+            value={data.avgPower.value}
+            average={data.avgPower.average}
+            unit=" W"
+            precision={0}
+            colored
+          />
+        )}
+      </div>
+      {hasAnalysisRow && (
+        <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-8">
+          {data.smooth && (
+            <ComparisonMetric
+              label="Smooth %"
+              value={data.smooth.value}
+              average={data.smooth.average}
+              unit="%"
+              precision={0}
+              colored
+            />
+          )}
+          {data.rough && (
+            <ComparisonMetric
+              label="Rough %"
+              value={data.rough.value}
+              average={data.rough.average}
+              unit="%"
+              precision={0}
+              colored
+              invertColor
+            />
+          )}
+          {data.cadenceStanding && (
+            <ComparisonMetric
+              label="Cadence (Standing)"
+              value={data.cadenceStanding.value}
+              average={data.cadenceStanding.average}
+              unit=" rpm"
+              precision={0}
+            />
+          )}
+          {data.cadenceSeated && (
+            <ComparisonMetric
+              label="Cadence (Seated)"
+              value={data.cadenceSeated.value}
+              average={data.cadenceSeated.average}
+              unit=" rpm"
+              precision={0}
+            />
+          )}
+        </div>
       )}
-      {data.standing && (
-        <ComparisonMetric
-          label="Standing"
-          value={data.standing.value}
-          average={data.standing.average}
-          unit="%"
-          precision={1}
-        />
-      )}
-      {data.avgHr && (
-        <ComparisonMetric
-          label="Avg HR"
-          value={data.avgHr.value}
-          average={data.avgHr.average}
-          unit=" bpm"
-          precision={0}
-        />
-      )}
-      {data.avgPower && (
-        <ComparisonMetric
-          label="Avg Power"
-          value={data.avgPower.value}
-          average={data.avgPower.average}
-          unit=" W"
-          precision={0}
-          colored
-        />
-      )}
-    </div>
+      {!hasAnalysisRow && <div className="mb-4" />}
+    </>
   )
 }

@@ -3,6 +3,7 @@
 import { useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import uPlot from 'uplot'
+import type { ChartStat } from './charts/UPlotBase'
 
 const UPlotBase = dynamic(
   () => import('./charts/UPlotBase').then(mod => ({ default: mod.UPlotBase })),
@@ -18,6 +19,8 @@ interface SingleMetricChartProps {
   unit: string
   color: string
   highlightTime?: number | null
+  height?: number
+  onZoom?: (start: string, end: string) => void
   className?: string
 }
 
@@ -27,6 +30,8 @@ export function SingleMetricChart({
   unit,
   color,
   highlightTime,
+  height = 200,
+  onZoom,
   className = ''
 }: SingleMetricChartProps) {
   const chartConfig = useMemo(() => {
@@ -101,12 +106,22 @@ export function SingleMetricChart({
       }
     }
 
-    return { data, series, axes, scales }
+    // Compute stats from raw values
+    const validValues = rawValues.filter((v): v is number => v !== null)
+    const stats: ChartStat[] = validValues.length > 0 ? [{
+      label,
+      color,
+      avg: validValues.reduce((a, b) => a + b, 0) / validValues.length,
+      max: Math.max(...validValues),
+      unit,
+    }] : []
+
+    return { data, series, axes, scales, stats }
   }, [samples, label, unit, color])
 
   if (!chartConfig) {
     return (
-      <div className={`bg-muted rounded-lg flex items-center justify-center ${className}`} style={{ height: 200 }}>
+      <div className={`bg-muted rounded-lg flex items-center justify-center ${className}`} style={{ height }}>
         <p className="text-sm text-muted-foreground">No {label.toLowerCase()} data</p>
       </div>
     )
@@ -118,8 +133,10 @@ export function SingleMetricChart({
       series={chartConfig.series}
       axes={chartConfig.axes}
       scales={chartConfig.scales}
-      height={200}
+      height={height}
       highlightTime={highlightTime}
+      onZoom={onZoom}
+      stats={chartConfig.stats}
       className={className}
     />
   )

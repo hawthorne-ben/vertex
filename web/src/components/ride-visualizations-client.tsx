@@ -1,18 +1,19 @@
 'use client'
 
 import { useState, useMemo, useCallback } from 'react'
-import { useSearchParams, useRouter, usePathname } from 'next/navigation'
+import { useSearchParams, usePathname } from 'next/navigation'
+import dynamic from 'next/dynamic'
 import { TimeSlider } from './time-slider'
 import { RideMapClient } from './ride-map-client'
 import { RideChartsClient } from './ride-charts-client'
-import { IMUSensorChart } from './charts/IMUSensorChart'
-import { DerivedMetricsChart } from './charts/DerivedMetricsChart'
-import { Card, CardHeader, CardTitle, CardContent } from './ui/card'
+import { Card, CardContent } from './ui/card'
 import { MapErrorBoundary } from './map-error-boundary'
 import { ConfirmationModal } from './ui/confirmation-modal'
 import { EfficiencyTuningModal } from './dev/efficiency-tuning-modal'
 import { getVtxTimeRanges } from '@/lib/sync/fit-vtx-sync'
+import { buildIMUChartConfig, buildEfficiencyChartConfig, buildPositionChartConfig, buildFitMetricChartConfig } from '@/lib/charts/processing'
 import { useRideSamples } from './hooks/useRideSamples'
+import { useIMUData } from './charts/hooks/useIMUData'
 import { useDerivedMetric } from './charts/hooks/useDerivedMetric'
 import { useAuthFetch } from '@/hooks/useAuthFetch'
 import { apiCache } from '@/lib/cache/api-cache'
@@ -20,8 +21,14 @@ import { RideComparisonCards } from '@/components/ride-comparison-cards'
 import { RefreshCw, Settings, ChevronDown } from 'lucide-react'
 import type { FitStatsMetric } from './ride-map'
 
-// Unified tab type — the 7 top-level tabs
-type ViewTab = 'route' | 'efficiency' | 'position' | 'stats' | 'orientation' | 'acceleration' | 'rotation'
+const UPlotBase = dynamic(
+  () => import('./charts/UPlotBase').then(mod => ({ default: mod.UPlotBase })),
+  { ssr: false, loading: () => <div className="h-[400px] bg-muted rounded-lg animate-pulse" /> }
+)
+
+// Map tab includes Route; chart tab does not
+type MapTab = 'route' | 'efficiency' | 'position' | 'stats' | 'orientation' | 'acceleration' | 'rotation'
+type ChartTab = 'efficiency' | 'position' | 'stats' | 'orientation' | 'acceleration' | 'rotation'
 
 const FIT_STATS_OPTIONS: Array<{ id: FitStatsMetric; label: string }> = [
   { id: 'power', label: 'Power' },
@@ -30,11 +37,20 @@ const FIT_STATS_OPTIONS: Array<{ id: FitStatsMetric; label: string }> = [
   { id: 'speed', label: 'Speed' },
 ]
 
-const TAB_CONFIG: Array<{ id: ViewTab; label: string }> = [
+const MAP_TAB_CONFIG: Array<{ id: MapTab; label: string }> = [
   { id: 'route', label: 'Route' },
   { id: 'efficiency', label: 'Efficiency' },
   { id: 'position', label: 'Position' },
-  { id: 'stats', label: 'Stats' }, // label is dynamic, overridden in render
+  { id: 'stats', label: 'Stats' },
+  { id: 'orientation', label: 'Orientation' },
+  { id: 'acceleration', label: 'Acceleration' },
+  { id: 'rotation', label: 'Rotation' },
+]
+
+const CHART_TAB_CONFIG: Array<{ id: ChartTab; label: string }> = [
+  { id: 'efficiency', label: 'Efficiency' },
+  { id: 'position', label: 'Position' },
+  { id: 'stats', label: 'Stats' },
   { id: 'orientation', label: 'Orientation' },
   { id: 'acceleration', label: 'Acceleration' },
   { id: 'rotation', label: 'Rotation' },
@@ -48,9 +64,8 @@ const IMU_TAB_COLORS: Record<string, string> = {
 }
 
 // Tabs that use IMU data vs derived analytics
-const IMU_TABS: ViewTab[] = ['orientation', 'acceleration', 'rotation']
-const ANALYTICS_TABS: ViewTab[] = ['efficiency', 'position']
-const ROUTE_TAB: ViewTab = 'route'
+const IMU_TABS = new Set<string>(['orientation', 'acceleration', 'rotation'])
+const ANALYTICS_TABS = new Set<string>(['efficiency', 'position'])
 
 // Map tab → IMU data type
 const TAB_TO_IMU_TYPE: Record<string, 'orientation' | 'accel' | 'gyro'> = {
@@ -65,7 +80,16 @@ const TAB_TO_METRIC: Record<string, 'pedalingEfficiency' | 'ridingPosition'> = {
   position: 'ridingPosition',
 }
 
-const VALID_TABS = new Set<string>(TAB_CONFIG.map(t => t.id))
+// Chart stats metric → sample field + chart config
+const CHART_STATS_CONFIG: Record<FitStatsMetric, { label: string; unit: string; color: string; field: 'power_watts' | 'heart_rate' | 'cadence' | 'speed_ms'; convert?: (v: number) => number }> = {
+  power: { label: 'Power', unit: 'W', color: '#ef4444', field: 'power_watts' },
+  hr: { label: 'Heart Rate', unit: 'bpm', color: '#ec4899', field: 'heart_rate' },
+  cadence: { label: 'Cadence', unit: 'rpm', color: '#3b82f6', field: 'cadence' },
+  speed: { label: 'Speed', unit: 'mph', color: '#10b981', field: 'speed_ms', convert: (v) => v * 2.23694 },
+}
+
+const VALID_MAP_TABS = new Set<string>(MAP_TAB_CONFIG.map(t => t.id))
+const VALID_CHART_TABS = new Set<string>(CHART_TAB_CONFIG.map(t => t.id))
 
 interface VTXRecording {
   id: string
@@ -93,7 +117,6 @@ export function RideVisualizationsClient({
   vtxRecordings
 }: RideVisualizationsClientProps) {
   const searchParams = useSearchParams()
-  const router = useRouter()
   const pathname = usePathname()
 
   const hasVtxData = vtxRecordings.length > 0
@@ -101,26 +124,43 @@ export function RideVisualizationsClient({
   // Analytics require both VTX (IMU) and FIT (GPS) data
   const hasAnalyticsData = hasVtxData && hasFitData && hasGpsData
 
-  // Read initial tab from URL query param, fallback to Route
-  const initialTab = (() => {
+  const getTabDisabled = useCallback((id: string): boolean => {
+    if (id === 'route') return !hasGpsData
+    if (id === 'stats') return !(hasFitData && hasGpsData)
+    if (ANALYTICS_TABS.has(id)) return !hasAnalyticsData
+    if (IMU_TABS.has(id)) return !hasVtxData
+    return false
+  }, [hasGpsData, hasFitData, hasAnalyticsData, hasVtxData])
+
+  // Read initial map tab from URL query param, fallback to Route
+  const initialMapTab = (() => {
     const param = searchParams.get('tab')
-    if (param && VALID_TABS.has(param)) {
-      const tab = param as ViewTab
-      if (tab === 'route') return tab
-      const isAvailable = (ANALYTICS_TABS.includes(tab) && hasAnalyticsData) ||
-                          (IMU_TABS.includes(tab) && hasVtxData) ||
-                          (tab === 'stats' && hasFitData && hasGpsData)
-      if (isAvailable) return tab
+    if (param && VALID_MAP_TABS.has(param) && !getTabDisabled(param)) {
+      return param as MapTab
     }
-    // Default: Route tab
-    return 'route' as ViewTab
+    return 'route' as MapTab
   })()
 
-  const [activeTab, setActiveTab] = useState<ViewTab>(initialTab)
+  // Read initial chart tab from URL, default to first available
+  const initialChartTab = (() => {
+    const param = searchParams.get('chart')
+    if (param && VALID_CHART_TABS.has(param) && !getTabDisabled(param)) {
+      return param as ChartTab
+    }
+    // Default to first available chart tab
+    for (const tab of CHART_TAB_CONFIG) {
+      if (!getTabDisabled(tab.id)) return tab.id
+    }
+    return 'orientation' as ChartTab
+  })()
+
+  const [mapTab, setMapTab] = useState<MapTab>(initialMapTab)
+  const [chartTab, setChartTab] = useState<ChartTab>(initialChartTab)
   const [statsMetric, setStatsMetric] = useState<FitStatsMetric>('power')
+  const [chartStatsMetric, setChartStatsMetric] = useState<FitStatsMetric>('power')
   const [statsDropdownOpen, setStatsDropdownOpen] = useState(false)
+  const [chartStatsDropdownOpen, setChartStatsDropdownOpen] = useState(false)
   const [selectedTime, setSelectedTime] = useState<number | null>(null)
-  const [imuCoverageRanges, setImuCoverageRanges] = useState<Array<{ start: number; end: number }>>([])
   const [sharedZoomRange, setSharedZoomRange] = useState<{ start: string; end: string } | null>(null)
   const [mapZoom, setMapZoom] = useState<number | null>(null)
   const [showRerunConfirm, setShowRerunConfirm] = useState(false)
@@ -129,13 +169,21 @@ export function RideVisualizationsClient({
   const { authFetch } = useAuthFetch()
   const isDev = process.env.NODE_ENV === 'development'
 
-  // Persist tab to URL query param
-  const handleTabChange = useCallback((tab: ViewTab) => {
-    setActiveTab(tab)
-    const params = new URLSearchParams(searchParams.toString())
+  // Persist map tab to URL query param (shallow — no server round-trip)
+  const handleMapTabChange = useCallback((tab: MapTab) => {
+    setMapTab(tab)
+    const params = new URLSearchParams(window.location.search)
     params.set('tab', tab)
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false })
-  }, [searchParams, router, pathname])
+    window.history.replaceState(null, '', `${pathname}?${params.toString()}`)
+  }, [pathname])
+
+  // Persist chart tab to URL query param (shallow — no server round-trip)
+  const handleChartTabChange = useCallback((tab: ChartTab) => {
+    setChartTab(tab)
+    const params = new URLSearchParams(window.location.search)
+    params.set('chart', tab)
+    window.history.replaceState(null, '', `${pathname}?${params.toString()}`)
+  }, [pathname])
 
   // Rerun analysis handler (prod: recompute with defaults via Inngest, dev: open tuning modal)
   const handleRerunAnalysis = useCallback(async () => {
@@ -170,27 +218,42 @@ export function RideVisualizationsClient({
   // Fetch ride samples once - shared between map and charts
   const { samples, loading, error } = useRideSamples(rideId, fitRecordingId)
 
-  // Determine what to fetch for map overlay
-  const isRouteTab = activeTab === ROUTE_TAB
-  const isAnalyticsTab = ANALYTICS_TABS.includes(activeTab)
-  const isImuTab = IMU_TABS.includes(activeTab)
-  const isStatsTab = activeTab === 'stats'
-  const selectedMetric = TAB_TO_METRIC[activeTab] ?? null
+  // Fetch IMU data once at parent level — persists across tab switches
+  // The VTX API returns all sensor types (accel, gyro, orientation) in one response
+  const {
+    samples: imuSamples,
+    loading: imuLoading,
+    error: imuError,
+    coverageRanges: imuCoverageRangesFromHook
+  } = useIMUData({
+    rideId,
+    recordings: vtxRecordings,
+    dataType: 'accel', // doesn't affect fetch — API returns all types
+    timeRange: sharedZoomRange,
+    skip: !hasVtxData
+  })
 
-  // Lazy-fetch: only start when user visits the tab. Data persists across tab switches
-  // (useDerivedMetric no longer clears state on disable).
-  const [efficiencyRequested, setEfficiencyRequested] = useState(activeTab === 'efficiency')
-  const [positionRequested, setPositionRequested] = useState(activeTab === 'position')
+  // Determine what to fetch for map overlay (reads from mapTab)
+  const isMapRouteTab = mapTab === 'route'
+  const isMapAnalyticsTab = ANALYTICS_TABS.has(mapTab)
+  const isMapStatsTab = mapTab === 'stats'
+  const selectedMapMetric = TAB_TO_METRIC[mapTab] ?? null
+
+  // Determine chart content (reads from chartTab)
+  const isChartImuTab = IMU_TABS.has(chartTab)
+
+  // Lazy-fetch: only start when user visits the tab (either map or chart). Data persists across tab switches.
+  const [efficiencyRequested, setEfficiencyRequested] = useState(mapTab === 'efficiency' || chartTab === 'efficiency')
+  const [positionRequested, setPositionRequested] = useState(mapTab === 'position' || chartTab === 'position')
 
   // Mark metric as requested once user visits its tab (sticky — never goes back to false)
-  if (activeTab === 'efficiency' && !efficiencyRequested) setEfficiencyRequested(true)
-  if (activeTab === 'position' && !positionRequested) setPositionRequested(true)
+  if ((mapTab === 'efficiency' || chartTab === 'efficiency') && !efficiencyRequested) setEfficiencyRequested(true)
+  if ((mapTab === 'position' || chartTab === 'position') && !positionRequested) setPositionRequested(true)
 
   const {
     samples: efficiencySamples,
     loading: efficiencyLoading,
     error: efficiencyError,
-    metadata: efficiencyMetadata
   } = useDerivedMetric({
     rideId,
     metric: 'pedalingEfficiency',
@@ -204,7 +267,6 @@ export function RideVisualizationsClient({
     samples: positionSamplesRaw,
     loading: positionLoading,
     error: positionError,
-    metadata: positionMetadata
   } = useDerivedMetric({
     rideId,
     metric: 'ridingPosition',
@@ -225,53 +287,78 @@ export function RideVisualizationsClient({
 
   // Calculate IMU time ranges for GPS color coding
   const imuTimeRanges = useMemo(() => {
-    if (imuCoverageRanges.length > 0) {
-      return imuCoverageRanges
+    if (imuCoverageRangesFromHook.length > 0) {
+      return imuCoverageRangesFromHook
     }
     return getVtxTimeRanges(vtxRecordings)
-  }, [imuCoverageRanges, vtxRecordings])
+  }, [imuCoverageRangesFromHook, vtxRecordings])
 
-  const vtxRecordingsForChart = vtxRecordings
-
-  const getTabDisabled = (id: ViewTab): boolean => {
-    if (id === 'route') return !hasGpsData
-    if (id === 'stats') return !(hasFitData && hasGpsData)
-    if (ANALYTICS_TABS.includes(id)) return !hasAnalyticsData
-    if (IMU_TABS.includes(id)) return !hasVtxData
-    return false
-  }
-
-  // Determine map mode based on active tab
+  // Determine map mode based on mapTab
   const getMapMode = (): 'route' | 'fitStats' | 'pedalingEfficiency' | 'ridingPosition' | 'vtx' => {
-    if (isRouteTab) return 'route'
-    if (isStatsTab) return 'fitStats'
-    if (isAnalyticsTab) return (selectedMetric as 'pedalingEfficiency' | 'ridingPosition') ?? 'pedalingEfficiency'
+    if (isMapRouteTab) return 'route'
+    if (isMapStatsTab) return 'fitStats'
+    if (isMapAnalyticsTab) return (selectedMapMetric as 'pedalingEfficiency' | 'ridingPosition') ?? 'pedalingEfficiency'
     return 'vtx'
   }
   const mapMode = getMapMode()
-  const imuColor = IMU_TAB_COLORS[activeTab]
+  const imuColor = IMU_TAB_COLORS[mapTab]
 
-  // Determine if derived metrics are available (completed, not loading/polling)
-  const efficiencyAvailable = hasAnalyticsData && !efficiencyLoading && efficiencySamples.length > 0
-  const positionAvailable = hasAnalyticsData && !positionLoading && positionSamplesRaw.length > 0
-  const derivedMetricsAvailable = efficiencyAvailable || positionAvailable
   // Show rerun button when on an analytics tab and data is loaded, or always on route tab if analytics data is possible
-  const showRerunButton = hasAnalyticsData && (isAnalyticsTab ? !efficiencyLoading && !positionLoading : true)
+  const showRerunButton = hasAnalyticsData && (isMapAnalyticsTab ? !efficiencyLoading && !positionLoading : true)
 
   // Analytics tabs are loading (polling for Inngest results)
-  const analyticsLoading = isAnalyticsTab && (efficiencyLoading || positionLoading)
+  const mapAnalyticsLoading = isMapAnalyticsTab && (efficiencyLoading || positionLoading)
+
+  // Prepare data for chart stats tab (detailed single metric view)
+  const chartStatsConfig = CHART_STATS_CONFIG[chartStatsMetric]
+  const chartStatsSamples = useMemo(() => {
+    if (!samples || samples.length === 0) return []
+
+    // Filter by zoom range if applicable
+    const filtered = sharedZoomRange
+      ? samples.filter(s => {
+          const t = new Date(s.timestamp).getTime()
+          return t >= new Date(sharedZoomRange.start).getTime() && t <= new Date(sharedZoomRange.end).getTime()
+        })
+      : samples
+
+    return filtered.map(s => {
+      const raw = (s as any)[chartStatsConfig.field] ?? null
+      const value = raw !== null && chartStatsConfig.convert ? chartStatsConfig.convert(raw) : raw
+      return { timestamp: s.timestamp, value }
+    })
+  }, [samples, chartStatsMetric, chartStatsConfig, sharedZoomRange])
+
+  // Unified chart config — single memoized computation for all chart tabs
+  const chartConfig = useMemo(() => {
+    if (isChartImuTab) return buildIMUChartConfig(imuSamples, TAB_TO_IMU_TYPE[chartTab], sharedZoomRange)
+    if (chartTab === 'efficiency') return buildEfficiencyChartConfig(efficiencySamples, sharedZoomRange)
+    if (chartTab === 'position') return buildPositionChartConfig(positionSamples, sharedZoomRange)
+    if (chartTab === 'stats') return buildFitMetricChartConfig(chartStatsSamples, chartStatsConfig)
+    return null
+  }, [chartTab, isChartImuTab, imuSamples, efficiencySamples, positionSamples, chartStatsSamples, chartStatsConfig, sharedZoomRange])
+
+  const chartLoading =
+    (isChartImuTab && imuLoading) ||
+    (chartTab === 'efficiency' && efficiencyLoading) ||
+    (chartTab === 'position' && positionLoading) ||
+    (chartTab === 'stats' && loading)
+
+  const chartError =
+    (isChartImuTab && imuError) ||
+    (chartTab === 'efficiency' && efficiencyError) ||
+    (chartTab === 'position' && positionError) ||
+    null
 
   return (
     <>
-      {/* Top-level tabs + rerun button */}
+      {/* Map tabs */}
       <div className="mb-4">
         <div className="flex items-center gap-1">
-          {TAB_CONFIG.map(tab => {
+          {MAP_TAB_CONFIG.map(tab => {
             const isStats = tab.id === 'stats'
-
             const disabled = getTabDisabled(tab.id)
-
-            const isActive = activeTab === tab.id
+            const isActive = mapTab === tab.id
             let stateClass = 'text-muted-foreground hover:text-foreground'
             if (isActive) stateClass = 'text-primary'
             else if (disabled) stateClass = 'text-muted-foreground/40 cursor-not-allowed'
@@ -286,7 +373,7 @@ export function RideVisualizationsClient({
                     onClick={() => {
                       if (disabled) return
                       if (!isActive) {
-                        handleTabChange('stats')
+                        handleMapTabChange('stats')
                       } else {
                         setStatsDropdownOpen(prev => !prev)
                       }
@@ -310,7 +397,7 @@ export function RideVisualizationsClient({
                             e.preventDefault()
                             setStatsMetric(option.id)
                             setStatsDropdownOpen(false)
-                            if (!isActive) handleTabChange('stats')
+                            if (!isActive) handleMapTabChange('stats')
                           }}
                           className={`w-full text-left px-4 py-2 text-sm hover:bg-accent transition-colors ${
                             option.id === statsMetric ? 'text-primary' : 'text-foreground'
@@ -328,7 +415,7 @@ export function RideVisualizationsClient({
             return (
               <button
                 key={tab.id}
-                onClick={() => handleTabChange(tab.id)}
+                onClick={() => handleMapTabChange(tab.id)}
                 disabled={disabled}
                 className={baseClass}
               >
@@ -344,10 +431,10 @@ export function RideVisualizationsClient({
           {showRerunButton && (
             <button
               onClick={handleRerunAnalysis}
-              disabled={rerunning || analyticsLoading}
+              disabled={rerunning || mapAnalyticsLoading}
               className="ml-auto flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {rerunning || analyticsLoading ? (
+              {rerunning || mapAnalyticsLoading ? (
                 <>
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                   {rerunning ? 'Rerunning...' : 'Analyzing...'}
@@ -394,18 +481,18 @@ export function RideVisualizationsClient({
               rideId={rideId}
               fitRecordingId={fitRecordingId}
               highlightTime={selectedTime}
-              imuTimeRanges={isRouteTab ? [] : imuTimeRanges}
-              imuColor={isRouteTab ? undefined : imuColor}
+              imuTimeRanges={isMapRouteTab ? [] : imuTimeRanges}
+              imuColor={isMapRouteTab ? undefined : imuColor}
               samples={samples}
               loading={loading}
               error={error}
               mapMode={mapMode}
-              efficiencySamples={isRouteTab ? [] : efficiencySamples}
-              efficiencyLoading={isRouteTab ? false : efficiencyLoading}
-              positionSamples={isRouteTab ? [] : positionSamples}
-              positionLoading={isRouteTab ? false : positionLoading}
-              fitStatsSamples={isStatsTab ? samples : undefined}
-              fitStatsMetric={isStatsTab ? statsMetric : undefined}
+              efficiencySamples={isMapRouteTab ? [] : efficiencySamples}
+              efficiencyLoading={isMapRouteTab ? false : efficiencyLoading}
+              positionSamples={isMapRouteTab ? [] : positionSamples}
+              positionLoading={isMapRouteTab ? false : positionLoading}
+              fitStatsSamples={isMapStatsTab ? samples : undefined}
+              fitStatsMetric={isMapStatsTab ? statsMetric : undefined}
               onZoomChange={setMapZoom}
             />
           </MapErrorBoundary>
@@ -430,104 +517,131 @@ export function RideVisualizationsClient({
         />
       </div>
 
-      {/* Chart content — controlled by active tab */}
-      {hasVtxData && isImuTab && (
-        <div className="mb-8">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center justify-between">
-                <span>
-                  {activeTab === 'orientation' ? 'Orientation (BNO055)' :
-                   activeTab === 'acceleration' ? 'Accelerometer' : 'Gyroscope'}
-                  {vtxRecordings.length > 1 && (
-                    <span className="text-sm font-normal text-muted-foreground ml-2">
-                      ({vtxRecordings.length} recordings merged)
-                    </span>
-                  )}
-                </span>
-                <div className="flex items-center gap-2">
-                  {sharedZoomRange && (
-                    <button
-                      onClick={() => setSharedZoomRange(null)}
-                      className="px-3 py-1.5 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-950/30 rounded-md transition-colors"
-                    >
-                      Reset Zoom
-                    </button>
-                  )}
-                  {vtxRecordings.length === 1 && (
-                    <a
-                      href={`/recordings/${vtxRecordings[0].id}`}
-                      className="px-3 py-1 text-sm bg-muted border border-border rounded hover:bg-muted/80 text-foreground"
-                    >
-                      View Full Detail
-                    </a>
+      {/* Chart tab bar */}
+      <div className="mb-4">
+        <div className="flex items-center gap-1 border-b border-border">
+          {CHART_TAB_CONFIG.map(tab => {
+            const isStats = tab.id === 'stats'
+            const disabled = getTabDisabled(tab.id)
+            const isActive = chartTab === tab.id
+
+            let stateClass = 'text-muted-foreground hover:text-foreground'
+            if (isActive) stateClass = 'text-primary'
+            else if (disabled) stateClass = 'text-muted-foreground/40 cursor-not-allowed'
+
+            // Stats chart tab renders as a dropdown
+            if (isStats) {
+              const selectedLabel = FIT_STATS_OPTIONS.find(o => o.id === chartStatsMetric)!.label
+              return (
+                <div key={tab.id} className="relative">
+                  <button
+                    onClick={() => {
+                      if (disabled) return
+                      if (!isActive) {
+                        handleChartTabChange('stats')
+                      } else {
+                        setChartStatsDropdownOpen(prev => !prev)
+                      }
+                    }}
+                    onBlur={() => setTimeout(() => setChartStatsDropdownOpen(false), 150)}
+                    disabled={disabled}
+                    className={`px-4 py-2 text-sm font-medium transition-colors relative inline-flex items-center gap-1 ${stateClass}`}
+                  >
+                    {selectedLabel}
+                    <ChevronDown className={`w-3 h-3 transition-transform ${chartStatsDropdownOpen ? 'rotate-180' : ''}`} />
+                    {isActive && (
+                      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+                    )}
+                  </button>
+                  {chartStatsDropdownOpen && (
+                    <div className="absolute top-full left-0 mt-1 z-50 bg-popover border border-border rounded-md shadow-md py-1 min-w-[120px]">
+                      {FIT_STATS_OPTIONS.map(option => (
+                        <button
+                          key={option.id}
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            setChartStatsMetric(option.id)
+                            setChartStatsDropdownOpen(false)
+                            if (!isActive) handleChartTabChange('stats')
+                          }}
+                          className={`w-full text-left px-4 py-2 text-sm hover:bg-accent transition-colors ${
+                            option.id === chartStatsMetric ? 'text-primary' : 'text-foreground'
+                          }`}
+                        >
+                          {option.label}
+                        </button>
+                      ))}
+                    </div>
                   )}
                 </div>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <IMUSensorChart
-                rideId={rideId}
-                recordings={vtxRecordingsForChart}
-                dataType={TAB_TO_IMU_TYPE[activeTab]}
-                highlightTime={selectedTime}
-                zoomRange={sharedZoomRange}
-                onZoomChange={setSharedZoomRange}
-                onCoverageUpdate={setImuCoverageRanges}
-              />
-            </CardContent>
-          </Card>
-        </div>
-      )}
+              )
+            }
 
-      {/* Analytics charts — only render when data is available (not loading/polling) */}
-      {isAnalyticsTab && hasAnalyticsData && !analyticsLoading && (
-        <div className="mb-8">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center justify-between">
-                <span>{activeTab === 'efficiency' ? 'Pedaling Efficiency' : 'Riding Position'}</span>
-                {sharedZoomRange && (
-                  <button
-                    onClick={() => setSharedZoomRange(null)}
-                    className="px-3 py-1.5 text-sm text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-950/30 rounded-md transition-colors"
-                  >
-                    Reset Zoom
-                  </button>
+            return (
+              <button
+                key={tab.id}
+                onClick={() => !disabled && handleChartTabChange(tab.id)}
+                disabled={disabled}
+                className={`px-4 py-2 text-sm font-medium transition-colors relative ${stateClass}`}
+              >
+                {tab.label}
+                {isActive && (
+                  <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
                 )}
-              </CardTitle>
-              <div className="text-sm text-muted-foreground">
-                Computed metrics from combined IMU and GPS data
-              </div>
-            </CardHeader>
-            <CardContent>
-              <DerivedMetricsChart
-                rideId={rideId}
-                rideName={rideName}
-                fitRecordingId={fitRecordingId}
-                selectedMetric={TAB_TO_METRIC[activeTab]}
-                highlightTime={selectedTime}
-                zoomRange={sharedZoomRange}
-                onZoomChange={setSharedZoomRange}
-                parentSamples={activeTab === 'efficiency' ? efficiencySamples : positionSamplesRaw}
-                parentMetadata={activeTab === 'efficiency' ? efficiencyMetadata : positionMetadata}
-                parentLoading={activeTab === 'efficiency' ? efficiencyLoading : positionLoading}
-                parentError={activeTab === 'efficiency' ? efficiencyError : positionError}
-              />
-            </CardContent>
-          </Card>
-        </div>
-      )}
+              </button>
+            )
+          })}
 
-      {isAnalyticsTab && !hasAnalyticsData && (
-        <div className="mb-8">
-          <Card>
-            <CardContent className="h-[200px] flex items-center justify-center">
-              <p className="text-muted-foreground">Analytics require both IMU and GPS data</p>
-            </CardContent>
-          </Card>
+          {sharedZoomRange && (
+            <button
+              onClick={() => setSharedZoomRange(null)}
+              className="ml-auto px-3 py-1.5 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:text-red-300 dark:hover:bg-red-950/30 rounded-md transition-colors"
+            >
+              Reset Zoom
+            </button>
+          )}
         </div>
-      )}
+      </div>
+
+      {/* Chart content — single code path for all tabs */}
+      <div className="mb-8">
+        <Card className="min-h-[460px] relative">
+          <CardContent className="pt-6 px-3">
+            {chartLoading && (
+              <div className="absolute inset-0 bg-card/80 rounded-lg flex items-center justify-center z-10">
+                <div className="flex flex-col items-center gap-3">
+                  <div className="relative">
+                    <div className="w-10 h-10 border-4 border-muted-foreground/20 rounded-full" />
+                    <div className="w-10 h-10 border-4 border-primary border-t-transparent rounded-full animate-spin absolute top-0" />
+                  </div>
+                  <p className="text-sm text-muted-foreground">Loading chart data...</p>
+                </div>
+              </div>
+            )}
+            {!chartLoading && chartError && (
+              <div className="h-[400px] flex items-center justify-center">
+                <p className="text-destructive">{chartError}</p>
+              </div>
+            )}
+            {!chartError && chartConfig && chartConfig.data[0].length > 0 && (
+              <UPlotBase
+                data={chartConfig.data}
+                series={chartConfig.series}
+                scales={chartConfig.scales}
+                axes={chartConfig.axes}
+                highlightTime={selectedTime}
+                onZoom={(start, end) => setSharedZoomRange({ start, end })}
+                stats={chartConfig.stats}
+              />
+            )}
+            {!chartLoading && !chartError && (!chartConfig || chartConfig.data[0].length === 0) && (
+              <div className="h-[400px] flex items-center justify-center">
+                <p className="text-muted-foreground">No data available</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
 
       {/* Per-Ride Comparison vs Rolling Averages */}
       <RideComparisonCards rideId={rideId} />

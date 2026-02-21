@@ -3,6 +3,7 @@
 import { useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import uPlot from 'uplot'
+import type { ChartStat } from './charts/UPlotBase'
 
 const UPlotBase = dynamic(
   () => import('./charts/UPlotBase').then(mod => ({ default: mod.UPlotBase })),
@@ -121,7 +122,17 @@ export function ElevationProfile({
       }
     ]
 
-    return { data, series, scales, axes }
+    // Compute stats
+    const validAltitudes = altitudeFeet.filter((v): v is number => v !== null)
+    const stats: ChartStat[] = validAltitudes.length > 0 ? [{
+      label: 'Elevation',
+      color: '#3b82f6',
+      avg: validAltitudes.reduce((a, b) => a + b, 0) / validAltitudes.length,
+      max: Math.max(...validAltitudes),
+      unit: 'ft',
+    }] : []
+
+    return { data, series, scales, axes, stats }
   }, [samples, zoomRange])
 
   if (!chartConfig) {
@@ -141,6 +152,7 @@ export function ElevationProfile({
       height={250}
       highlightTime={highlightTime}
       onZoom={onZoom}
+      stats={chartConfig.stats}
       className={className}
     />
   )

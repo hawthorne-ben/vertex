@@ -4,6 +4,7 @@
  */
 
 import uPlot from 'uplot'
+import type { ChartStat } from '@/components/charts/UPlotBase'
 
 export interface IMUSample {
   timestamp: string
@@ -25,6 +26,15 @@ export interface ChartData {
   series: uPlot.Series[]
   yAxisLabel: string
   scales: Record<string, uPlot.Scale>
+}
+
+/** Unified config shape returned by all chart builders */
+export interface ChartConfig {
+  data: uPlot.AlignedData
+  series: uPlot.Series[]
+  scales: Record<string, uPlot.Scale>
+  axes?: uPlot.Axis[]
+  stats: ChartStat[]
 }
 
 /**
@@ -230,4 +240,265 @@ export function calculateIMUStats(
     max: Math.max(...vals),
     mean: vals.reduce((a: number, b: number) => a + b, 0) / vals.length
   }))
+}
+
+// ---------------------------------------------------------------------------
+// Unified chart config builders
+// ---------------------------------------------------------------------------
+
+/**
+ * Build chart config for IMU tabs (orientation, accelerometer, gyroscope).
+ * Wraps existing processIMUChartData + calculateIMUStats.
+ */
+export function buildIMUChartConfig(
+  samples: IMUSample[],
+  dataType: IMUDataType,
+  zoomRange?: { start: string; end: string } | null
+): ChartConfig {
+  const chartData = processIMUChartData(samples, dataType, zoomRange)
+  const rawStats = calculateIMUStats(samples, dataType)
+
+  const stats: ChartStat[] = rawStats.map((s, i) => {
+    const seriesEntry = chartData.series[i + 1]
+    const color = typeof seriesEntry?.stroke === 'string' ? seriesEntry.stroke : '#888'
+    return {
+      label: s.axis,
+      color,
+      avg: s.mean,
+      max: s.max,
+      unit: chartData.yAxisLabel,
+    }
+  })
+
+  return {
+    data: chartData.data,
+    series: chartData.series,
+    scales: chartData.scales,
+    stats,
+  }
+}
+
+/**
+ * Build chart config for pedaling efficiency (scatter plot, 0-100%).
+ */
+export function buildEfficiencyChartConfig(
+  samples: Array<{ timestamp: string; value: number | null }>,
+  zoomRange?: { start: string; end: string } | null
+): ChartConfig {
+  if (samples.length === 0) {
+    return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
+  }
+
+  const GAP_THRESHOLD_MS = 10000
+  const samplesWithGaps = insertGaps(samples, GAP_THRESHOLD_MS)
+  const { timestamps, samples: final } = samplesToUPlotData(samplesWithGaps)
+
+  const data: uPlot.AlignedData = [timestamps, final.map(s => s?.value ?? null)]
+
+  const series: uPlot.Series[] = [
+    {},
+    {
+      label: 'Efficiency %',
+      stroke: 'hsl(145, 70%, 50%)',
+      width: 0,
+      spanGaps: false,
+      points: { show: true, size: 4, fill: 'hsl(145, 70%, 50%)', stroke: 'hsl(145, 70%, 50%)' }
+    }
+  ]
+
+  const scales: Record<string, uPlot.Scale> = {
+    x: {
+      ...(zoomRange ? {
+        range: [new Date(zoomRange.start).getTime() / 1000, new Date(zoomRange.end).getTime() / 1000]
+      } : {})
+    },
+    y: {
+      auto: true,
+      range: (u, dataMin, dataMax) => {
+        const padding = (dataMax - dataMin) * 0.1
+        return [Math.max(0, dataMin - padding), Math.min(100, dataMax + padding)]
+      }
+    }
+  }
+
+  const validValues = samples.map(s => s.value).filter((v): v is number => v !== null)
+  const stats: ChartStat[] = validValues.length > 0 ? [{
+    label: 'Efficiency',
+    color: 'hsl(145, 70%, 50%)',
+    avg: validValues.reduce((a, b) => a + b, 0) / validValues.length,
+    max: Math.max(...validValues),
+    unit: '%',
+  }] : []
+
+  return { data, series, scales, stats }
+}
+
+/**
+ * Build chart config for riding position.
+ * Two series: Seated (green, flat at y=0) and Standing (red, flat at y=1).
+ * Each series is null when the rider is in the other position, creating
+ * colored bands that are visually distinct even at full zoom.
+ */
+export function buildPositionChartConfig(
+  samples: Array<{ timestamp: string; value: number | null }>,
+  zoomRange?: { start: string; end: string } | null
+): ChartConfig {
+  if (samples.length === 0) {
+    return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
+  }
+
+  const GAP_THRESHOLD_MS = 10000
+  const samplesWithGaps = insertGaps(samples, GAP_THRESHOLD_MS)
+  const { timestamps, samples: final } = samplesToUPlotData(samplesWithGaps)
+
+  // Split into two series: seated (value=0) and standing (value=1)
+  const seatedValues = final.map(s => {
+    if (s == null) return null
+    const v = s.value
+    if (v == null) return null
+    return v < 0.5 ? 0 : null
+  })
+  const standingValues = final.map(s => {
+    if (s == null) return null
+    const v = s.value
+    if (v == null) return null
+    return v >= 0.5 ? 1 : null
+  })
+
+  const data: uPlot.AlignedData = [timestamps, seatedValues, standingValues]
+
+  const series: uPlot.Series[] = [
+    {},
+    {
+      label: 'Seated',
+      stroke: 'hsl(145, 70%, 50%)',
+      fill: 'hsla(145, 70%, 50%, 0.15)',
+      width: 2,
+      spanGaps: false,
+      points: { show: true, size: 4, fill: 'hsl(145, 70%, 50%)' },
+      value: (u, v) => v != null ? 'Seated' : '-',
+    },
+    {
+      label: 'Standing',
+      stroke: 'hsl(0, 84%, 60%)',
+      fill: 'hsla(0, 84%, 60%, 0.15)',
+      width: 2,
+      spanGaps: false,
+      points: { show: true, size: 4, fill: 'hsl(0, 84%, 60%)' },
+      value: (u, v) => v != null ? 'Standing' : '-',
+    }
+  ]
+
+  const scales: Record<string, uPlot.Scale> = {
+    x: {
+      ...(zoomRange ? {
+        range: [new Date(zoomRange.start).getTime() / 1000, new Date(zoomRange.end).getTime() / 1000]
+      } : {})
+    },
+    y: { range: [-0.3, 1.3] }
+  }
+
+  const axes: uPlot.Axis[] = [
+    { space: 80 },
+    {
+      side: 3,
+      size: 70,
+      space: 40,
+      values: (u, vals) => vals.map(v => {
+        if (Math.abs(v) < 0.15) return 'Seated'
+        if (Math.abs(v - 1) < 0.15) return 'Standing'
+        return ''
+      }),
+    }
+  ]
+
+  const validValues = samples.map(s => s.value).filter((v): v is number => v !== null)
+  const standingCount = validValues.filter(v => v >= 0.5).length
+  const seatedCount = validValues.length - standingCount
+  const standingPct = validValues.length > 0 ? (standingCount / validValues.length) * 100 : 0
+  const seatedPct = validValues.length > 0 ? (seatedCount / validValues.length) * 100 : 0
+
+  const stats: ChartStat[] = [
+    {
+      label: 'Seated',
+      color: 'hsl(145, 70%, 50%)',
+      avg: seatedPct,
+      max: null,
+      unit: '%',
+      avgPrefix: '',
+    },
+    {
+      label: 'Standing',
+      color: 'hsl(0, 84%, 60%)',
+      avg: standingPct,
+      max: null,
+      unit: '%',
+      avgPrefix: '',
+    },
+  ]
+
+  return { data, series, scales, axes, stats }
+}
+
+/**
+ * Build chart config for a single FIT metric (power, HR, cadence, speed).
+ * Applies 3-sample rolling average smoothing.
+ */
+export function buildFitMetricChartConfig(
+  samples: Array<{ timestamp: string; value: number | null }>,
+  config: { label: string; unit: string; color: string },
+): ChartConfig {
+  if (samples.length === 0 || !samples.some(s => s.value !== null)) {
+    return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
+  }
+
+  const timestamps = samples.map(s => new Date(s.timestamp).getTime() / 1000)
+  const rawValues = samples.map(s => s.value)
+
+  // 3-sample rolling average
+  const values = rawValues.map((val, idx) => {
+    if (val === null) return null
+    const window: number[] = []
+    if (idx > 0 && rawValues[idx - 1] !== null) window.push(rawValues[idx - 1]!)
+    window.push(val)
+    if (idx < rawValues.length - 1 && rawValues[idx + 1] !== null) window.push(rawValues[idx + 1]!)
+    return window.reduce((a, b) => a + b, 0) / window.length
+  })
+
+  const data: uPlot.AlignedData = [timestamps, values as any]
+
+  const series: uPlot.Series[] = [
+    { label: 'Time' },
+    {
+      label: config.label,
+      stroke: config.color,
+      width: 2,
+      scale: 'y',
+      spanGaps: false,
+      points: { show: true, size: 4, fill: config.color },
+      value: (u, v) => v == null ? '-' : `${v.toFixed(config.label === 'Speed' ? 1 : 0)}${config.unit}`
+    }
+  ]
+
+  const scales: Record<string, uPlot.Scale> = {
+    x: {},
+    y: {
+      auto: true,
+      range: (u, dataMin, dataMax) => {
+        const padding = (dataMax - dataMin) * 0.1
+        return [Math.max(0, dataMin - padding), dataMax + padding]
+      }
+    }
+  }
+
+  const validValues = rawValues.filter((v): v is number => v !== null)
+  const stats: ChartStat[] = validValues.length > 0 ? [{
+    label: config.label,
+    color: config.color,
+    avg: validValues.reduce((a, b) => a + b, 0) / validValues.length,
+    max: Math.max(...validValues),
+    unit: config.unit,
+  }] : []
+
+  return { data, series, scales, stats }
 }

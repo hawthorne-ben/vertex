@@ -154,13 +154,9 @@ export function RideChartsClient({
 
       {/* Performance Charts Grid - 2 per row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Power Chart */}
         {hasPower && (
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Power</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
+            <CardContent className="pt-6">
               <SingleMetricChart
                 samples={powerData}
                 label="Power"
@@ -173,13 +169,9 @@ export function RideChartsClient({
           </Card>
         )}
 
-        {/* Heart Rate Chart */}
         {hasHR && (
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Heart Rate</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
+            <CardContent className="pt-6">
               <SingleMetricChart
                 samples={hrData}
                 label="Heart Rate"
@@ -192,13 +184,9 @@ export function RideChartsClient({
           </Card>
         )}
 
-        {/* Cadence Chart */}
         {hasCadence && (
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Cadence</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
+            <CardContent className="pt-6">
               <SingleMetricChart
                 samples={cadenceData}
                 label="Cadence"
@@ -211,13 +199,9 @@ export function RideChartsClient({
           </Card>
         )}
 
-        {/* Speed Chart */}
         {hasSpeed && (
           <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Speed</CardTitle>
-            </CardHeader>
-            <CardContent className="pt-0">
+            <CardContent className="pt-6">
               <SingleMetricChart
                 samples={speedData}
                 label="Speed"

@@ -210,8 +210,10 @@ export function useIMUData({
     }
 
     fetchData()
+    // dataType intentionally excluded — the API returns all sensor types in one response;
+    // dataType only affects client-side processing in processIMUChartData.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rideId, recordingIds, dataType, timeRange, skip, authFetch])
+  }, [rideId, recordingIds, timeRange, skip, authFetch])
 
   return { samples, loading, error, originalCount, coverageRanges }
 }
