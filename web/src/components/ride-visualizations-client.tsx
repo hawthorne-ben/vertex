@@ -11,13 +11,14 @@ import { MapErrorBoundary } from './map-error-boundary'
 import { ConfirmationModal } from './ui/confirmation-modal'
 import { EfficiencyTuningModal } from './dev/efficiency-tuning-modal'
 import { getVtxTimeRanges } from '@/lib/sync/fit-vtx-sync'
-import { buildIMUChartConfig, buildEfficiencyChartConfig, buildPositionChartConfig, buildFitMetricChartConfig } from '@/lib/charts/processing'
+import { buildIMUChartConfig, buildEfficiencyChartConfig, buildPositionChartConfig, buildRoughnessChartConfig, buildFitMetricChartConfig } from '@/lib/charts/processing'
 import { useRideSamples } from './hooks/useRideSamples'
 import { useIMUData } from './charts/hooks/useIMUData'
 import { useDerivedMetric } from './charts/hooks/useDerivedMetric'
 import { useAuthFetch } from '@/hooks/useAuthFetch'
 import { apiCache } from '@/lib/cache/api-cache'
 import { RideComparisonCards } from '@/components/ride-comparison-cards'
+import { useToast } from '@/components/ui/toast-context'
 import { RefreshCw, Settings, ChevronDown } from 'lucide-react'
 import type { FitStatsMetric } from './ride-map'
 
@@ -97,8 +98,8 @@ const UPlotBase = dynamic(
 )
 
 // Map tab includes Route; chart tab does not
-type MapTab = 'route' | 'stability' | 'position' | 'stats' | 'orientation' | 'acceleration' | 'rotation'
-type ChartTab = 'stability' | 'position' | 'stats' | 'orientation' | 'acceleration' | 'rotation'
+type MapTab = 'route' | 'stability' | 'position' | 'roughness' | 'stats' | 'orientation' | 'acceleration' | 'rotation'
+type ChartTab = 'stability' | 'position' | 'roughness' | 'stats' | 'orientation' | 'acceleration' | 'rotation'
 
 const FIT_STATS_OPTIONS: Array<{ id: FitStatsMetric; label: string }> = [
   { id: 'power', label: 'Power' },
@@ -111,6 +112,7 @@ const MAP_TAB_CONFIG: Array<{ id: MapTab; label: string }> = [
   { id: 'route', label: 'Route' },
   { id: 'stability', label: 'Stability' },
   { id: 'position', label: 'Position' },
+  { id: 'roughness', label: 'Roughness' },
   { id: 'stats', label: 'Stats' },
   { id: 'orientation', label: 'Orientation' },
   { id: 'acceleration', label: 'Acceleration' },
@@ -120,6 +122,7 @@ const MAP_TAB_CONFIG: Array<{ id: MapTab; label: string }> = [
 const CHART_TAB_CONFIG: Array<{ id: ChartTab; label: string }> = [
   { id: 'stability', label: 'Stability' },
   { id: 'position', label: 'Position' },
+  { id: 'roughness', label: 'Roughness' },
   { id: 'stats', label: 'Stats' },
   { id: 'orientation', label: 'Orientation' },
   { id: 'acceleration', label: 'Acceleration' },
@@ -135,7 +138,7 @@ const IMU_TAB_COLORS: Record<string, string> = {
 
 // Tabs that use IMU data vs derived analytics
 const IMU_TABS = new Set<string>(['orientation', 'acceleration', 'rotation'])
-const ANALYTICS_TABS = new Set<string>(['stability', 'position'])
+const ANALYTICS_TABS = new Set<string>(['stability', 'position', 'roughness'])
 
 // Map tab → IMU data type
 const TAB_TO_IMU_TYPE: Record<string, 'orientation' | 'accel' | 'gyro'> = {
@@ -145,9 +148,10 @@ const TAB_TO_IMU_TYPE: Record<string, 'orientation' | 'accel' | 'gyro'> = {
 }
 
 // Map tab → derived metric type
-const TAB_TO_METRIC: Record<string, 'pedalingEfficiency' | 'ridingPosition'> = {
+const TAB_TO_METRIC: Record<string, 'pedalingEfficiency' | 'ridingPosition' | 'surfaceRoughness'> = {
   stability: 'pedalingEfficiency',
   position: 'ridingPosition',
+  roughness: 'surfaceRoughness',
 }
 
 // Chart stats metric → sample field + chart config
@@ -243,6 +247,7 @@ export function RideVisualizationsClient({
   const [showTuningModal, setShowTuningModal] = useState(false)
   const [rerunning, setRerunning] = useState(false)
   const { authFetch } = useAuthFetch()
+  const { addToast } = useToast()
   const isDev = process.env.NODE_ENV === 'development'
 
   // Persist map tab to URL query param (shallow — no server round-trip)
@@ -286,7 +291,11 @@ export function RideVisualizationsClient({
       window.location.reload()
     } catch (err: any) {
       console.error('Failed to rerun analysis:', err)
-      alert(`Failed to rerun analysis: ${err.message}`)
+      addToast({
+        type: 'error',
+        title: 'Rerun failed',
+        message: err.message || 'Failed to trigger reanalysis',
+      })
       setRerunning(false)
     }
   }, [authFetch, rideId])
@@ -321,10 +330,12 @@ export function RideVisualizationsClient({
   // Lazy-fetch: only start when user visits the tab (either map or chart). Data persists across tab switches.
   const [efficiencyRequested, setEfficiencyRequested] = useState(mapTab === 'stability' || chartTab === 'stability')
   const [positionRequested, setPositionRequested] = useState(mapTab === 'position' || chartTab === 'position')
+  const [roughnessRequested, setRoughnessRequested] = useState(mapTab === 'roughness' || chartTab === 'roughness')
 
   // Mark metric as requested once user visits its tab (sticky — never goes back to false)
   if ((mapTab === 'stability' || chartTab === 'stability') && !efficiencyRequested) setEfficiencyRequested(true)
   if ((mapTab === 'position' || chartTab === 'position') && !positionRequested) setPositionRequested(true)
+  if ((mapTab === 'roughness' || chartTab === 'roughness') && !roughnessRequested) setRoughnessRequested(true)
 
   const {
     samples: efficiencySamples,
@@ -352,6 +363,19 @@ export function RideVisualizationsClient({
     enabled: hasAnalyticsData && positionRequested
   })
 
+  const {
+    samples: roughnessSamples,
+    loading: roughnessLoading,
+    error: roughnessError,
+  } = useDerivedMetric({
+    rideId,
+    metric: 'surfaceRoughness',
+    timeRange: null,
+    fitRecordingId,
+    resolution: 1,
+    enabled: hasAnalyticsData && roughnessRequested
+  })
+
   // Cast to position-specific type
   const positionSamples = positionSamplesRaw as Array<{
     timestamp: string
@@ -370,20 +394,20 @@ export function RideVisualizationsClient({
   }, [imuCoverageRangesFromHook, vtxRecordings])
 
   // Determine map mode based on mapTab
-  const getMapMode = (): 'route' | 'fitStats' | 'pedalingEfficiency' | 'ridingPosition' | 'vtx' => {
+  const getMapMode = (): 'route' | 'fitStats' | 'pedalingEfficiency' | 'ridingPosition' | 'surfaceRoughness' | 'vtx' => {
     if (isMapRouteTab) return 'route'
     if (isMapStatsTab) return 'fitStats'
-    if (isMapAnalyticsTab) return (selectedMapMetric as 'pedalingEfficiency' | 'ridingPosition') ?? 'pedalingEfficiency'
+    if (isMapAnalyticsTab) return (selectedMapMetric as 'pedalingEfficiency' | 'ridingPosition' | 'surfaceRoughness') ?? 'pedalingEfficiency'
     return 'vtx'
   }
   const mapMode = getMapMode()
   const imuColor = IMU_TAB_COLORS[mapTab]
 
   // Show rerun button when on an analytics tab and data is loaded, or always on route tab if analytics data is possible
-  const showRerunButton = hasAnalyticsData && (isMapAnalyticsTab ? !efficiencyLoading && !positionLoading : true)
+  const showRerunButton = hasAnalyticsData && (isMapAnalyticsTab ? !efficiencyLoading && !positionLoading && !roughnessLoading : true)
 
   // Analytics tabs are loading (polling for Inngest results)
-  const mapAnalyticsLoading = isMapAnalyticsTab && (efficiencyLoading || positionLoading)
+  const mapAnalyticsLoading = isMapAnalyticsTab && (efficiencyLoading || positionLoading || roughnessLoading)
 
   // Prepare data for chart stats tab (detailed single metric view)
   const chartStatsConfig = CHART_STATS_CONFIG[chartStatsMetric]
@@ -410,20 +434,23 @@ export function RideVisualizationsClient({
     if (isChartImuTab) return buildIMUChartConfig(imuSamples, TAB_TO_IMU_TYPE[chartTab], sharedZoomRange)
     if (chartTab === 'stability') return buildEfficiencyChartConfig(efficiencySamples, sharedZoomRange)
     if (chartTab === 'position') return buildPositionChartConfig(positionSamples, sharedZoomRange)
+    if (chartTab === 'roughness') return buildRoughnessChartConfig(roughnessSamples, sharedZoomRange)
     if (chartTab === 'stats') return buildFitMetricChartConfig(chartStatsSamples, chartStatsConfig)
     return null
-  }, [chartTab, isChartImuTab, imuSamples, efficiencySamples, positionSamples, chartStatsSamples, chartStatsConfig, sharedZoomRange])
+  }, [chartTab, isChartImuTab, imuSamples, efficiencySamples, positionSamples, roughnessSamples, chartStatsSamples, chartStatsConfig, sharedZoomRange])
 
   const chartLoading =
     (isChartImuTab && imuLoading) ||
     (chartTab === 'stability' && efficiencyLoading) ||
     (chartTab === 'position' && positionLoading) ||
+    (chartTab === 'roughness' && roughnessLoading) ||
     (chartTab === 'stats' && loading)
 
   const chartError =
     (isChartImuTab && imuError) ||
     (chartTab === 'stability' && efficiencyError) ||
     (chartTab === 'position' && positionError) ||
+    (chartTab === 'roughness' && roughnessError) ||
     null
 
   return (
@@ -536,6 +563,8 @@ export function RideVisualizationsClient({
               efficiencyLoading={isMapRouteTab ? false : efficiencyLoading}
               positionSamples={isMapRouteTab ? [] : positionSamples}
               positionLoading={isMapRouteTab ? false : positionLoading}
+              roughnessSamples={isMapRouteTab ? [] : roughnessSamples}
+              roughnessLoading={isMapRouteTab ? false : roughnessLoading}
               fitStatsSamples={isMapStatsTab ? samples : undefined}
               fitStatsMetric={isMapStatsTab ? statsMetric : undefined}
               onZoomChange={setMapZoom}

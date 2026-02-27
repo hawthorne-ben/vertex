@@ -258,14 +258,38 @@ export async function POST(
         throw new Error(`Failed to save position analysis: ${positionError.message}`)
       }
 
-      console.log(`[DEV] Saved both analyses to database`)
+      // Save roughness analysis
+      const { error: roughnessError } = await supabase
+        .from('ride_analysis')
+        .upsert(
+          {
+            ride_id: rideId,
+            analysis_type: 'surface_roughness',
+            status: 'completed',
+            algorithm_version: ALGORITHM_VERSION,
+            parameters,
+            samples: result.roughness.samples,
+            metadata: result.roughness.metadata,
+            started_at: now,
+            completed_at: now,
+          },
+          {
+            onConflict: 'ride_id,analysis_type',
+          }
+        )
+
+      if (roughnessError) {
+        throw new Error(`Failed to save roughness analysis: ${roughnessError.message}`)
+      }
+
+      console.log(`[DEV] Saved all three analyses to database`)
     }
 
     return NextResponse.json({
       success: true,
       message: saveToDatabase
-        ? 'Both analyses recomputed and saved to database'
-        : 'Both analyses recomputed (not saved)',
+        ? 'All analyses recomputed and saved to database'
+        : 'All analyses recomputed (not saved)',
       efficiency: {
         metadata: result.efficiency.metadata,
         sampleCount: result.efficiency.samples.length,
@@ -273,6 +297,10 @@ export async function POST(
       position: {
         metadata: result.position.metadata,
         sampleCount: result.position.samples.length,
+      },
+      roughness: {
+        metadata: result.roughness.metadata,
+        sampleCount: result.roughness.samples.length,
       },
       parameters: {
         ...parameters,

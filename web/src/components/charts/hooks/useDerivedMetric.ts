@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useAuthFetch } from '@/hooks/useAuthFetch'
 import { apiCache } from '@/lib/cache/api-cache'
 
-export type DerivedMetricType = 'pedalingEfficiency' | 'ridingPosition' // | 'corneringScore' | 'jumpHeight' (future)
+export type DerivedMetricType = 'pedalingEfficiency' | 'ridingPosition' | 'surfaceRoughness'
 
 export interface DerivedMetricSample {
   timestamp: string
@@ -23,7 +23,7 @@ export interface UseDerivedMetricResult {
   samples: DerivedMetricSample[]
   loading: boolean
   error: string | null
-  metadata: PedalingEfficiencyMetadata | RidingPositionMetadata | null
+  metadata: PedalingEfficiencyMetadata | RidingPositionMetadata | SurfaceRoughnessMetadata | null
 }
 
 // API Response types
@@ -47,6 +47,15 @@ interface RidingPositionMetadata {
   pedalingSamples: number
   avgCadenceStanding: number | null
   avgCadenceSeated: number | null
+  sampleRate: number | null
+}
+
+interface SurfaceRoughnessMetadata {
+  avgRoughness: number
+  maxRoughness: number
+  smoothSurfacePercent: number
+  roughSurfacePercent: number
+  totalSamples: number
   sampleRate: number | null
 }
 
@@ -139,6 +148,23 @@ export function useDerivedMetric({
             url = `/api/rides/${rideId}/riding-position${posParams.toString() ? `?${posParams}` : ''}`
             break
 
+          case 'surfaceRoughness':
+            if (!fitRecordingId) {
+              throw new Error('Surface roughness requires GPS data from FIT file')
+            }
+
+            const roughParams = new URLSearchParams()
+            if (timeRange) {
+              roughParams.set('start', timeRange.start)
+              roughParams.set('end', timeRange.end)
+            }
+            if (resolution !== undefined) {
+              roughParams.set('resolution', resolution.toString())
+            }
+
+            url = `/api/rides/${rideId}/surface-roughness${roughParams.toString() ? `?${roughParams}` : ''}`
+            break
+
           default:
             throw new Error(`Unknown metric: ${metric}`)
         }
@@ -179,6 +205,8 @@ export function useDerivedMetric({
             value = s.stabilityPercent ?? (s.stability !== null && s.stability !== undefined ? s.stability * 100 : null)
           } else if (metric === 'ridingPosition') {
             value = s.position === 'standing' ? 1 : s.position === 'seated' ? 0 : null
+          } else if (metric === 'surfaceRoughness') {
+            value = s.roughness !== null && s.roughness !== undefined ? s.roughness * 100 : null
           }
 
           return {

@@ -441,6 +441,61 @@ export function buildPositionChartConfig(
 }
 
 /**
+ * Build chart config for surface roughness (scatter plot, 0-100%).
+ */
+export function buildRoughnessChartConfig(
+  samples: Array<{ timestamp: string; value: number | null }>,
+  zoomRange?: { start: string; end: string } | null
+): ChartConfig {
+  if (samples.length === 0) {
+    return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
+  }
+
+  const GAP_THRESHOLD_MS = 10000
+  const samplesWithGaps = insertGaps(samples, GAP_THRESHOLD_MS)
+  const { timestamps, samples: final } = samplesToUPlotData(samplesWithGaps)
+
+  const data: uPlot.AlignedData = [timestamps, final.map(s => s?.value ?? null)]
+
+  const series: uPlot.Series[] = [
+    {},
+    {
+      label: 'Roughness %',
+      stroke: 'hsl(25, 95%, 53%)',
+      width: 0,
+      spanGaps: false,
+      points: { show: true, size: 4, fill: 'hsl(25, 95%, 53%)', stroke: 'hsl(25, 95%, 53%)' }
+    }
+  ]
+
+  const scales: Record<string, uPlot.Scale> = {
+    x: {
+      ...(zoomRange ? {
+        range: [new Date(zoomRange.start).getTime() / 1000, new Date(zoomRange.end).getTime() / 1000]
+      } : {})
+    },
+    y: {
+      auto: true,
+      range: (u, dataMin, dataMax) => {
+        const padding = (dataMax - dataMin) * 0.1
+        return [Math.max(0, dataMin - padding), Math.min(100, dataMax + padding)]
+      }
+    }
+  }
+
+  const validValues = samples.map(s => s.value).filter((v): v is number => v !== null)
+  const stats: ChartStat[] = validValues.length > 0 ? [{
+    label: 'Roughness',
+    color: 'hsl(25, 95%, 53%)',
+    avg: validValues.reduce((a, b) => a + b, 0) / validValues.length,
+    max: Math.max(...validValues),
+    unit: '%',
+  }] : []
+
+  return { data, series, scales, stats }
+}
+
+/**
  * Build chart config for a single FIT metric (power, HR, cadence, speed).
  * Applies 3-sample rolling average smoothing.
  */

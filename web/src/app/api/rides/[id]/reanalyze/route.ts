@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuth } from '@/lib/api/auth'
+import { inngest } from '@/inngest/client'
 
 export const dynamic = 'force-dynamic'
 
@@ -56,13 +57,8 @@ export async function POST(
       // Continue anyway - upsert will handle it
     }
 
-    // Trigger the analysis job by sending Inngest event
-    // We use the same event that's triggered after VTX merge
-    const baseUrl = process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'
-    const inngestEndpoint = `${baseUrl}/api/inngest`
-    const inngestEventKey = process.env.INNGEST_EVENT_KEY
-
-    const eventPayload = {
+    // Trigger the analysis job via Inngest SDK
+    await inngest.send({
       name: 'ride/vtx.merged',
       data: {
         rideId: rideId,
@@ -71,26 +67,7 @@ export async function POST(
       user: {
         external_id: user.id,
       },
-    }
-
-    // Send event to Inngest
-    const inngestResponse = await fetch(inngestEndpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(inngestEventKey ? { 'Authorization': `Bearer ${inngestEventKey}` } : {}),
-      },
-      body: JSON.stringify(eventPayload),
     })
-
-    if (!inngestResponse.ok) {
-      const errorText = await inngestResponse.text()
-      console.error('[ReanalyzeAPI] Inngest event failed:', errorText)
-      return NextResponse.json(
-        { error: 'Failed to trigger analysis job', details: errorText },
-        { status: 500 }
-      )
-    }
 
     return NextResponse.json({
       success: true,

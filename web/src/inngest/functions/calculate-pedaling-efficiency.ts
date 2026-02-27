@@ -39,27 +39,31 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
           .from('ride_analysis')
           .select('*')
           .eq('ride_id', rideId)
-          .in('analysis_type', ['pedaling_efficiency', 'riding_position'])
+          .in('analysis_type', ['pedaling_efficiency', 'riding_position', 'surface_roughness'])
 
         return data || []
       })
 
       const efficiencyAnalysis = existingAnalyses.find(a => a.analysis_type === 'pedaling_efficiency')
       const positionAnalysis = existingAnalyses.find(a => a.analysis_type === 'riding_position')
+      const roughnessAnalysis = existingAnalyses.find(a => a.analysis_type === 'surface_roughness')
 
-      const bothUpToDate =
+      const allUpToDate =
         efficiencyAnalysis?.status === 'completed' &&
         efficiencyAnalysis?.algorithm_version === ALGORITHM_VERSION &&
         positionAnalysis?.status === 'completed' &&
-        positionAnalysis?.algorithm_version === ALGORITHM_VERSION
+        positionAnalysis?.algorithm_version === ALGORITHM_VERSION &&
+        roughnessAnalysis?.status === 'completed' &&
+        roughnessAnalysis?.algorithm_version === ALGORITHM_VERSION
 
-      if (bothUpToDate) {
+      if (allUpToDate) {
         return {
           success: true,
           message: 'Analyses already up-to-date',
           rideId,
           efficiencyAnalysisId: efficiencyAnalysis.id,
           positionAnalysisId: positionAnalysis.id,
+          roughnessAnalysisId: roughnessAnalysis.id,
         }
       }
 
@@ -117,8 +121,29 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
         if (positionError)
           throw new Error(`Failed to create position analysis: ${positionError.message}`)
 
+        const { data: roughnessAnalysis, error: roughnessError } = await supabase
+          .from('ride_analysis')
+          .upsert(
+            {
+              ride_id: rideId,
+              analysis_type: 'surface_roughness',
+              status: 'processing',
+              started_at: new Date().toISOString(),
+              algorithm_version: ALGORITHM_VERSION,
+              parameters: sharedParameters,
+              metadata: {},
+            },
+            { onConflict: 'ride_id,analysis_type' }
+          )
+          .select('id')
+          .single()
+
+        if (roughnessError)
+          throw new Error(`Failed to create roughness analysis: ${roughnessError.message}`)
+
         const efficiencyAnalysisId = efficiencyAnalysis.id
         const positionAnalysisId = positionAnalysis.id
+        const roughnessAnalysisId = roughnessAnalysis.id
 
         // Fetch ride with recordings
         type RecordingData = {
@@ -299,12 +324,29 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
           throw new Error(`Failed to store position results: ${positionUpdateError.message}`)
         }
 
+        // Store roughness results in database
+        const { error: roughnessUpdateError } = await supabase
+          .from('ride_analysis')
+          .update({
+            status: 'completed',
+            completed_at: new Date().toISOString(),
+            samples: computeResult.roughness.samples,
+            metadata: computeResult.roughness.metadata,
+          })
+          .eq('id', roughnessAnalysisId)
+
+        if (roughnessUpdateError) {
+          throw new Error(`Failed to store roughness results: ${roughnessUpdateError.message}`)
+        }
+
         // Return only small summary stats (not the full samples arrays)
         return {
           efficiencyAnalysisId,
           positionAnalysisId,
+          roughnessAnalysisId,
           efficiencySampleCount: computeResult.efficiency.samples.length,
           positionSampleCount: computeResult.position.samples.length,
+          roughnessSampleCount: computeResult.roughness.samples.length,
           avgStability: computeResult.efficiency.metadata.avgStabilityPercent,
           stablePercent: computeResult.efficiency.metadata.stablePercent,
           unstablePercent: computeResult.efficiency.metadata.unstablePercent,
@@ -313,6 +355,10 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
           seatedPercent: computeResult.position.metadata.seatedPercent,
           avgCadenceStanding: computeResult.position.metadata.avgCadenceStanding,
           avgCadenceSeated: computeResult.position.metadata.avgCadenceSeated,
+          avgRoughness: computeResult.roughness.metadata.avgRoughness,
+          maxRoughness: computeResult.roughness.metadata.maxRoughness,
+          smoothSurfacePercent: computeResult.roughness.metadata.smoothSurfacePercent,
+          roughSurfacePercent: computeResult.roughness.metadata.roughSurfacePercent,
         }
       })
 
@@ -380,9 +426,16 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
           avg_cadence_standing: result.avgCadenceStanding ?? null,
           avg_cadence_seated: result.avgCadenceSeated ?? null,
 
+          // IMU-derived: Roughness
+          avg_roughness: result.avgRoughness ?? null,
+          max_roughness: result.maxRoughness ?? null,
+          smooth_surface_percent: result.smoothSurfacePercent ?? null,
+          rough_surface_percent: result.roughSurfacePercent ?? null,
+
           // Algorithm versions
           efficiency_version: ALGORITHM_VERSION,
           position_version: ALGORITHM_VERSION,
+          roughness_version: ALGORITHM_VERSION,
           computed_at: new Date().toISOString(),
         }
 
@@ -429,6 +482,16 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
         })
         .eq('ride_id', rideId)
         .eq('analysis_type', 'riding_position')
+
+      await supabase
+        .from('ride_analysis')
+        .update({
+          status: 'failed',
+          error_message: errorMessage,
+          completed_at: now,
+        })
+        .eq('ride_id', rideId)
+        .eq('analysis_type', 'surface_roughness')
 
       throw error
     }

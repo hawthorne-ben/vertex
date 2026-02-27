@@ -104,6 +104,30 @@ const getStabilityColor = (stability: number): string => {
   }
 }
 
+// Helper: Map roughness value (0-100%) to gradient
+// Inverted from stability: low roughness (smooth) = green, high roughness (rough) = red
+const getRoughnessColor = (roughness: number): string => {
+  if (roughness <= 10) {
+    return '#22c55e' // Green - very smooth
+  } else if (roughness <= 20) {
+    return '#4ade80' // Light green
+  } else if (roughness <= 30) {
+    return '#84cc16' // Lime
+  } else if (roughness <= 40) {
+    return '#eab308' // Yellow
+  } else if (roughness <= 50) {
+    return '#f59e0b' // Amber
+  } else if (roughness <= 60) {
+    return '#f97316' // Orange
+  } else if (roughness <= 70) {
+    return '#fb923c' // Light orange
+  } else if (roughness <= 85) {
+    return '#ef4444' // Red
+  } else {
+    return '#dc2626' // Dark red - very rough
+  }
+}
+
 // Helper: Map riding position to color
 // Green = Seated, Red = Standing
 const getPositionColor = (position: 'standing' | 'seated' | null): string | null => {
@@ -288,6 +312,11 @@ interface PositionSample {
   cadence: number | null
 }
 
+interface RoughnessSample {
+  timestamp: string
+  value: number
+}
+
 export interface FitStatsSample {
   timestamp: string
   power_watts?: number | null
@@ -367,6 +396,7 @@ interface RideMapProps {
   imuColor?: string // Color for IMU coverage overlay (default: green)
   efficiencySamples?: EfficiencySample[] // Pedaling efficiency samples for heatmap overlay
   positionSamples?: PositionSample[] // Riding position samples for heatmap overlay
+  roughnessSamples?: RoughnessSample[] // Surface roughness samples for heatmap overlay
   fitStatsSamples?: FitStatsSample[] // FIT stats samples for metric overlay
   fitStatsMetric?: FitStatsMetric // Which FIT metric to overlay
   onZoomChange?: (zoom: number) => void
@@ -409,6 +439,7 @@ const RoutePolylines = memo(function RoutePolylines({
   imuColor,
   efficiencySamples,
   positionSamples,
+  roughnessSamples,
   fitStatsSamples,
   fitStatsMetric
 }: {
@@ -418,6 +449,7 @@ const RoutePolylines = memo(function RoutePolylines({
   imuColor: string
   efficiencySamples?: EfficiencySample[]
   positionSamples?: PositionSample[]
+  roughnessSamples?: RoughnessSample[]
   fitStatsSamples?: FitStatsSample[]
   fitStatsMetric?: FitStatsMetric
 }) {
@@ -492,7 +524,28 @@ const RoutePolylines = memo(function RoutePolylines({
       }
     }
 
-    // Mode 3: FIT stats overlay - percentile-based green→red gradient
+    // Mode 3: Roughness overlay - green (smooth) → red (rough)
+    if (roughnessSamples && roughnessSamples.length > 0) {
+      // Reuse same { timestamp, value } map structure
+      const roughnessMap = buildStabilityMap(roughnessSamples)
+
+      const { segments: overlays } = buildOverlaySegments(
+        gpsTrack,
+        (point) => {
+          const pointTime = new Date(point.timestamp!).getTime()
+          const roughness = getStabilityFromMap(pointTime, roughnessMap, 1000)
+          return roughness !== null ? getRoughnessColor(roughness) : null
+        },
+        'RoughnessOverlay'
+      )
+
+      return {
+        baseSegments: baseSegs,
+        overlaySegments: overlays
+      }
+    }
+
+    // Mode 4: FIT stats overlay - percentile-based green→red gradient
     if (fitStatsSamples && fitStatsSamples.length > 0 && fitStatsMetric) {
       const statsMap = buildFitStatsMap(fitStatsSamples, fitStatsMetric)
       const allValues = Array.from(statsMap.values())
@@ -560,7 +613,7 @@ const RoutePolylines = memo(function RoutePolylines({
       baseSegments: baseSegs,
       overlaySegments: []
     }
-  }, [gpsTrack, imuTimeRanges, efficiencySamples, positionSamples, fitStatsSamples, fitStatsMetric, defaultColor, imuColor])
+  }, [gpsTrack, imuTimeRanges, efficiencySamples, positionSamples, roughnessSamples, fitStatsSamples, fitStatsMetric, defaultColor, imuColor])
 
   return (
     <>
@@ -603,6 +656,7 @@ export function RideMap({
   imuColor: imuColorProp,
   efficiencySamples,
   positionSamples,
+  roughnessSamples,
   fitStatsSamples,
   fitStatsMetric,
   onZoomChange
@@ -738,6 +792,7 @@ export function RideMap({
           imuColor={imuRouteColor}
           efficiencySamples={efficiencySamples}
           positionSamples={positionSamples}
+          roughnessSamples={roughnessSamples}
           fitStatsSamples={fitStatsSamples}
           fitStatsMetric={fitStatsMetric}
         />

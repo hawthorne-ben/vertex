@@ -36,6 +36,11 @@ interface PositionSample {
   cadence: number | null
 }
 
+interface RoughnessSample {
+  timestamp: string
+  value: number
+}
+
 interface RideMapClientProps {
   rideId: string
   fitRecordingId: string | null
@@ -45,11 +50,13 @@ interface RideMapClientProps {
   samples: Sample[]
   loading: boolean
   error: string | null
-  mapMode?: 'route' | 'vtx' | 'efficiency' | 'pedalingEfficiency' | 'ridingPosition' | 'fitStats'
+  mapMode?: 'route' | 'vtx' | 'efficiency' | 'pedalingEfficiency' | 'ridingPosition' | 'surfaceRoughness' | 'fitStats'
   efficiencySamples?: EfficiencySample[] // Pedaling efficiency data for heatmap
   efficiencyLoading?: boolean // Loading state for efficiency data
   positionSamples?: PositionSample[] // Riding position data for heatmap
   positionLoading?: boolean // Loading state for position data
+  roughnessSamples?: RoughnessSample[] // Surface roughness data for heatmap
+  roughnessLoading?: boolean // Loading state for roughness data
   fitStatsSamples?: FitStatsSample[]
   fitStatsMetric?: FitStatsMetric
   onZoomChange?: (zoom: number) => void
@@ -68,6 +75,8 @@ export function RideMapClient({
   efficiencyLoading = false,
   positionSamples = [],
   positionLoading = false,
+  roughnessSamples = [],
+  roughnessLoading = false,
   fitStatsSamples,
   fitStatsMetric,
   imuColor,
@@ -103,7 +112,8 @@ export function RideMapClient({
   // Overlay data is still loading (GPS track already available, route mode has no overlay)
   const isOverlayLoading = !loading && gpsTrack.length > 0 && mapMode !== 'route' && (
     ((mapMode === 'efficiency' || mapMode === 'pedalingEfficiency') && efficiencyLoading) ||
-    (mapMode === 'ridingPosition' && positionLoading)
+    (mapMode === 'ridingPosition' && positionLoading) ||
+    (mapMode === 'surfaceRoughness' && roughnessLoading)
   )
 
   // Tab-switch blur transition — snap on instantly, fade out over 200ms
@@ -163,6 +173,7 @@ export function RideMapClient({
         imuColor={deferredMode === 'route' ? undefined : deferredImuColor}
         efficiencySamples={!isOverlayLoading && (deferredMode === 'efficiency' || deferredMode === 'pedalingEfficiency') ? efficiencySamples : undefined}
         positionSamples={!isOverlayLoading && deferredMode === 'ridingPosition' ? positionSamples : undefined}
+        roughnessSamples={!isOverlayLoading && deferredMode === 'surfaceRoughness' ? roughnessSamples : undefined}
         fitStatsSamples={deferredMode === 'fitStats' ? fitStatsSamples : undefined}
         fitStatsMetric={deferredMode === 'fitStats' ? fitStatsMetric : undefined}
         onZoomChange={onZoomChange}

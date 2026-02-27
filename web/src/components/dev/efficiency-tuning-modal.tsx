@@ -59,6 +59,15 @@ interface RecomputeResult {
     }
     sampleCount: number
   }
+  roughness: {
+    metadata: {
+      avgRoughness: number
+      maxRoughness: number
+      smoothSurfacePercent: number
+      roughSurfacePercent: number
+    }
+    sampleCount: number
+  }
   computeTime: number
 }
 
@@ -390,6 +399,18 @@ export function EfficiencyTuningModal({
                       <div>Avg Cadence (Standing): <span className="text-primary font-medium">{result.position.metadata.avgCadenceStanding?.toFixed(0) || 'N/A'} RPM</span></div>
                       <div>Avg Cadence (Seated): <span className="text-primary font-medium">{result.position.metadata.avgCadenceSeated?.toFixed(0) || 'N/A'} RPM</span></div>
                       <div className="col-span-2">Sample Count: <span className="text-primary font-medium">{result.position.sampleCount.toLocaleString()}</span></div>
+                    </div>
+                  </div>
+
+                  {/* Roughness Results */}
+                  <div className="pt-3 border-t border-green-500/20">
+                    <p className="font-medium text-primary mb-2">Surface Roughness</p>
+                    <div className="grid grid-cols-2 gap-2 text-secondary">
+                      <div>Avg Roughness: <span className="text-primary font-medium">{(result.roughness.metadata.avgRoughness * 100).toFixed(1)}%</span></div>
+                      <div>Max Roughness: <span className="text-primary font-medium">{(result.roughness.metadata.maxRoughness * 100).toFixed(1)}%</span></div>
+                      <div>Smooth Surface: <span className="text-primary font-medium">{result.roughness.metadata.smoothSurfacePercent.toFixed(1)}%</span></div>
+                      <div>Rough Surface: <span className="text-primary font-medium">{result.roughness.metadata.roughSurfacePercent.toFixed(1)}%</span></div>
+                      <div className="col-span-2">Sample Count: <span className="text-primary font-medium">{result.roughness.sampleCount.toLocaleString()}</span></div>
                     </div>
                   </div>
 
