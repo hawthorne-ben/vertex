@@ -80,24 +80,24 @@ const hasGpsGap = (point1: GPSPoint, point2: GPSPoint): boolean => {
   return timeDiff > 10000
 }
 
-// Helper: Map efficiency value (0-100%) to gradient matching the chart
+// Helper: Map stability value (0-100%) to gradient matching the chart
 // Green (70%+) → Yellow/Orange (40-69%) → Red (0-39%)
-const getEfficiencyColor = (efficiency: number): string => {
-  if (efficiency >= 70) {
+const getStabilityColor = (stability: number): string => {
+  if (stability >= 70) {
     return '#22c55e' // Green - hsl(145, 70%, 50%)
-  } else if (efficiency >= 65) {
+  } else if (stability >= 65) {
     return '#4ade80' // Light green
-  } else if (efficiency >= 60) {
+  } else if (stability >= 60) {
     return '#84cc16' // Lime
-  } else if (efficiency >= 55) {
+  } else if (stability >= 55) {
     return '#eab308' // Yellow
-  } else if (efficiency >= 50) {
+  } else if (stability >= 50) {
     return '#f59e0b' // Amber
-  } else if (efficiency >= 45) {
+  } else if (stability >= 45) {
     return '#f97316' // Orange
-  } else if (efficiency >= 40) {
+  } else if (stability >= 40) {
     return '#fb923c' // Light orange
-  } else if (efficiency >= 35) {
+  } else if (stability >= 35) {
     return '#ef4444' // Red
   } else {
     return '#dc2626' // Dark red
@@ -115,8 +115,8 @@ const getPositionColor = (position: 'standing' | 'seated' | null): string | null
   return null // No pedaling
 }
 
-// Helper: Build efficiency lookup map (O(1) lookups instead of O(n) linear search)
-const buildEfficiencyMap = (samples: EfficiencySample[]): Map<number, number> => {
+// Helper: Build stability lookup map (O(1) lookups instead of O(n) linear search)
+const buildStabilityMap = (samples: EfficiencySample[]): Map<number, number> => {
   const map = new Map<number, number>()
 
   for (const sample of samples) {
@@ -131,25 +131,25 @@ const buildEfficiencyMap = (samples: EfficiencySample[]): Map<number, number> =>
   return map
 }
 
-// Helper: Find efficiency value using pre-built map
-const getEfficiencyFromMap = (
+// Helper: Find stability value using pre-built map
+const getStabilityFromMap = (
   targetTime: number,
-  efficiencyMap: Map<number, number>,
+  stabilityMap: Map<number, number>,
   maxWindowMs: number = 1000
 ): number | null => {
   // Try exact second match first
   const targetBucket = Math.round(targetTime / 1000) * 1000
-  if (efficiencyMap.has(targetBucket)) {
-    return efficiencyMap.get(targetBucket)!
+  if (stabilityMap.has(targetBucket)) {
+    return stabilityMap.get(targetBucket)!
   }
 
   // Try adjacent seconds
   for (let offset = 1000; offset <= maxWindowMs; offset += 1000) {
-    if (efficiencyMap.has(targetBucket + offset)) {
-      return efficiencyMap.get(targetBucket + offset)!
+    if (stabilityMap.has(targetBucket + offset)) {
+      return stabilityMap.get(targetBucket + offset)!
     }
-    if (efficiencyMap.has(targetBucket - offset)) {
-      return efficiencyMap.get(targetBucket - offset)!
+    if (stabilityMap.has(targetBucket - offset)) {
+      return stabilityMap.get(targetBucket - offset)!
     }
   }
 
@@ -450,18 +450,18 @@ const RoutePolylines = memo(function RoutePolylines({
 
     // Mode 1: Efficiency overlay - show full route + colored efficiency segments
     if (efficiencySamples && efficiencySamples.length > 0) {
-      // Build efficiency lookup map once (O(n) instead of O(n²))
-      const efficiencyMap = buildEfficiencyMap(efficiencySamples)
+      // Build stability lookup map once (O(n) instead of O(n²))
+      const stabilityMap = buildStabilityMap(efficiencySamples)
 
       // Use shared overlay builder
       const { segments: overlays, matchedCount, totalCount } = buildOverlaySegments(
         gpsTrack,
         (point) => {
           const pointTime = new Date(point.timestamp!).getTime()
-          const efficiency = getEfficiencyFromMap(pointTime, efficiencyMap, 1000)
-          return efficiency !== null ? getEfficiencyColor(efficiency) : null
+          const stability = getStabilityFromMap(pointTime, stabilityMap, 1000)
+          return stability !== null ? getStabilityColor(stability) : null
         },
-        'EfficiencyOverlay'
+        'StabilityOverlay'
       )
 
       return {
@@ -502,7 +502,7 @@ const RoutePolylines = memo(function RoutePolylines({
         gpsTrack,
         (point) => {
           const pointTime = new Date(point.timestamp!).getTime()
-          const val = getEfficiencyFromMap(pointTime, statsMap, 1000)
+          const val = getStabilityFromMap(pointTime, statsMap, 1000)
           return val !== null ? getColorFromThresholds(val, thresholds) : null
         },
         'FitStatsOverlay'

@@ -20,7 +20,7 @@ export async function GET(
   // Fetch this ride's summary
   const { data: summary, error: summaryError } = await supabase
     .from('ride_summaries')
-    .select('avg_efficiency_percent, standing_percent, avg_heart_rate, avg_power_watts, ride_started_at')
+    .select('avg_stability_percent, standing_percent, avg_heart_rate, avg_power_watts, ride_started_at')
     .eq('ride_id', rideId)
     .eq('user_id', user.id)
     .maybeSingle()
@@ -38,7 +38,7 @@ export async function GET(
 
   const { data: others } = await supabase
     .from('ride_summaries')
-    .select('avg_efficiency_percent, standing_percent, avg_heart_rate, avg_power_watts')
+    .select('avg_stability_percent, standing_percent, avg_heart_rate, avg_power_watts')
     .eq('user_id', user.id)
     .gte('ride_started_at', eightWeeksAgo)
 
@@ -51,14 +51,14 @@ export async function GET(
     return valid.length > 0 ? valid.reduce((a, b) => a + b, 0) / valid.length : null
   }
 
-  const avgEfficiency = avg(others.map(r => r.avg_efficiency_percent))
+  const avgStability = avg(others.map(r => r.avg_stability_percent))
   const avgStanding = avg(others.map(r => r.standing_percent))
   const avgHr = avg(others.map(r => r.avg_heart_rate))
   const avgPower = avg(others.map(r => r.avg_power_watts))
 
   const comparisons: Record<string, { value: number; average: number } | null> = {
-    efficiency: summary.avg_efficiency_percent != null && avgEfficiency != null
-      ? { value: summary.avg_efficiency_percent, average: avgEfficiency } : null,
+    stability: summary.avg_stability_percent != null && avgStability != null
+      ? { value: summary.avg_stability_percent, average: avgStability } : null,
     standing: summary.standing_percent != null && avgStanding != null
       ? { value: summary.standing_percent, average: avgStanding } : null,
     avgHr: summary.avg_heart_rate != null && avgHr != null

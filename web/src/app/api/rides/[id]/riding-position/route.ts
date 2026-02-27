@@ -243,7 +243,7 @@ export async function GET(
         },
         {
           headers: {
-            'Cache-Control': 'public, max-age=3600, immutable',
+            'Cache-Control': 'public, no-cache',
             'ETag': `"${analysis.id}-${analysis.completed_at}-metadata"`,
           },
         }
@@ -262,7 +262,7 @@ export async function GET(
       },
       {
         headers: {
-          'Cache-Control': 'public, max-age=3600, immutable',
+          'Cache-Control': 'public, no-cache',
           'ETag': `"${analysis.id}-${analysis.completed_at}-${startTime || 'full'}-${endTime || 'full'}"`,
         },
       }

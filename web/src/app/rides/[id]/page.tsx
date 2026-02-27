@@ -54,7 +54,7 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
   )?.recordings
 
   const vtxRecordings = ride.ride_recordings
-    ?.filter((rr: any) => rr.recordings?.file_type === 'vtx')
+    ?.filter((rr: any) => rr.recordings?.file_type === 'vtx' || rr.recordings?.file_type === 'vtx_merged')
     .map((rr: any) => rr.recordings) || []
 
   // Skip server-side sample fetching - let client fetch on demand with caching

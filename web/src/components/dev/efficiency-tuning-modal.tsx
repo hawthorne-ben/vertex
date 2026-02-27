@@ -14,8 +14,21 @@ interface EfficiencyTuningModalProps {
 }
 
 interface TuningParameters {
-  hpfCutoff: number
+  // Stability (cadence-band RMS)
+  stabilityBpfLow: number
+  stabilityBpfHigh: number
+  stabilityRollWeight: number
+  stabilityYawWeight: number
+  stabilitySurgeWeight: number
+  stableThreshold: number
+  unstableThreshold: number
   windowSize: number
+  maxStabilityRms: number
+  maxStabilityRmsPerWatt: number
+  powerNormalize: boolean
+  // Surface roughness
+  hpfCutoff: number
+  // Riding position detection
   yAxisThreshold: number
   rollBpfLow: number
   rollBpfHigh: number
@@ -29,10 +42,10 @@ interface RecomputeResult {
   message: string
   efficiency: {
     metadata: {
-      avgEfficiencyPercent: number | null
+      avgStabilityPercent: number | null
       pedalingPercent: number
-      smoothPercent: number
-      roughPercent: number
+      stablePercent: number
+      unstablePercent: number
       avgCadence: number | null
     }
     sampleCount: number
@@ -49,22 +62,34 @@ interface RecomputeResult {
   computeTime: number
 }
 
+const DEFAULT_PARAMS: TuningParameters = {
+  stabilityBpfLow: CONSTANTS.STABILITY_BPF_LOW_HZ,
+  stabilityBpfHigh: CONSTANTS.STABILITY_BPF_HIGH_HZ,
+  stabilityRollWeight: CONSTANTS.STABILITY_ROLL_WEIGHT,
+  stabilityYawWeight: CONSTANTS.STABILITY_YAW_WEIGHT,
+  stabilitySurgeWeight: CONSTANTS.STABILITY_SURGE_WEIGHT,
+  stableThreshold: CONSTANTS.STABLE_THRESHOLD,
+  unstableThreshold: CONSTANTS.UNSTABLE_THRESHOLD,
+  windowSize: CONSTANTS.STFT_WINDOW_SECONDS,
+  maxStabilityRms: CONSTANTS.MAX_STABILITY_RMS,
+  maxStabilityRmsPerWatt: CONSTANTS.MAX_STABILITY_RMS_PER_WATT,
+  powerNormalize: CONSTANTS.POWER_NORMALIZE_STABILITY,
+  hpfCutoff: CONSTANTS.ROUGHNESS_HPF_CUTOFF_HZ,
+  yAxisThreshold: CONSTANTS.Y_AXIS_STANDING_THRESHOLD,
+  rollBpfLow: CONSTANTS.ROLL_BPF_LOW_HZ,
+  rollBpfHigh: CONSTANTS.ROLL_BPF_HIGH_HZ,
+  rollRmsThreshold: CONSTANTS.ROLL_RMS_STANDING_THRESHOLD,
+  gyroWeight: CONSTANTS.POSITION_GYRO_WEIGHT,
+  accelWeight: CONSTANTS.POSITION_ACCEL_WEIGHT,
+}
+
 export function EfficiencyTuningModal({
   isOpen,
   onClose,
   rideId,
   rideName
 }: EfficiencyTuningModalProps) {
-  const [parameters, setParameters] = useState<TuningParameters>({
-    hpfCutoff: CONSTANTS.HPF_CUTOFF_HZ,
-    windowSize: CONSTANTS.EFFICIENCY_WINDOW_SECONDS,
-    yAxisThreshold: CONSTANTS.Y_AXIS_STANDING_THRESHOLD,
-    rollBpfLow: CONSTANTS.ROLL_BPF_LOW_HZ,
-    rollBpfHigh: CONSTANTS.ROLL_BPF_HIGH_HZ,
-    rollRmsThreshold: CONSTANTS.ROLL_RMS_STANDING_THRESHOLD,
-    gyroWeight: CONSTANTS.POSITION_GYRO_WEIGHT,
-    accelWeight: CONSTANTS.POSITION_ACCEL_WEIGHT,
-  })
+  const [parameters, setParameters] = useState<TuningParameters>({ ...DEFAULT_PARAMS })
 
   const [saveToDatabase, setSaveToDatabase] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -85,8 +110,18 @@ export function EfficiencyTuningModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           parameters: {
-            hpfCutoff: parameters.hpfCutoff,
+            stabilityBpfLow: parameters.stabilityBpfLow,
+            stabilityBpfHigh: parameters.stabilityBpfHigh,
+            stabilityRollWeight: parameters.stabilityRollWeight,
+            stabilityYawWeight: parameters.stabilityYawWeight,
+            stabilitySurgeWeight: parameters.stabilitySurgeWeight,
+            stableThreshold: parameters.stableThreshold,
+            unstableThreshold: parameters.unstableThreshold,
             windowSize: parameters.windowSize,
+            maxStabilityRms: parameters.maxStabilityRms,
+            maxStabilityRmsPerWatt: parameters.maxStabilityRmsPerWatt,
+            powerNormalize: parameters.powerNormalize,
+            hpfCutoff: parameters.hpfCutoff,
             yAxisThreshold: parameters.yAxisThreshold,
             rollBpfLow: parameters.rollBpfLow,
             rollBpfHigh: parameters.rollBpfHigh,
@@ -119,16 +154,7 @@ export function EfficiencyTuningModal({
   }
 
   const handleReset = () => {
-    setParameters({
-      hpfCutoff: CONSTANTS.HPF_CUTOFF_HZ,
-      windowSize: CONSTANTS.EFFICIENCY_WINDOW_SECONDS,
-      yAxisThreshold: CONSTANTS.Y_AXIS_STANDING_THRESHOLD,
-      rollBpfLow: CONSTANTS.ROLL_BPF_LOW_HZ,
-      rollBpfHigh: CONSTANTS.ROLL_BPF_HIGH_HZ,
-      rollRmsThreshold: CONSTANTS.ROLL_RMS_STANDING_THRESHOLD,
-      gyroWeight: CONSTANTS.POSITION_GYRO_WEIGHT,
-      accelWeight: CONSTANTS.POSITION_ACCEL_WEIGHT,
-    })
+    setParameters({ ...DEFAULT_PARAMS })
     setResult(null)
     setError(null)
   }
@@ -141,7 +167,7 @@ export function EfficiencyTuningModal({
           <div className="flex items-center gap-2">
             <Settings className="w-5 h-5 text-primary" />
             <div>
-              <h2 className="text-lg font-medium text-primary">Algorithm Tuning (Efficiency & Position)</h2>
+              <h2 className="text-lg font-medium text-primary">Algorithm Tuning (Stability & Position)</h2>
               {rideName && <p className="text-sm text-secondary">{rideName}</p>}
             </div>
           </div>
@@ -162,28 +188,114 @@ export function EfficiencyTuningModal({
               <div className="text-sm">
                 <p className="font-medium text-yellow-500 mb-1">Development Mode Only</p>
                 <p className="text-secondary">
-                  This tool recomputes both pedaling efficiency and riding position with custom parameters.
+                  This tool recomputes both pedaling stability and riding position with custom parameters.
                   Changes are temporary unless you check &quot;Save to Database&quot; below.
                 </p>
               </div>
             </div>
           </div>
 
-          {/* Parameters Grid */}
+          {/* Stability Parameters */}
           <div className="space-y-4">
-            <h3 className="text-sm font-medium text-primary">Signal Processing</h3>
+            <h3 className="text-sm font-medium text-primary">Pedaling Stability (Cadence-Band RMS)</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField
+                label="BPF Low (Hz)"
+                value={parameters.stabilityBpfLow}
+                onChange={(v) => setParameters({ ...parameters, stabilityBpfLow: v })}
+                hint="Low cutoff for stability bandpass. 0.3 Hz catches 18 RPM"
+              />
+              <FormField
+                label="BPF High (Hz)"
+                value={parameters.stabilityBpfHigh}
+                onChange={(v) => setParameters({ ...parameters, stabilityBpfHigh: v })}
+                hint="High cutoff for stability bandpass. 10 Hz captures 5th harmonics"
+              />
+              <FormField
+                label="Roll Weight (gyro-x)"
+                value={parameters.stabilityRollWeight}
+                onChange={(v) => setParameters({ ...parameters, stabilityRollWeight: v })}
+                hint="Frame roll coherence weight. Cleanest signal. Default: 0.7"
+              />
+              <FormField
+                label="Yaw Weight (gyro-z)"
+                value={parameters.stabilityYawWeight}
+                onChange={(v) => setParameters({ ...parameters, stabilityYawWeight: v })}
+                hint="Handlebar stability weight. Synced with roll. Default: 0.3"
+              />
+              <FormField
+                label="Surge Weight (accel-x)"
+                value={parameters.stabilitySurgeWeight}
+                onChange={(v) => setParameters({ ...parameters, stabilitySurgeWeight: v })}
+                hint="Power application weight. Disabled (unit mismatch with gyro). Default: 0.0"
+              />
+              <FormField
+                label="RMS Window (seconds)"
+                value={parameters.windowSize}
+                onChange={(v) => setParameters({ ...parameters, windowSize: v })}
+                hint="Sliding window for RMS calculation. Road: 2-3s. MTB: 3-5s. Default: 3s"
+              />
+              <FormField
+                label="Stable Threshold"
+                value={parameters.stableThreshold}
+                onChange={(v) => setParameters({ ...parameters, stableThreshold: v })}
+                hint="Coherence above this = stable pedaling. Default: 0.7"
+              />
+              <FormField
+                label="Unstable Threshold"
+                value={parameters.unstableThreshold}
+                onChange={(v) => setParameters({ ...parameters, unstableThreshold: v })}
+                hint="Stability below this = unstable pedaling. Default: 0.5"
+              />
+              <FormField
+                label="Max Stability RMS (ceiling)"
+                value={parameters.maxStabilityRms}
+                onChange={(v) => setParameters({ ...parameters, maxStabilityRms: v })}
+                hint="RMS at this value = 0% stability. Lower = stricter. Default: 20.0"
+              />
+              <FormField
+                label="Max Stability RMS/Watt"
+                value={parameters.maxStabilityRmsPerWatt}
+                onChange={(v) => setParameters({ ...parameters, maxStabilityRmsPerWatt: v })}
+                hint="Per-watt ceiling when power normalization is on. Default: 0.02"
+              />
+              <div className="flex items-center gap-2 p-3 bg-muted rounded-lg md:col-span-2">
+                <input
+                  type="checkbox"
+                  id="powerNormalize"
+                  checked={parameters.powerNormalize}
+                  onChange={(e) => setParameters({ ...parameters, powerNormalize: e.target.checked })}
+                  className="w-4 h-4 rounded border-border"
+                />
+                <label htmlFor="powerNormalize" className="text-sm text-primary cursor-pointer flex-1">
+                  <span className="font-medium">Power Normalization</span>
+                  <span className="text-secondary block text-xs mt-0.5">
+                    Divide weighted RMS by instantaneous power (watts). Higher-power efforts allowed more motion.
+                    Requires power meter data.
+                  </span>
+                </label>
+              </div>
+              <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg md:col-span-2">
+                <p className="text-xs text-blue-700 dark:text-blue-400">
+                  <strong>Time-Domain RMS (v6):</strong> BPF isolates pedaling band ({parameters.stabilityBpfLow}-{parameters.stabilityBpfHigh} Hz),
+                  then RMS of the filtered signal measures oscillation amplitude. Less motion = higher stability.
+                  Weighted fusion: roll({parameters.stabilityRollWeight}) +
+                  yaw({parameters.stabilityYawWeight}) + surge({parameters.stabilitySurgeWeight}) = {(parameters.stabilityRollWeight + parameters.stabilityYawWeight + parameters.stabilitySurgeWeight).toFixed(1)}.
+                  Weights must sum to 1.0. Ceiling: {parameters.maxStabilityRms}.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Surface Roughness */}
+          <div className="space-y-4">
+            <h3 className="text-sm font-medium text-primary">Surface Roughness</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <FormField
                 label="HPF Cutoff (Hz)"
                 value={parameters.hpfCutoff}
                 onChange={(v) => setParameters({ ...parameters, hpfCutoff: v })}
-                hint="Removes gravity. Lower = more aggressive. Default: 0.5 Hz"
-              />
-              <FormField
-                label="Efficiency Window (seconds)"
-                value={parameters.windowSize}
-                onChange={(v) => setParameters({ ...parameters, windowSize: v })}
-                hint="Smoothness window. Road: 2-3s. MTB: 3-5s"
+                hint="Removes gravity from accel. Lower = more aggressive. Default: 0.5 Hz"
               />
             </div>
           </div>
@@ -239,11 +351,12 @@ export function EfficiencyTuningModal({
 
           {/* Display-only constants (FYI) */}
           <div className="space-y-4">
-            <h3 className="text-sm font-medium text-primary">Current Algorithm Constants (FYI)</h3>
+            <h3 className="text-sm font-medium text-primary">Algorithm Info</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <InfoField label="Cadence Source" value="FIT sensor (cadence > 0 = pedaling)" />
-              <InfoField label="Decay Constant (k)" value={`${CONSTANTS.EFFICIENCY_DECAY_CONSTANT}`} />
               <InfoField label="Algorithm Version" value={CONSTANTS.ALGORITHM_VERSION} />
+              <InfoField label="Method" value="Time-domain RMS of BPF'd signal" />
+              <InfoField label="Output Rate" value={`${(1 / CONSTANTS.STFT_HOP_SECONDS).toFixed(0)} Hz (interpolated to 25 Hz)`} />
             </div>
           </div>
 
@@ -255,14 +368,14 @@ export function EfficiencyTuningModal({
                 <div className="text-sm space-y-3 flex-1">
                   <p className="font-medium text-green-500">{result.message}</p>
 
-                  {/* Efficiency Results */}
+                  {/* Stability Results */}
                   <div>
-                    <p className="font-medium text-primary mb-2">Pedaling Efficiency</p>
+                    <p className="font-medium text-primary mb-2">Pedaling Stability</p>
                     <div className="grid grid-cols-2 gap-2 text-secondary">
-                      <div>Avg Efficiency: <span className="text-primary font-medium">{result.efficiency.metadata.avgEfficiencyPercent?.toFixed(1)}%</span></div>
+                      <div>Avg Stability: <span className="text-primary font-medium">{result.efficiency.metadata.avgStabilityPercent?.toFixed(1)}%</span></div>
                       <div>Pedaling Time: <span className="text-primary font-medium">{result.efficiency.metadata.pedalingPercent.toFixed(1)}%</span></div>
-                      <div>Smooth: <span className="text-primary font-medium">{result.efficiency.metadata.smoothPercent.toFixed(1)}%</span></div>
-                      <div>Rough: <span className="text-primary font-medium">{result.efficiency.metadata.roughPercent.toFixed(1)}%</span></div>
+                      <div>Stable: <span className="text-primary font-medium">{result.efficiency.metadata.stablePercent.toFixed(1)}%</span></div>
+                      <div>Unstable: <span className="text-primary font-medium">{result.efficiency.metadata.unstablePercent.toFixed(1)}%</span></div>
                       <div>Avg Cadence: <span className="text-primary font-medium">{result.efficiency.metadata.avgCadence?.toFixed(0) || 'N/A'} RPM</span></div>
                       <div>Sample Count: <span className="text-primary font-medium">{result.efficiency.sampleCount.toLocaleString()}</span></div>
                     </div>

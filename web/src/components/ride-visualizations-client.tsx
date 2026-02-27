@@ -21,14 +21,84 @@ import { RideComparisonCards } from '@/components/ride-comparison-cards'
 import { RefreshCw, Settings, ChevronDown } from 'lucide-react'
 import type { FitStatsMetric } from './ride-map'
 
+// Shared stats dropdown used in both map and chart tab bars
+function StatsDropdown({
+  tabId,
+  metric,
+  setMetric,
+  dropdownOpen,
+  setDropdownOpen,
+  isActive,
+  disabled,
+  stateClass,
+  onActivate,
+}: {
+  tabId: string
+  metric: FitStatsMetric
+  setMetric: (m: FitStatsMetric) => void
+  dropdownOpen: boolean
+  setDropdownOpen: (open: boolean | ((prev: boolean) => boolean)) => void
+  isActive: boolean
+  disabled: boolean
+  stateClass: string
+  onActivate: () => void
+}) {
+  const selectedLabel = FIT_STATS_OPTIONS.find(o => o.id === metric)!.label
+  const baseClass = `px-4 py-2 text-sm font-medium transition-colors relative inline-flex items-center gap-1 ${stateClass}`
+
+  return (
+    <div key={tabId} className="relative">
+      <button
+        onClick={() => {
+          if (disabled) return
+          if (!isActive) {
+            onActivate()
+          } else {
+            setDropdownOpen((prev: boolean) => !prev)
+          }
+        }}
+        onBlur={() => setTimeout(() => setDropdownOpen(false), 150)}
+        disabled={disabled}
+        className={baseClass}
+      >
+        {selectedLabel}
+        <ChevronDown className={`w-3 h-3 transition-transform ${dropdownOpen ? 'rotate-180' : ''}`} />
+        {isActive && (
+          <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+        )}
+      </button>
+      {dropdownOpen && (
+        <div className="absolute top-full left-0 mt-1 z-50 bg-popover border border-border rounded-md shadow-md py-1 min-w-[120px]">
+          {FIT_STATS_OPTIONS.map(option => (
+            <button
+              key={option.id}
+              onMouseDown={(e) => {
+                e.preventDefault()
+                setMetric(option.id)
+                setDropdownOpen(false)
+                if (!isActive) onActivate()
+              }}
+              className={`w-full text-left px-4 py-2 text-sm hover:bg-accent transition-colors ${
+                option.id === metric ? 'text-primary' : 'text-foreground'
+              }`}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const UPlotBase = dynamic(
   () => import('./charts/UPlotBase').then(mod => ({ default: mod.UPlotBase })),
   { ssr: false, loading: () => <div className="h-[400px] bg-muted rounded-lg animate-pulse" /> }
 )
 
 // Map tab includes Route; chart tab does not
-type MapTab = 'route' | 'efficiency' | 'position' | 'stats' | 'orientation' | 'acceleration' | 'rotation'
-type ChartTab = 'efficiency' | 'position' | 'stats' | 'orientation' | 'acceleration' | 'rotation'
+type MapTab = 'route' | 'stability' | 'position' | 'stats' | 'orientation' | 'acceleration' | 'rotation'
+type ChartTab = 'stability' | 'position' | 'stats' | 'orientation' | 'acceleration' | 'rotation'
 
 const FIT_STATS_OPTIONS: Array<{ id: FitStatsMetric; label: string }> = [
   { id: 'power', label: 'Power' },
@@ -39,7 +109,7 @@ const FIT_STATS_OPTIONS: Array<{ id: FitStatsMetric; label: string }> = [
 
 const MAP_TAB_CONFIG: Array<{ id: MapTab; label: string }> = [
   { id: 'route', label: 'Route' },
-  { id: 'efficiency', label: 'Efficiency' },
+  { id: 'stability', label: 'Stability' },
   { id: 'position', label: 'Position' },
   { id: 'stats', label: 'Stats' },
   { id: 'orientation', label: 'Orientation' },
@@ -48,7 +118,7 @@ const MAP_TAB_CONFIG: Array<{ id: MapTab; label: string }> = [
 ]
 
 const CHART_TAB_CONFIG: Array<{ id: ChartTab; label: string }> = [
-  { id: 'efficiency', label: 'Efficiency' },
+  { id: 'stability', label: 'Stability' },
   { id: 'position', label: 'Position' },
   { id: 'stats', label: 'Stats' },
   { id: 'orientation', label: 'Orientation' },
@@ -65,7 +135,7 @@ const IMU_TAB_COLORS: Record<string, string> = {
 
 // Tabs that use IMU data vs derived analytics
 const IMU_TABS = new Set<string>(['orientation', 'acceleration', 'rotation'])
-const ANALYTICS_TABS = new Set<string>(['efficiency', 'position'])
+const ANALYTICS_TABS = new Set<string>(['stability', 'position'])
 
 // Map tab → IMU data type
 const TAB_TO_IMU_TYPE: Record<string, 'orientation' | 'accel' | 'gyro'> = {
@@ -76,7 +146,7 @@ const TAB_TO_IMU_TYPE: Record<string, 'orientation' | 'accel' | 'gyro'> = {
 
 // Map tab → derived metric type
 const TAB_TO_METRIC: Record<string, 'pedalingEfficiency' | 'ridingPosition'> = {
-  efficiency: 'pedalingEfficiency',
+  stability: 'pedalingEfficiency',
   position: 'ridingPosition',
 }
 
@@ -132,9 +202,15 @@ export function RideVisualizationsClient({
     return false
   }, [hasGpsData, hasFitData, hasAnalyticsData, hasVtxData])
 
+  // Migrate legacy query param values (efficiency → stability)
+  const migrateTabParam = (param: string | null): string | null => {
+    if (param === 'efficiency') return 'stability'
+    return param
+  }
+
   // Read initial map tab from URL query param, fallback to Route
   const initialMapTab = (() => {
-    const param = searchParams.get('tab')
+    const param = migrateTabParam(searchParams.get('tab'))
     if (param && VALID_MAP_TABS.has(param) && !getTabDisabled(param)) {
       return param as MapTab
     }
@@ -143,7 +219,7 @@ export function RideVisualizationsClient({
 
   // Read initial chart tab from URL, default to first available
   const initialChartTab = (() => {
-    const param = searchParams.get('chart')
+    const param = migrateTabParam(searchParams.get('chart'))
     if (param && VALID_CHART_TABS.has(param) && !getTabDisabled(param)) {
       return param as ChartTab
     }
@@ -243,11 +319,11 @@ export function RideVisualizationsClient({
   const isChartImuTab = IMU_TABS.has(chartTab)
 
   // Lazy-fetch: only start when user visits the tab (either map or chart). Data persists across tab switches.
-  const [efficiencyRequested, setEfficiencyRequested] = useState(mapTab === 'efficiency' || chartTab === 'efficiency')
+  const [efficiencyRequested, setEfficiencyRequested] = useState(mapTab === 'stability' || chartTab === 'stability')
   const [positionRequested, setPositionRequested] = useState(mapTab === 'position' || chartTab === 'position')
 
   // Mark metric as requested once user visits its tab (sticky — never goes back to false)
-  if ((mapTab === 'efficiency' || chartTab === 'efficiency') && !efficiencyRequested) setEfficiencyRequested(true)
+  if ((mapTab === 'stability' || chartTab === 'stability') && !efficiencyRequested) setEfficiencyRequested(true)
   if ((mapTab === 'position' || chartTab === 'position') && !positionRequested) setPositionRequested(true)
 
   const {
@@ -332,7 +408,7 @@ export function RideVisualizationsClient({
   // Unified chart config — single memoized computation for all chart tabs
   const chartConfig = useMemo(() => {
     if (isChartImuTab) return buildIMUChartConfig(imuSamples, TAB_TO_IMU_TYPE[chartTab], sharedZoomRange)
-    if (chartTab === 'efficiency') return buildEfficiencyChartConfig(efficiencySamples, sharedZoomRange)
+    if (chartTab === 'stability') return buildEfficiencyChartConfig(efficiencySamples, sharedZoomRange)
     if (chartTab === 'position') return buildPositionChartConfig(positionSamples, sharedZoomRange)
     if (chartTab === 'stats') return buildFitMetricChartConfig(chartStatsSamples, chartStatsConfig)
     return null
@@ -340,13 +416,13 @@ export function RideVisualizationsClient({
 
   const chartLoading =
     (isChartImuTab && imuLoading) ||
-    (chartTab === 'efficiency' && efficiencyLoading) ||
+    (chartTab === 'stability' && efficiencyLoading) ||
     (chartTab === 'position' && positionLoading) ||
     (chartTab === 'stats' && loading)
 
   const chartError =
     (isChartImuTab && imuError) ||
-    (chartTab === 'efficiency' && efficiencyError) ||
+    (chartTab === 'stability' && efficiencyError) ||
     (chartTab === 'position' && positionError) ||
     null
 
@@ -364,51 +440,20 @@ export function RideVisualizationsClient({
             else if (disabled) stateClass = 'text-muted-foreground/40 cursor-not-allowed'
             const baseClass = `px-4 py-2 text-sm font-medium transition-colors relative ${stateClass}`
 
-            // Stats tab renders as a dropdown
             if (isStats) {
-              const selectedLabel = FIT_STATS_OPTIONS.find(o => o.id === statsMetric)!.label
               return (
-                <div key={tab.id} className="relative">
-                  <button
-                    onClick={() => {
-                      if (disabled) return
-                      if (!isActive) {
-                        handleMapTabChange('stats')
-                      } else {
-                        setStatsDropdownOpen(prev => !prev)
-                      }
-                    }}
-                    onBlur={() => setTimeout(() => setStatsDropdownOpen(false), 150)}
-                    disabled={disabled}
-                    className={`${baseClass} inline-flex items-center gap-1`}
-                  >
-                    {selectedLabel}
-                    <ChevronDown className={`w-3 h-3 transition-transform ${statsDropdownOpen ? 'rotate-180' : ''}`} />
-                    {isActive && (
-                      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-                    )}
-                  </button>
-                  {statsDropdownOpen && (
-                    <div className="absolute top-full left-0 mt-1 z-50 bg-popover border border-border rounded-md shadow-md py-1 min-w-[120px]">
-                      {FIT_STATS_OPTIONS.map(option => (
-                        <button
-                          key={option.id}
-                          onMouseDown={(e) => {
-                            e.preventDefault()
-                            setStatsMetric(option.id)
-                            setStatsDropdownOpen(false)
-                            if (!isActive) handleMapTabChange('stats')
-                          }}
-                          className={`w-full text-left px-4 py-2 text-sm hover:bg-accent transition-colors ${
-                            option.id === statsMetric ? 'text-primary' : 'text-foreground'
-                          }`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <StatsDropdown
+                  key={tab.id}
+                  tabId={tab.id}
+                  metric={statsMetric}
+                  setMetric={setStatsMetric}
+                  dropdownOpen={statsDropdownOpen}
+                  setDropdownOpen={setStatsDropdownOpen}
+                  isActive={isActive}
+                  disabled={disabled}
+                  stateClass={stateClass}
+                  onActivate={() => handleMapTabChange('stats')}
+                />
               )
             }
 
@@ -529,51 +574,20 @@ export function RideVisualizationsClient({
             if (isActive) stateClass = 'text-primary'
             else if (disabled) stateClass = 'text-muted-foreground/40 cursor-not-allowed'
 
-            // Stats chart tab renders as a dropdown
             if (isStats) {
-              const selectedLabel = FIT_STATS_OPTIONS.find(o => o.id === chartStatsMetric)!.label
               return (
-                <div key={tab.id} className="relative">
-                  <button
-                    onClick={() => {
-                      if (disabled) return
-                      if (!isActive) {
-                        handleChartTabChange('stats')
-                      } else {
-                        setChartStatsDropdownOpen(prev => !prev)
-                      }
-                    }}
-                    onBlur={() => setTimeout(() => setChartStatsDropdownOpen(false), 150)}
-                    disabled={disabled}
-                    className={`px-4 py-2 text-sm font-medium transition-colors relative inline-flex items-center gap-1 ${stateClass}`}
-                  >
-                    {selectedLabel}
-                    <ChevronDown className={`w-3 h-3 transition-transform ${chartStatsDropdownOpen ? 'rotate-180' : ''}`} />
-                    {isActive && (
-                      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-                    )}
-                  </button>
-                  {chartStatsDropdownOpen && (
-                    <div className="absolute top-full left-0 mt-1 z-50 bg-popover border border-border rounded-md shadow-md py-1 min-w-[120px]">
-                      {FIT_STATS_OPTIONS.map(option => (
-                        <button
-                          key={option.id}
-                          onMouseDown={(e) => {
-                            e.preventDefault()
-                            setChartStatsMetric(option.id)
-                            setChartStatsDropdownOpen(false)
-                            if (!isActive) handleChartTabChange('stats')
-                          }}
-                          className={`w-full text-left px-4 py-2 text-sm hover:bg-accent transition-colors ${
-                            option.id === chartStatsMetric ? 'text-primary' : 'text-foreground'
-                          }`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <StatsDropdown
+                  key={tab.id}
+                  tabId={tab.id}
+                  metric={chartStatsMetric}
+                  setMetric={setChartStatsMetric}
+                  dropdownOpen={chartStatsDropdownOpen}
+                  setDropdownOpen={setChartStatsDropdownOpen}
+                  isActive={isActive}
+                  disabled={disabled}
+                  stateClass={stateClass}
+                  onActivate={() => handleChartTabChange('stats')}
+                />
               )
             }
 

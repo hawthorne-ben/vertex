@@ -214,7 +214,7 @@ export default async function DashboardPage() {
       <Suspense>
         <Card className="mb-6 md:mb-8">
           <CardHeader>
-            <CardTitle className="text-xl font-serif">Pedaling Efficiency</CardTitle>
+            <CardTitle className="text-xl font-serif">Pedaling Stability</CardTitle>
             <p className="text-sm text-muted-foreground">Last 8 weeks</p>
           </CardHeader>
           <CardContent>

@@ -298,7 +298,7 @@ export function buildEfficiencyChartConfig(
   const series: uPlot.Series[] = [
     {},
     {
-      label: 'Efficiency %',
+      label: 'Stability %',
       stroke: 'hsl(145, 70%, 50%)',
       width: 0,
       spanGaps: false,
@@ -323,7 +323,7 @@ export function buildEfficiencyChartConfig(
 
   const validValues = samples.map(s => s.value).filter((v): v is number => v !== null)
   const stats: ChartStat[] = validValues.length > 0 ? [{
-    label: 'Efficiency',
+    label: 'Stability',
     color: 'hsl(145, 70%, 50%)',
     avg: validValues.reduce((a, b) => a + b, 0) / validValues.length,
     max: Math.max(...validValues),

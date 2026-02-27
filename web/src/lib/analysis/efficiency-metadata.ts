@@ -1,8 +1,12 @@
 /**
- * Efficiency Metadata and Statistics
+ * Stability Metadata and Statistics (v5.1.0)
  *
  * Calculates summary statistics, percentiles, distributions, and debug info
- * for pedaling efficiency analysis results.
+ * for pedaling stability analysis results.
+ *
+ * Renamed from "efficiency" to "stability" in v5.0.0.
+ * Type names kept as PedalingEfficiency* for backwards compatibility with
+ * existing API consumers and database schema.
  */
 
 import * as CONSTANTS from './pedaling-efficiency-constants'
@@ -13,47 +17,51 @@ import * as CONSTANTS from './pedaling-efficiency-constants'
 
 export interface PedalingEfficiencyOutput {
   timestamp: string
-  efficiency: number | null   // 0-1, higher = smoother, null when not pedaling
-  efficiencyPercent: number | null  // 0-100, null when not pedaling
-  isPedaling: boolean         // true when FIT cadence > 0
-  cadence: number | null      // Cadence in RPM from FIT sensor
-  rawAccel: number           // m/s^2, raw acceleration (magnitude)
-  filteredAccel: number      // m/s^2, after high-pass filter (gravity removed)
-  grade: number | null       // Percent slope (null if unavailable)
+  stability: number | null         // 0-1, higher = more stable (less motion)
+  stabilityPercent: number | null  // 0-100
+  isPedaling: boolean              // true when FIT cadence > 0
+  cadence: number | null           // Cadence in RPM from FIT sensor
+  cadenceHz: number | null         // f₀ used for this window
+  cadenceEnergy: number | null     // Energy at f₀ (debug/tuning)
+  weightedRms: number | null       // Weighted RMS before normalization (debug/tuning)
+  rollRms: number | null           // Gyro-x cadence-band RMS (debug/tuning)
+  yawRms: number | null            // Gyro-z cadence-band RMS (debug/tuning)
+  surgeRms: number | null          // Accel-x cadence-band RMS (debug/tuning)
+  grade: number | null             // Percent slope (null if unavailable)
 }
 
 export interface PedalingEfficiencyMetadata {
-  avgEfficiency: number | null // Average efficiency score 0-1 (null if never pedaling)
-  avgEfficiencyPercent: number | null // Average efficiency 0-100 (null if never pedaling)
-  smoothPercent: number       // % of pedaling time efficiency > 0.7
-  roughPercent: number        // % of pedaling time efficiency < 0.5
-  pedalingPercent: number     // % of time pedaling (cadence > 0)
-  avgCadence: number | null   // Average cadence in RPM from FIT sensor
+  avgStability: number | null      // Average stability score 0-1
+  avgStabilityPercent: number | null
+  stablePercent: number            // % of pedaling time stability > 0.7
+  unstablePercent: number          // % of pedaling time stability < 0.5
+  pedalingPercent: number          // % of time pedaling (cadence > 0)
+  avgCadence: number | null        // Average cadence in RPM from FIT sensor
   totalSamples: number
-  pedalingSamples: number     // Number of samples where pedaling was detected
+  pedalingSamples: number
   hasGrade: boolean
-  sampleRate: number | null   // Detected Hz
-  debug?: DebugStatistics     // Optional debug stats
+  sampleRate: number | null
+  debug?: DebugStatistics
 }
 
 export interface DebugStatistics {
-  // Signal statistics
-  rawAccelStats: PercentileStats
-  filteredAccelStats: PercentileStats
-  stdDevStats: PercentileStats
+  // Per-axis cadence-band RMS stats (pedaling samples only)
+  rollRmsStats: PercentileStats
+  yawRmsStats: PercentileStats
+  surgeRmsStats: PercentileStats
 
   // Cadence distribution (for pedaling segments only)
   cadenceDistribution: {
     min: number | null
     max: number | null
     mean: number | null
-    histogram: Array<{ rpm: number; count: number }> // 10 RPM buckets
+    histogram: Array<{ rpm: number; count: number }>
   }
 
   // Sample windows for inspection
   sampleWindows: {
-    highEfficiency: PedalingEfficiencyOutput[]          // 5s of smooth pedaling
-    lowEfficiency: PedalingEfficiencyOutput[]           // 5s of rough pedaling
+    highStability: PedalingEfficiencyOutput[]
+    lowStability: PedalingEfficiencyOutput[]
   }
 }
 
@@ -73,21 +81,21 @@ export interface PercentileStats {
 // ============================================
 
 /**
- * Calculate summary metadata from efficiency samples
+ * Calculate summary metadata from stability samples
  */
 export function calculateMetadata(
   samples: PedalingEfficiencyOutput[],
-  processedSamples: Array<{ rawAccel: number; filteredAccel: number }>,
   grades: (number | null)[],
   sampleRate: number | null,
-  includeDebug: boolean
+  includeDebug: boolean,
+  options?: { stableThreshold?: number; unstableThreshold?: number }
 ): PedalingEfficiencyMetadata {
   if (samples.length === 0) {
     return {
-      avgEfficiency: null,
-      avgEfficiencyPercent: null,
-      smoothPercent: 0,
-      roughPercent: 0,
+      avgStability: null,
+      avgStabilityPercent: null,
+      stablePercent: 0,
+      unstablePercent: 0,
       pedalingPercent: 0,
       avgCadence: null,
       totalSamples: 0,
@@ -97,20 +105,22 @@ export function calculateMetadata(
     }
   }
 
-  // Filter to only pedaling samples (where efficiency is not null)
-  const pedalingSamples = samples.filter(s => s.efficiency !== null)
+  // Filter to only pedaling samples (where stability is not null)
+  const pedalingSamples = samples.filter(s => s.stability !== null)
   const pedalingSampleCount = pedalingSamples.length
 
-  let avgEfficiency: number | null = null
-  let avgEfficiencyPercent: number | null = null
-  let smoothCount = 0
-  let roughCount = 0
+  let avgStability: number | null = null
+  let avgStabilityPercent: number | null = null
+  let stableCount = 0
+  let unstableCount = 0
 
   if (pedalingSampleCount > 0) {
-    avgEfficiency = pedalingSamples.reduce((sum, s) => sum + (s.efficiency ?? 0), 0) / pedalingSampleCount
-    avgEfficiencyPercent = avgEfficiency * 100
-    smoothCount = pedalingSamples.filter(s => (s.efficiency ?? 0) > CONSTANTS.SMOOTH_THRESHOLD).length
-    roughCount = pedalingSamples.filter(s => (s.efficiency ?? 0) < CONSTANTS.ROUGH_THRESHOLD).length
+    avgStability = pedalingSamples.reduce((sum, s) => sum + (s.stability ?? 0), 0) / pedalingSampleCount
+    avgStabilityPercent = avgStability * 100
+    const stableThreshold = options?.stableThreshold ?? CONSTANTS.STABLE_THRESHOLD
+    const unstableThreshold = options?.unstableThreshold ?? CONSTANTS.UNSTABLE_THRESHOLD
+    stableCount = pedalingSamples.filter(s => (s.stability ?? 0) > stableThreshold).length
+    unstableCount = pedalingSamples.filter(s => (s.stability ?? 0) < unstableThreshold).length
   }
 
   // Calculate average cadence from FIT sensor
@@ -120,10 +130,10 @@ export function calculateMetadata(
     : null
 
   const metadata: PedalingEfficiencyMetadata = {
-    avgEfficiency,
-    avgEfficiencyPercent,
-    smoothPercent: pedalingSampleCount > 0 ? (smoothCount / pedalingSampleCount) * 100 : 0,
-    roughPercent: pedalingSampleCount > 0 ? (roughCount / pedalingSampleCount) * 100 : 0,
+    avgStability,
+    avgStabilityPercent,
+    stablePercent: pedalingSampleCount > 0 ? (stableCount / pedalingSampleCount) * 100 : 0,
+    unstablePercent: pedalingSampleCount > 0 ? (unstableCount / pedalingSampleCount) * 100 : 0,
     pedalingPercent: (pedalingSampleCount / samples.length) * 100,
     avgCadence,
     totalSamples: samples.length,
@@ -132,11 +142,9 @@ export function calculateMetadata(
     sampleRate
   }
 
-  // Add debug statistics if requested
   if (includeDebug) {
     metadata.debug = calculateDebugStatistics(
       samples,
-      processedSamples,
       sampleRate ?? CONSTANTS.DEFAULT_SAMPLE_RATE_HZ
     )
   }
@@ -148,27 +156,23 @@ export function calculateMetadata(
 // DEBUG STATISTICS
 // ============================================
 
-/**
- * Calculate debug statistics for analysis
- */
 function calculateDebugStatistics(
   samples: PedalingEfficiencyOutput[],
-  processedSamples: Array<{ rawAccel: number; filteredAccel: number }>,
   sampleRate: number
 ): DebugStatistics {
-  // Calculate percentile stats for various metrics
-  const rawAccelStats = calculatePercentileStats(processedSamples.map(s => Math.abs(s.rawAccel)))
-  const filteredAccelStats = calculatePercentileStats(processedSamples.map(s => Math.abs(s.filteredAccel)))
+  const pedalingSamples = samples.filter(s => s.stability !== null)
 
-  // Calculate std dev for each sample's window (reconstruct from efficiency)
-  const stdDevValues = samples.map(s => {
-    if (s.efficiency === null || s.efficiency === 0) return 0
-    // Inverse of efficiency = exp(-k * stdDev) → stdDev = -ln(efficiency) / k
-    return -Math.log(Math.max(0.1, s.efficiency)) / CONSTANTS.EFFICIENCY_DECAY_CONSTANT
-  })
-  const stdDevStats = calculatePercentileStats(stdDevValues)
+  const rollRmsStats = calculatePercentileStats(
+    pedalingSamples.map(s => s.rollRms ?? 0)
+  )
+  const yawRmsStats = calculatePercentileStats(
+    pedalingSamples.map(s => s.yawRms ?? 0)
+  )
+  const surgeRmsStats = calculatePercentileStats(
+    pedalingSamples.map(s => s.surgeRms ?? 0)
+  )
 
-  // Cadence distribution (for pedaling samples only)
+  // Cadence distribution
   const cadenceSamples = samples.filter(s => s.cadence !== null && s.cadence! > 0)
   const cadences = cadenceSamples.map(s => s.cadence!)
 
@@ -179,18 +183,17 @@ function calculateDebugStatistics(
     histogram: createCadenceHistogram(cadences)
   }
 
-  // Find sample windows for inspection
   const windowSize = Math.floor(CONSTANTS.DEBUG_WINDOW_SECONDS * sampleRate)
 
   const sampleWindows = {
-    highEfficiency: findBestWindow(samples.filter(s => s.efficiency !== null), windowSize, s => s.efficiency ?? 0, true),
-    lowEfficiency: findBestWindow(samples.filter(s => s.efficiency !== null), windowSize, s => s.efficiency ?? 0, false)
+    highStability: findBestWindow(pedalingSamples, windowSize, s => s.stability ?? 0, true),
+    lowStability: findBestWindow(pedalingSamples, windowSize, s => s.stability ?? 0, false)
   }
 
   return {
-    rawAccelStats,
-    filteredAccelStats,
-    stdDevStats,
+    rollRmsStats,
+    yawRmsStats,
+    surgeRmsStats,
     cadenceDistribution,
     sampleWindows
   }
@@ -200,9 +203,6 @@ function calculateDebugStatistics(
 // PERCENTILE STATISTICS
 // ============================================
 
-/**
- * Calculate percentile statistics for a dataset
- */
 export function calculatePercentileStats(values: number[]): PercentileStats {
   if (values.length === 0) {
     return { min: 0, p10: 0, p25: 0, p50: 0, p75: 0, p90: 0, max: 0, mean: 0 }
@@ -233,16 +233,13 @@ export function calculatePercentileStats(values: number[]): PercentileStats {
 // UTILITY FUNCTIONS
 // ============================================
 
-/**
- * Create histogram of cadence values in 10 RPM buckets
- */
 function createCadenceHistogram(cadences: number[]): Array<{ rpm: number; count: number }> {
   if (cadences.length === 0) return []
 
   const buckets = new Map<number, number>()
 
   for (const cadence of cadences) {
-    const bucket = Math.floor(cadence / 10) * 10  // Round down to nearest 10
+    const bucket = Math.floor(cadence / 10) * 10
     buckets.set(bucket, (buckets.get(bucket) || 0) + 1)
   }
 
@@ -251,9 +248,6 @@ function createCadenceHistogram(cadences: number[]): Array<{ rpm: number; count:
     .sort((a, b) => a.rpm - b.rpm)
 }
 
-/**
- * Find best window of samples based on a metric
- */
 function findBestWindow(
   samples: PedalingEfficiencyOutput[],
   windowSize: number,

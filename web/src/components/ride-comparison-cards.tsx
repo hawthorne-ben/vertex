@@ -11,12 +11,12 @@ interface ComparisonData {
 }
 
 interface RideComparisons {
-  efficiency: ComparisonData | null
+  stability: ComparisonData | null
   standing: ComparisonData | null
   avgHr: ComparisonData | null
   avgPower: ComparisonData | null
-  smooth: ComparisonData | null
-  rough: ComparisonData | null
+  stable: ComparisonData | null
+  unstable: ComparisonData | null
   cadenceStanding: ComparisonData | null
   cadenceSeated: ComparisonData | null
 }
@@ -85,7 +85,7 @@ export function RideComparisonCards({ rideId }: { rideId: string }) {
       // Fetch this ride's summary
       const { data: summary } = await supabase
         .from('ride_summaries')
-        .select('avg_efficiency_percent, standing_percent, avg_heart_rate, avg_power_watts, smooth_percent, rough_percent, avg_cadence_standing, avg_cadence_seated, user_id')
+        .select('avg_stability_percent, standing_percent, avg_heart_rate, avg_power_watts, stable_pedaling_percent, unstable_pedaling_percent, avg_cadence_standing, avg_cadence_seated, user_id')
         .eq('ride_id', rideId)
         .maybeSingle()
 
@@ -94,7 +94,7 @@ export function RideComparisonCards({ rideId }: { rideId: string }) {
       // Fetch rolling averages from other rides in the last 8 weeks
       const { data: others } = await supabase
         .from('ride_summaries')
-        .select('avg_efficiency_percent, standing_percent, avg_heart_rate, avg_power_watts, smooth_percent, rough_percent, avg_cadence_standing, avg_cadence_seated')
+        .select('avg_stability_percent, standing_percent, avg_heart_rate, avg_power_watts, stable_pedaling_percent, unstable_pedaling_percent, avg_cadence_standing, avg_cadence_seated')
         .eq('user_id', summary.user_id)
         .gte('ride_started_at', new Date(Date.now() - 8 * 7 * 24 * 60 * 60 * 1000).toISOString())
 
@@ -105,30 +105,30 @@ export function RideComparisonCards({ rideId }: { rideId: string }) {
         return valid.length > 0 ? valid.reduce((a, b) => a + b, 0) / valid.length : null
       }
 
-      const avgEfficiency = avg(others.map(r => r.avg_efficiency_percent))
+      const avgStability = avg(others.map(r => r.avg_stability_percent))
       const avgStanding = avg(others.map(r => r.standing_percent))
       const avgHr = avg(others.map(r => r.avg_heart_rate))
       const avgPower = avg(others.map(r => r.avg_power_watts))
-      const avgSmooth = avg(others.map(r => r.smooth_percent))
-      const avgRough = avg(others.map(r => r.rough_percent))
+      const avgStable = avg(others.map(r => r.stable_pedaling_percent))
+      const avgUnstable = avg(others.map(r => r.unstable_pedaling_percent))
       const avgCadenceStanding = avg(others.map(r => r.avg_cadence_standing))
       const avgCadenceSeated = avg(others.map(r => r.avg_cadence_seated))
 
       if (cancelled) return
 
       setData({
-        efficiency: summary.avg_efficiency_percent != null && avgEfficiency != null
-          ? { value: summary.avg_efficiency_percent, average: avgEfficiency } : null,
+        stability: summary.avg_stability_percent != null && avgStability != null
+          ? { value: summary.avg_stability_percent, average: avgStability } : null,
         standing: summary.standing_percent != null && avgStanding != null
           ? { value: summary.standing_percent, average: avgStanding } : null,
         avgHr: summary.avg_heart_rate != null && avgHr != null
           ? { value: summary.avg_heart_rate, average: avgHr } : null,
         avgPower: summary.avg_power_watts != null && avgPower != null
           ? { value: summary.avg_power_watts, average: avgPower } : null,
-        smooth: summary.smooth_percent != null && avgSmooth != null
-          ? { value: summary.smooth_percent, average: avgSmooth } : null,
-        rough: summary.rough_percent != null && avgRough != null
-          ? { value: summary.rough_percent, average: avgRough } : null,
+        stable: summary.stable_pedaling_percent != null && avgStable != null
+          ? { value: summary.stable_pedaling_percent, average: avgStable } : null,
+        unstable: summary.unstable_pedaling_percent != null && avgUnstable != null
+          ? { value: summary.unstable_pedaling_percent, average: avgUnstable } : null,
         cadenceStanding: summary.avg_cadence_standing != null && avgCadenceStanding != null
           ? { value: summary.avg_cadence_standing, average: avgCadenceStanding } : null,
         cadenceSeated: summary.avg_cadence_seated != null && avgCadenceSeated != null
@@ -142,19 +142,19 @@ export function RideComparisonCards({ rideId }: { rideId: string }) {
 
   if (!data) return null
 
-  const hasAny = data.efficiency || data.standing || data.avgHr || data.avgPower
+  const hasAny = data.stability || data.standing || data.avgHr || data.avgPower
   if (!hasAny) return null
 
-  const hasAnalysisRow = data.smooth || data.rough || data.cadenceStanding || data.cadenceSeated
+  const hasAnalysisRow = data.stable || data.unstable || data.cadenceStanding || data.cadenceSeated
 
   return (
     <>
       <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-4">
-        {data.efficiency && (
+        {data.stability && (
           <ComparisonMetric
-            label="Efficiency"
-            value={data.efficiency.value}
-            average={data.efficiency.average}
+            label="Stability"
+            value={data.stability.value}
+            average={data.stability.average}
             unit="%"
             precision={1}
             colored
@@ -191,21 +191,21 @@ export function RideComparisonCards({ rideId }: { rideId: string }) {
       </div>
       {hasAnalysisRow && (
         <div className="grid grid-cols-2 sm:grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-8">
-          {data.smooth && (
+          {data.stable && (
             <ComparisonMetric
-              label="Smooth %"
-              value={data.smooth.value}
-              average={data.smooth.average}
+              label="Stable %"
+              value={data.stable.value}
+              average={data.stable.average}
               unit="%"
               precision={0}
               colored
             />
           )}
-          {data.rough && (
+          {data.unstable && (
             <ComparisonMetric
-              label="Rough %"
-              value={data.rough.value}
-              average={data.rough.average}
+              label="Unstable %"
+              value={data.unstable.value}
+              average={data.unstable.average}
               unit="%"
               precision={0}
               colored

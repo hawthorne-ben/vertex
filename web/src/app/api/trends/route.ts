@@ -10,20 +10,20 @@ const METRIC_CONFIG: Record<string, {
   unit: string
   stableThreshold: number  // Per-week threshold for stable vs improving/declining
 }> = {
-  efficiency: {
-    column: 'avg_efficiency_percent',
+  stability: {
+    column: 'avg_stability_percent',
     versionColumn: 'efficiency_version',
     unit: '%',
     stableThreshold: 0.5,
   },
-  smooth: {
-    column: 'smooth_percent',
+  stable: {
+    column: 'stable_pedaling_percent',
     versionColumn: 'efficiency_version',
     unit: '%',
     stableThreshold: 1.0,
   },
-  rough: {
-    column: 'rough_percent',
+  unstable: {
+    column: 'unstable_pedaling_percent',
     versionColumn: 'efficiency_version',
     unit: '%',
     stableThreshold: 1.0,

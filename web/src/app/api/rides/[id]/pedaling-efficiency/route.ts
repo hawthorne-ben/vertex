@@ -4,21 +4,27 @@ import { withAuth } from '@/lib/api/auth'
 export const dynamic = 'force-dynamic'
 
 /**
- * Helper: Average multiple efficiency samples into one
+ * Helper: Average multiple stability samples into one
+ *
+ * Handles both v5+ field names (stability/stabilityPercent) and
+ * legacy v4 field names (efficiency/efficiencyPercent) for backwards
+ * compatibility with previously stored analyses.
  */
 function averageSamples(samples: any[]): any {
   if (samples.length === 0) return null
-  if (samples.length === 1) return samples[0]
+  if (samples.length === 1) return normalizeSample(samples[0])
 
-  let sumEfficiency = 0
+  let sumStability = 0
   let sumCadence = 0
-  let countEfficiency = 0
+  let countStability = 0
   let countCadence = 0
 
   for (const s of samples) {
-    if (s.efficiency !== null && s.efficiency !== undefined) {
-      sumEfficiency += s.efficiency
-      countEfficiency++
+    // Support both old (efficiency) and new (stability) field names
+    const val = s.stability ?? s.efficiency ?? null
+    if (val !== null && val !== undefined) {
+      sumStability += val
+      countStability++
     }
     if (s.cadence !== null && s.cadence !== undefined) {
       sumCadence += s.cadence
@@ -28,17 +34,51 @@ function averageSamples(samples: any[]): any {
 
   // Use middle sample's timestamp as representative
   const middleSample = samples[Math.floor(samples.length / 2)]
+  const avgStability = countStability > 0 ? sumStability / countStability : null
 
   return {
     timestamp: middleSample.timestamp,
-    efficiency: countEfficiency > 0 ? sumEfficiency / countEfficiency : null,
-    efficiencyPercent: countEfficiency > 0 ? (sumEfficiency / countEfficiency) * 100 : null,
+    stability: avgStability,
+    stabilityPercent: avgStability !== null ? avgStability * 100 : null,
     isPedaling: middleSample.isPedaling,
     cadence: countCadence > 0 ? sumCadence / countCadence : null,
-    // Keep other fields from middle sample
-    rawAccel: middleSample.rawAccel,
-    filteredAccel: middleSample.filteredAccel,
-    grade: middleSample.grade
+    grade: middleSample.grade,
+    // Pass through spectral debug fields from middle sample
+    cadenceHz: middleSample.cadenceHz ?? null,
+    rollRms: middleSample.rollRms ?? middleSample.rollCoherence ?? null,
+    yawRms: middleSample.yawRms ?? middleSample.yawCoherence ?? null,
+    surgeRms: middleSample.surgeRms ?? middleSample.surgeCoherence ?? null,
+  }
+}
+
+/**
+ * Normalize a single sample from legacy field names to v5+ field names.
+ * Stored analyses from v4 use efficiency/efficiencyPercent; v5+ uses stability/stabilityPercent.
+ */
+function normalizeSample(s: any): any {
+  if (s.stability !== undefined) return s // Already v5+
+  if (s.efficiency !== undefined) {
+    return {
+      ...s,
+      stability: s.efficiency,
+      stabilityPercent: s.efficiencyPercent ?? (s.efficiency !== null ? s.efficiency * 100 : null),
+    }
+  }
+  return s
+}
+
+/**
+ * Normalize legacy metadata from v4 (efficiency) to v5 (stability) field names.
+ */
+function normalizeMetadata(meta: any): any {
+  if (!meta) return meta
+  if (meta.avgStability !== undefined) return meta // Already v5+
+  return {
+    ...meta,
+    avgStability: meta.avgSmoothness ?? meta.avgEfficiency ?? null,
+    avgStabilityPercent: meta.avgSmoothnessPercent ?? meta.avgEfficiencyPercent ?? null,
+    stablePercent: meta.smoothPercent ?? meta.smoothPercent ?? 0,
+    unstablePercent: meta.roughPercent ?? meta.roughPercent ?? 0,
   }
 }
 
@@ -166,7 +206,8 @@ export async function GET(
     }
 
     // Analysis completed - return cached results
-    let samples = analysis.samples || []
+    // Normalize legacy field names (v4 efficiency → v5 stability)
+    let samples = (analysis.samples || []).map(normalizeSample)
 
     // Filter by time range if provided
     if (startTime || endTime) {
@@ -232,20 +273,23 @@ export async function GET(
       }
     }
 
+    // Normalize legacy metadata field names
+    const metadata = normalizeMetadata(analysis.metadata)
+
     // Return metadata only if requested
     if (metadataOnly) {
       return NextResponse.json(
         {
           status: 'completed',
           samples: [],
-          metadata: analysis.metadata,
+          metadata,
           computedAt: analysis.completed_at,
           algorithmVersion: analysis.algorithm_version,
           parameters: analysis.parameters,
         },
         {
           headers: {
-            'Cache-Control': 'public, max-age=3600, immutable',
+            'Cache-Control': 'public, no-cache',
             'ETag': `"${analysis.id}-${analysis.completed_at}-metadata"`,
           },
         }
@@ -257,14 +301,14 @@ export async function GET(
       {
         status: 'completed',
         samples,
-        metadata: analysis.metadata,
+        metadata,
         computedAt: analysis.completed_at,
         algorithmVersion: analysis.algorithm_version,
         parameters: analysis.parameters,
       },
       {
         headers: {
-          'Cache-Control': 'public, max-age=3600, immutable',
+          'Cache-Control': 'public, no-cache',
           'ETag': `"${analysis.id}-${analysis.completed_at}-${startTime || 'full'}-${endTime || 'full'}"`,
         },
       }

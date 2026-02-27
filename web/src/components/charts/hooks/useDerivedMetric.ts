@@ -28,10 +28,10 @@ export interface UseDerivedMetricResult {
 
 // API Response types
 interface PedalingEfficiencyMetadata {
-  avgEfficiency: number | null
-  avgEfficiencyPercent: number | null
-  smoothPercent: number
-  roughPercent: number
+  avgStability: number | null
+  avgStabilityPercent: number | null
+  stablePercent: number
+  unstablePercent: number
   pedalingPercent: number
   avgCadence: number | null
   totalSamples: number
@@ -176,7 +176,7 @@ export function useDerivedMetric({
           let value: number | null = null
 
           if (metric === 'pedalingEfficiency') {
-            value = s.efficiencyPercent ?? (s.efficiency !== null && s.efficiency !== undefined ? s.efficiency * 100 : null)
+            value = s.stabilityPercent ?? (s.stability !== null && s.stability !== undefined ? s.stability * 100 : null)
           } else if (metric === 'ridingPosition') {
             value = s.position === 'standing' ? 1 : s.position === 'seated' ? 0 : null
           }

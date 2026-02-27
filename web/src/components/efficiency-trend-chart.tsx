@@ -42,10 +42,10 @@ export function EfficiencyTrendChart() {
 
     async function load() {
       try {
-        const res = await authFetch('/api/trends?metric=efficiency&period=8w')
+        const res = await authFetch('/api/trends?metric=stability&period=8w')
         if (!res.ok || cancelled) return
         const json = await res.json()
-        if (!cancelled) setData(json.metrics?.efficiency || null)
+        if (!cancelled) setData(json.metrics?.stability || null)
       } catch {
         // Silently fail — dashboard chart is non-critical
       } finally {
@@ -73,7 +73,7 @@ export function EfficiencyTrendChart() {
     const series: uPlot.Series[] = [
       { label: 'Date' },
       {
-        label: 'Efficiency',
+        label: 'Stability',
         stroke: lineColor,
         width: 2,
         fill: isDark ? 'rgba(34,197,94,0.08)' : 'rgba(34,197,94,0.06)',

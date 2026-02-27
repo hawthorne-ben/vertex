@@ -222,6 +222,7 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
             grade: r.grade || null,
             altitude: r.enhanced_altitude ?? r.altitude ?? null,
             cadence: r.cadence ?? null,
+            power: r.power ?? null,
           }))
           .filter((s: any) => s.timestamp)
 
@@ -243,6 +244,7 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
             accel_y: record.accelY,
             accel_z: record.accelZ,
             gyro_x: record.gyroX,
+            gyro_z: record.gyroZ,
           })
         }
 
@@ -303,9 +305,9 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
           positionAnalysisId,
           efficiencySampleCount: computeResult.efficiency.samples.length,
           positionSampleCount: computeResult.position.samples.length,
-          avgEfficiency: computeResult.efficiency.metadata.avgEfficiencyPercent,
-          smoothPercent: computeResult.efficiency.metadata.smoothPercent,
-          roughPercent: computeResult.efficiency.metadata.roughPercent,
+          avgStability: computeResult.efficiency.metadata.avgStabilityPercent,
+          stablePercent: computeResult.efficiency.metadata.stablePercent,
+          unstablePercent: computeResult.efficiency.metadata.unstablePercent,
           pedalingPercent: computeResult.efficiency.metadata.pedalingPercent,
           standingPercent: computeResult.position.metadata.standingPercent,
           seatedPercent: computeResult.position.metadata.seatedPercent,
@@ -366,10 +368,10 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
           max_power_watts: fitStats?.max_power_watts ?? null,
           max_cadence: fitStats?.max_cadence ?? null,
 
-          // IMU-derived: Efficiency
-          avg_efficiency_percent: result.avgEfficiency ?? null,
-          smooth_percent: result.smoothPercent ?? null,
-          rough_percent: result.roughPercent ?? null,
+          // IMU-derived: Stability
+          avg_stability_percent: result.avgStability ?? null,
+          stable_pedaling_percent: result.stablePercent ?? null,
+          unstable_pedaling_percent: result.unstablePercent ?? null,
           pedaling_percent: result.pedalingPercent ?? null,
 
           // IMU-derived: Position

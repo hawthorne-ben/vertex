@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
     if (rideIds.length > 0) {
       const { data: summaries } = await supabase
         .from('ride_summaries')
-        .select('ride_id, avg_efficiency_percent, smooth_percent, rough_percent, standing_percent, seated_percent, avg_heart_rate, avg_power_watts, avg_cadence, max_heart_rate, max_power_watts, max_cadence, avg_cadence_standing, avg_cadence_seated')
+        .select('ride_id, avg_stability_percent, stable_pedaling_percent, unstable_pedaling_percent, standing_percent, seated_percent, avg_heart_rate, avg_power_watts, avg_cadence, max_heart_rate, max_power_watts, max_cadence, avg_cadence_standing, avg_cadence_seated')
         .in('ride_id', rideIds)
 
       if (summaries) {
@@ -72,9 +72,9 @@ export async function GET(request: NextRequest) {
         fit_storage_path: fitRecording?.storage_path || null,
         analysis_results: fitRecording?.analysis_results || {},
         summary: summary ? {
-          avg_efficiency_percent: summary.avg_efficiency_percent,
-          smooth_percent: summary.smooth_percent,
-          rough_percent: summary.rough_percent,
+          avg_stability_percent: summary.avg_stability_percent,
+          stable_pedaling_percent: summary.stable_pedaling_percent,
+          unstable_pedaling_percent: summary.unstable_pedaling_percent,
           standing_percent: summary.standing_percent,
           seated_percent: summary.seated_percent,
           avg_heart_rate: summary.avg_heart_rate,

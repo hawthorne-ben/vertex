@@ -150,6 +150,7 @@ export async function POST(
           grade: record.grade ?? null,
           altitude: record.altitude ?? null,
           cadence: record.cadence ?? null,
+          power: record.power ?? null,
         }))
 
         resolve(samples)
@@ -181,6 +182,7 @@ export async function POST(
         accel_y: record.accelY,
         accel_z: record.accelZ,
         gyro_x: record.gyroX,
+        gyro_z: record.gyroZ,
       })
     }
 
@@ -200,7 +202,7 @@ export async function POST(
 
     console.log(`[DEV] Computation took ${computeTime}ms`)
     console.log(`[DEV] Efficiency: ${result.efficiency.samples.length} samples, ${result.efficiency.metadata.pedalingSamples} pedaling`)
-    console.log(`[DEV] Avg efficiency: ${result.efficiency.metadata.avgEfficiencyPercent?.toFixed(1)}%`)
+    console.log(`[DEV] Avg stability: ${result.efficiency.metadata.avgStabilityPercent?.toFixed(1)}%`)
     console.log(`[DEV] Position: ${result.position.samples.length} samples`)
     console.log(`[DEV] Standing: ${result.position.metadata.standingPercent?.toFixed(1)}%, Seated: ${result.position.metadata.seatedPercent?.toFixed(1)}%`)
 

@@ -1,10 +1,11 @@
 /**
- * Pedaling Efficiency Algorithm Constants
+ * Pedaling Stability & Surface Roughness Algorithm Constants
  *
  * Centralized configuration for easy tuning without hunting through code.
  * Adjust these values to calibrate algorithm for different riding styles.
  *
- * v3.0.0: FIT cadence for pedaling detection, removed FFT/BPF
+ * v6.0.0: Time-domain RMS stability (BPF'd gyro → windowed RMS → ceiling normalization)
+ *         Replaces FFT spectral analysis. FFT constants retained for future use.
  */
 
 // ============================================
@@ -15,60 +16,122 @@
  * Version string for cache invalidation
  * Bump this when changing any constants or algorithm logic
  */
-export const ALGORITHM_VERSION = '4.0.0'  // Gyro roll rate fusion for position detection
+export const ALGORITHM_VERSION = '6.0.0'  // Time-domain RMS stability (replaces FFT spectral analysis)
 
 // ============================================
-// SIGNAL PROCESSING
+// WINDOWED RMS CONFIGURATION
 // ============================================
 
 /**
- * High-pass filter cutoff frequency in Hz
- * Removes gravity and constant acceleration components
- * Lower = more aggressive filtering (removes slower movements)
- * Higher = preserves more signal (but keeps some gravity)
+ * Sliding window size in seconds for stability RMS calculation
+ * Matches position detection window for consistency
+ */
+export const STFT_WINDOW_SECONDS = 3
+
+/**
+ * Window hop size in seconds (advance rate)
+ * 0.5s → 2 Hz output rate, linearly interpolated to 25 Hz for output
+ */
+export const STFT_HOP_SECONDS = 0.5
+
+// ============================================
+// STABILITY BANDPASS FILTER
+// ============================================
+
+/**
+ * Bandpass filter bounds for stability signals (gyro-x, gyro-z, accel-x)
+ * Isolates the human-frequency range from DC drift and aliased noise.
+ * Cornering lean is sub-0.3 Hz and gets attenuated by the BPF.
  *
- * Tuning guide:
- * - 0.3 Hz: Very aggressive, removes all slow movements
- * - 0.5 Hz: Balanced (default) - removes gravity, keeps pedaling
- * - 0.8 Hz: Minimal filtering, keeps most signal
+ * 0.3 Hz: catches very slow cadences (18 RPM), rejects sustained lean
+ * 10.0 Hz: captures harmonics up to ~5th order, well below Nyquist (12.5 Hz)
  */
-export const HPF_CUTOFF_HZ = 0.5
-
-/**
- * Window size for efficiency calculation in seconds
- * Larger = smoother results but less responsive to changes
- * Smaller = more responsive but noisier
- *
- * Tuning guide:
- * - 2 seconds: Very responsive, shows every variation
- * - 3 seconds: Balanced (default)
- * - 5 seconds: Very smooth, averages out technique variations
- */
-export const EFFICIENCY_WINDOW_SECONDS = 3
+export const STABILITY_BPF_LOW_HZ = 0.5
+export const STABILITY_BPF_HIGH_HZ = 10.0
 
 // ============================================
-// EFFICIENCY FORMULA
+// FFT CONSTANTS (retained for future spectral analysis)
+// ============================================
+
+/** FFT size for future spectral features (not used by stability v6) */
+export const STFT_FFT_SIZE = 128
+
+/** Cadence band half-width (not used by stability v6) */
+export const CADENCE_BAND_HALF_WIDTH_HZ = 0.2
+
+/** Minimum cadence for spectral analysis (not used by stability v6) */
+export const MIN_CADENCE_RPM = 30
+
+/** Wider cadence band for low cadence (not used by stability v6) */
+export const LOW_CADENCE_BAND_HALF_WIDTH_HZ = 0.3
+
+// ============================================
+// STABILITY AXIS WEIGHTS
 // ============================================
 
 /**
- * Decay constant for efficiency formula: efficiency = exp(-k * stdDev)
- * Lower k = more generous scoring (higher efficiency values)
- * Higher k = stricter scoring (lower efficiency values)
+ * Weighted fusion of per-axis spectral coherence
+ * Must sum to 1.0
  *
- * Current calibration (k = 0.18):
- * - stdDev ~0.5 m/s² (very smooth) → ~85% efficiency
- * - stdDev ~1.0 m/s² (smooth) → ~70% efficiency
- * - stdDev ~2.0 m/s² (moderate) → ~50% efficiency
- * - stdDev ~4.0 m/s² (rough) → ~25% efficiency
+ * Gyro-x (roll): cleanest signal, road noise produces minimal frame roll
+ * Gyro-z (yaw): captures handlebar instability, synced with roll
+ * Accel-x (surge): captures uneven power application, noisier but self-normalizing
  */
-export const EFFICIENCY_DECAY_CONSTANT = 0.18
+export const STABILITY_ROLL_WEIGHT = 0.7   // Gyro-x: frame roll
+export const STABILITY_YAW_WEIGHT = 0.3    // Gyro-z: handlebar stability
+export const STABILITY_SURGE_WEIGHT = 0.0  // Accel-x: disabled (incompatible units with gyro rad/s)
+
+// ============================================
+// STABILITY CEILING NORMALIZATION
+// ============================================
 
 /**
- * Minimum raw efficiency value (floor to prevent extremely low scores)
- * Raw values below this are clamped up to prevent discouragement
+ * Maximum expected weighted RMS at cadence frequency for stability normalization
+ * stability = max(0, 1 - weightedRms / MAX_STABILITY_RMS)
+ *
+ * Units: mixed (gyro rad/s, accel m/s²) weighted sum
+ * Calibrate from real data. Start at 5.0, tune with tuning modal.
  */
-export const EFFICIENCY_FLOOR = 0.15
+export const MAX_STABILITY_RMS = 20.0
 
+/**
+ * Maximum expected weighted RMS per watt for power-normalized stability
+ * Used when POWER_NORMALIZE_STABILITY is enabled
+ */
+export const MAX_STABILITY_RMS_PER_WATT = 0.02
+
+/**
+ * Whether to normalize stability by instantaneous power (watts)
+ * Default off — not all riders have power meters.
+ * When enabled, higher-power efforts are allowed more motion.
+ */
+export const POWER_NORMALIZE_STABILITY = false
+
+// ============================================
+// SURFACE ROUGHNESS
+// ============================================
+
+/**
+ * High-pass filter cutoff for roughness signals (accel-x, accel-z)
+ * Removes gravity and constant acceleration
+ */
+export const ROUGHNESS_HPF_CUTOFF_HZ = 0.5
+
+/**
+ * Maximum expected RMS for normalization (m/s²)
+ * roughness = min(1.0, rms / MAX_ROUGHNESS_RMS)
+ *
+ * Calibrate from real data:
+ * - Smooth tarmac: ~0.5-1.0 m/s² RMS
+ * - Rough chip-seal: ~2.0-3.0 m/s² RMS
+ * - Gravel: ~4.0-5.0 m/s² RMS
+ */
+export const MAX_ROUGHNESS_RMS = 5.0
+
+/**
+ * Rolling window for roughness RMS calculation in seconds
+ */
+export const ROUGHNESS_WINDOW_SECONDS = 3
 
 // ============================================
 // TIME SYNCHRONIZATION
@@ -85,16 +148,16 @@ export const SYNC_TOLERANCE_MS = 100
 // ============================================
 
 /**
- * Efficiency threshold for "smooth" classification
- * Samples above this count toward smoothPercent metric
+ * Stability threshold for "stable" classification
+ * Samples above this count toward stablePercent metric
  */
-export const SMOOTH_THRESHOLD = 0.7
+export const STABLE_THRESHOLD = 0.7
 
 /**
- * Efficiency threshold for "rough" classification
- * Samples below this count toward roughPercent metric
+ * Stability threshold for "unstable" classification
+ * Samples below this count toward unstablePercent metric
  */
-export const ROUGH_THRESHOLD = 0.5
+export const UNSTABLE_THRESHOLD = 0.5
 
 // ============================================
 // DEBUG CONFIGURATION
@@ -146,7 +209,7 @@ export const Y_AXIS_STANDING_THRESHOLD = 2.2
 
 /**
  * Window size for position calculation in seconds
- * Matches efficiency window for consistency
+ * Matches STFT window for consistency
  */
 export const POSITION_WINDOW_SECONDS = 3
 
