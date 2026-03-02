@@ -32,6 +32,8 @@ The VTX V2 is a compact cycling IMU data logger designed as a puck that stacks b
 | Storage | Micro SD TF card module (SPI) | SPI | Local data logging |
 | SD Card | KEXIN 8GB microSDHC | — | ~100+ hours of recording at 100Hz |
 | Charge IC | TP4057 USB-C module (with protection) | — | LiPo charging + battery protection |
+| Schottky Diode | 1N5817 (or similar, e.g. SS14) | Inline on TP4057 OUT+ | Prevents USB 5V backfeed into battery when charging |
+| Resistor ×2 | 100KΩ (1/4W) | Voltage divider | Battery voltage sensing via ADC |
 | Battery | 360mAh 4.2V LiPo | JST connector | ~3-4 hour runtime (estimate) |
 
 ### IMU Selection Notes
@@ -52,13 +54,30 @@ USB-C → TP4057 (charge + protect) → LiPo 360mAh
                                    ↓
                               BAT+ (3.7-4.2V)
                                    ↓
+                           Schottky diode (1N5817)
+                          (cathode toward ESP32)
+                                   ↓
                          ESP32-S3 Mini "5V" pin
                          (onboard 3.3V regulator)
                                    ↓
                               3V3 rail → LSM6DS3 VCC, SD module VCC
 ```
 
-The TP4057 outputs battery voltage (3.7-4.2V). The ESP32-S3 Mini's onboard regulator accepts this on the `5V` pin and provides 3.3V to itself and peripherals via the `3V3` pin.
+The TP4057 outputs battery voltage (3.7-4.2V). A **Schottky diode** (1N5817 or SS14) is placed inline on the OUT+ line between the TP4057 and ESP32 to prevent USB 5V from backfeeding into the battery through the ESP32's 5V pin when the TP4057 USB-C is plugged in for charging. The diode's forward voltage drop (~0.3V) is negligible — the ESP32-S3 Mini's onboard regulator accepts 3.4-3.9V on the `5V` pin and provides 3.3V to itself and peripherals via the `3V3` pin.
+
+### Battery Voltage Sensing
+
+A **100K/100K resistor voltage divider** taps BAT+ (before the Schottky diode) to read battery voltage via an ADC GPIO on the ESP32-S3.
+
+```
+BAT+ ──┬── 100KΩ ──┬── 100KΩ ── GND
+       │           │
+       │       ADC GPIO (GPIO4)
+       │
+       └── Schottky → ESP32 5V pin
+```
+
+The divider halves the battery voltage (3.7-4.2V → 1.85-2.1V), keeping it within the ESP32's 0-3.3V ADC range. The firmware reads this pin and multiplies by 2 to get the true battery voltage. See `BATTERY_ADC_PIN` and `BATTERY_VOLTAGE_DIVIDER` in `config.h`.
 
 ### Pin Assignments
 
@@ -74,6 +93,7 @@ The TP4057 outputs battery voltage (3.7-4.2V). The ESP32-S3 Mini's onboard regul
 | GPIO11 | SD MOSI | SPI |
 | GPIO12 | SD MISO | SPI |
 | GPIO13 | SD CS | SPI |
+| GPIO4 | Battery voltage divider (100K/100K from BAT+) | ADC |
 
 ### Wiring Diagram
 
@@ -82,43 +102,47 @@ The TP4057 outputs battery voltage (3.7-4.2V). The ESP32-S3 Mini's onboard regul
   USB-C ───────────►│   TP4057    │
                     │  Charge IC  │
                     │             │
-                    │ BAT+   OUT+ ├──────┬──────────────────────┐
-                    │ BAT-   OUT- │      │                      │
-                    └──┬──────────┘      │                      │
-                       │                 │                      │
-                    ┌──┴──┐              │                      │
-                    │LiPo │              │                      │
-                    │360mA│              │                      │
-                    └─────┘              │                      │
-                                         │                      │
-                              ┌──────────┴──────────┐           │
-                              │   ESP32-S3 Mini     │           │
-                              │                     │           │
-                              │  5V           GND   │───── GND ─┤
-                              │  3V3                │──┬────────┘
+                    │ BAT+   OUT+ ├──────┬──────────────────────────────┐
+                    │ BAT-   OUT- │      │                              │
+                    └──┬──────────┘      │                              │
+                       │                 │                              │
+                    ┌──┴──┐              │                              │
+                    │LiPo │         ┌────┴────┐                        │
+                    │360mA│         │ 1N5817  │ Schottky diode         │
+                    └─────┘         │ ◄──|──► │ (prevents USB 5V       │
+                                    └────┬────┘  backfeed)             │
+                                         │                              │
+                              ┌──────────┴──────────┐                   │
+                              │   ESP32-S3 Mini     │                   │
+                              │                     │                   │
+                              │  5V           GND   │───── GND ────────┤
+                              │  3V3                │──┬────────────────┘
                               │                     │  │
                               │  GPIO1 (SCL) ───────│──┤
                               │  GPIO2 (SDA) ───────│──┤ I2C
                               │  GPIO3 (INT1) ──────│──┤
+                              │                     │  │
+                              │  GPIO4 (ADC) ───────│──┤ Battery sense
                               │                     │  │
                               │  GPIO10 (SCK) ──────│──┤
                               │  GPIO11 (MOSI) ─────│──┤ SPI
                               │  GPIO12 (MISO) ─────│──┤
                               │  GPIO13 (CS) ───────│──┘
                               └─────────────────────┘
-                                    │  │                │  │
-           ┌────────────────────────┘  │                │  │
-           │                           │                │  │
-    ┌──────┴───────┐            ┌──────┴────────┐       │  │
-    │  LSM6DS3     │            │  SD Module    │       │  │
-    │              │            │               │       │  │
-    │  VCC ── 3V3  │            │  VCC ── 3V3   │       │  │
-    │  GND ── GND  │            │  GND ── GND   │       │  │
-    │  SCL ── GP1  │            │  SCK ── GP10  │       │  │
-    │  SDA ── GP2  │            │  MOSI ── GP11 │       │  │
-    │  INT1 ── GP3 │            │  MISO ── GP12 │       │  │
-    └──────────────┘            │  CS ── GP13   │       │  │
-                                └───────────────┘       │  │
+                                    │  │  │             │  │
+           ┌────────────────────────┘  │  │             │  │
+           │         ┌─────────────────┘  │             │  │
+           │         │                    │             │  │
+    ┌──────┴───────┐ │  ┌─────────────┐   │  ┌─────────┴───────┐
+    │  LSM6DS3     │ │  │ Voltage     │   │  │  SD Module      │
+    │              │ │  │ Divider     │   │  │                 │
+    │  VCC ── 3V3  │ │  │             │   │  │  VCC ── 3V3     │
+    │  GND ── GND  │ │  │ BAT+──100K──┤   │  │  GND ── GND     │
+    │  SCL ── GP1  │ │  │        ├──GP4   │  │  SCK ── GP10    │
+    │  SDA ── GP2  │ │  │    100K──GND│   │  │  MOSI ── GP11   │
+    │  INT1 ── GP3 │ │  └─────────────┘   │  │  MISO ── GP12   │
+    └──────────────┘ │                    │  │  CS ── GP13     │
+                     └────────────────────┘  └─────────────────┘
 ```
 
 ### USB Port Strategy

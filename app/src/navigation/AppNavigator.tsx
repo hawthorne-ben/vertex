@@ -16,12 +16,14 @@ import RecordScreen from '../screens/RecordScreen';
 import DataDetailScreen from '../screens/DataDetailScreen';
 import DeviceSettingsScreen from '../screens/DeviceSettingsScreen';
 import RideDetailScreen from '../screens/RideDetailScreen';
+import DeviceDetailV2Screen from '../screens/DeviceDetailV2Screen';
 
 export type RootStackParamList = {
   Landing: undefined;
   Login: undefined;
   Tabs: undefined;
-  DeviceDetail: { deviceId: string; deviceName: string };
+  DeviceDetail: { deviceId: string; deviceName: string; autoConnect?: boolean };
+  DeviceDetailV2: { deviceId: string; deviceName: string };
   Record: { deviceId: string; deviceName: string };
   DataDetail: { fileName: string; filePath: string };
   DeviceSettings: undefined;
@@ -46,6 +48,7 @@ const AppNavigator: React.FC = () => {
         screenOptions={{ headerShown: false }}>
         <AppStack.Screen name="Tabs" component={TabNavigator} />
         <AppStack.Screen name="DeviceDetail" component={DeviceDetailScreen} />
+        <AppStack.Screen name="DeviceDetailV2" component={DeviceDetailV2Screen} />
         <AppStack.Screen name="Record" component={RecordScreen} />
         <AppStack.Screen name="DataDetail" component={DataDetailScreen} />
         <AppStack.Screen name="DeviceSettings" component={DeviceSettingsScreen} />

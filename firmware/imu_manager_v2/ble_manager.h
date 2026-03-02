@@ -18,6 +18,7 @@
 // Forward declarations
 class SensorManager;
 class StorageManager;
+class WiFiUploadManager;
 
 class BLEManager {
 public:
@@ -26,14 +27,13 @@ public:
   void init();
   bool isConnected() const;
 
-  // Process incoming commands, dispatch to sensor/storage as needed.
-  void processCommands(DeviceState& state, SensorManager& sensor, StorageManager& storage);
+  // Process incoming commands, dispatch to sensor/storage/wifi as needed.
+  void processCommands(DeviceState& state, SensorManager& sensor, StorageManager& storage, WiFiUploadManager& wifi);
 
-  // Send status notification (battery, recording state, file count)
-  void sendStatus(DeviceState state, float batteryVoltage, uint32_t fileCount);
-
-  // True while chunked file transfer is in progress
-  bool isTransferring() const { return _transferActive; }
+  // Send status notification (battery, recording state, file count, free space)
+  // When state == STATE_UPLOADING, syncProgress is included in the notification
+  void sendStatus(DeviceState state, float batteryVoltage, uint32_t fileCount, uint16_t freeMb,
+                  const struct SyncProgress* syncProgress = nullptr);
 
 private:
   BLEServer* _server;
@@ -47,15 +47,8 @@ private:
 
   // Pending command from BLE write callback
   volatile uint8_t _pendingCmd;
-  uint8_t _cmdPayload[64];
+  uint8_t _cmdPayload[256];
   volatile uint8_t _cmdPayloadLen;
-
-  // File transfer state
-  bool _transferActive;
-  uint32_t _transferOffset;
-  uint32_t _transferSize;
-
-  void sendNextChunk(StorageManager& storage);
 
   friend class ServerCallbacks;
   friend class ConfigCallbacks;

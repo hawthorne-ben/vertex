@@ -119,23 +119,7 @@ const DataDetailScreen: React.FC = () => {
       console.error('[DataDetailScreen] Error loading data:', error);
       const errorMsg = error instanceof Error ? error.message : 'Failed to load recording data';
 
-      // Check if this is a corrupt/in-progress file (VTX parse errors typically contain these phrases)
-      const isCorruptFile = errorMsg.includes('parse') ||
-                            errorMsg.includes('invalid') ||
-                            errorMsg.includes('corrupted') ||
-                            errorMsg.includes('incomplete');
-
-      if (isCorruptFile) {
-        // Corrupt/in-progress file - navigate to RecordScreen as fallback
-        console.log('[DataDetailScreen] Detected corrupt/in-progress file, navigating to RecordScreen');
-        navigation.replace('Record', {
-          deviceId: '', // Will show disconnected state
-          deviceName: 'Unknown Device'
-        });
-      } else {
-        // Other errors - show error dialog
-        setErrorMessage(errorMsg + '. The file may be corrupted or in an unsupported format.');
-      }
+      setErrorMessage(errorMsg + '. The file may be corrupted or incomplete.');
     } finally {
       setIsLoading(false);
     }

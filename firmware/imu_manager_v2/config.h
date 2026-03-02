@@ -31,11 +31,14 @@
 #define CMD_START_RECORDING 0x02  // Start a new recording session
 #define CMD_STOP_RECORDING  0x03  // Stop current recording
 #define CMD_LIST_FILES      0x04  // List recorded files on SD
-#define CMD_REQUEST_FILE    0x05  // Begin file transfer
 #define CMD_DELETE_FILE     0x06  // Delete a file from SD
 #define CMD_SET_CONFIG      0x07  // Update device settings
+#define CMD_SET_WIFI        0x08  // [0x08][SSID\0PASSWORD] — provision WiFi credentials
 #define CMD_SYNC_CLOCK      0x09  // Sync wall clock from phone (8 bytes: unix ms int64)
 #define CMD_RESET           0x0A  // Soft reset
+#define CMD_SET_USER        0x0B  // [0x0B][userId\0apiKey\0serverUrl] — provision user/API credentials
+#define CMD_START_SYNC      0x0C  // Trigger WiFi upload of all files
+#define CMD_CANCEL_SYNC     0x0D  // Abort current WiFi upload
 #define CMD_QUERY_CONFIG    0xFF  // Query current configuration
 
 // ===== Hardware Pin Assignments (ESP32-S3 Mini) =====
@@ -60,11 +63,12 @@
 
 // ===== Battery Configuration =====
 // TP4057 outputs raw battery voltage (3.7-4.2V) on BAT+.
-// To read voltage: tap BAT+ through a voltage divider to an ADC-capable GPIO.
-// A simple 100K/100K divider halves the voltage into ESP32 ADC range (0-3.3V).
-// This requires two resistors soldered inline — no extra module needed.
-// For MVP: defer battery sense, rely on TP4057 protection circuit.
-#define BATTERY_ADC_PIN -1             // Set to GPIO number when divider is wired
+// A 100K/100K voltage divider from BAT+ (before Schottky diode) to GPIO4
+// halves the voltage into ESP32 ADC range (0-3.3V): 3.7V → 1.85V, 4.2V → 2.1V.
+// A Schottky diode (1N5817) is inline on TP4057 OUT+ to ESP32 5V pin to
+// prevent USB 5V backfeed into the battery during charging.
+// Tap the divider from BAT+ BEFORE the diode to read true battery voltage.
+#define BATTERY_ADC_PIN -1             // Set to 4 (GPIO4) when divider is wired
 #define BATTERY_VOLTAGE_DIVIDER 2.0    // Divider ratio (100K/100K = 2:1)
 #define BATTERY_CUTOFF_VOLTAGE 3.2     // Graceful shutdown threshold
 #define BATTERY_READ_INTERVAL_MS 5000
@@ -98,6 +102,10 @@
 #define LED_BLINK_RECORDING 500    // Medium blink when recording
 #define LED_BLINK_SYNCING 100      // Fast blink when transferring
 
+// ===== WiFi Upload Configuration =====
+#define WIFI_CONNECT_TIMEOUT_MS 10000  // 10s to connect to WiFi
+#define WIFI_UPLOAD_CHUNK_SIZE 4096    // Read SD in 4KB chunks for HTTP upload
+
 // ===== I2C Configuration =====
 #define I2C_CLOCK_SPEED 400000     // 400kHz fast mode
 
@@ -106,6 +114,7 @@ enum DeviceState : int {
   STATE_IDLE,       // Waiting — BLE advertising, not recording
   STATE_RECORDING,  // Active recording — FIFO reads + SD writes
   STATE_SYNCING,    // File transfer in progress over BLE
+  STATE_UPLOADING,  // WiFi upload in progress
 };
 
 #endif // CONFIG_H

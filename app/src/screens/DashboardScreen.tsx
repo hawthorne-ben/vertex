@@ -48,10 +48,12 @@ const DashboardScreen: React.FC = () => {
 
   const handleStartRecording = () => {
     if (deviceId && deviceName) {
-      navigation.navigate('Record', {
-        deviceId,
-        deviceName,
-      });
+      const device = savedDevices.find(d => d.id === deviceId);
+      if (device?.name.includes('Vertex-V2') || device?.firmwareVersion === 'v2') {
+        navigation.navigate('DeviceDetailV2', { deviceId, deviceName });
+      } else {
+        navigation.navigate('Record', { deviceId, deviceName });
+      }
     }
   };
 
@@ -137,10 +139,14 @@ const DashboardScreen: React.FC = () => {
                     <TouchableOpacity
                       key={device.id}
                       style={[styles.deviceRow, idx > 0 && styles.deviceRowBorder]}
-                      onPress={() => navigation.navigate('DeviceDetail', {
-                        deviceId: device.id,
-                        deviceName: device.name,
-                      })}
+                      onPress={() => {
+                        const screen = (device.name.includes('Vertex-V2') || device.firmwareVersion === 'v2')
+                          ? 'DeviceDetailV2' : 'DeviceDetail';
+                        navigation.navigate(screen, {
+                          deviceId: device.id,
+                          deviceName: device.name,
+                        });
+                      }}
                     >
                       <View style={styles.deviceInfo}>
                         <Text style={[styles.deviceName, { color: theme.colors.textPrimary }]}>

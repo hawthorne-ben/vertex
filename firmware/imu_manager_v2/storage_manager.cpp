@@ -41,9 +41,15 @@ bool StorageManager::init() {
 bool StorageManager::openNewFile(int64_t wallClockMs) {
   if (!_sdReady) return false;
 
-  // Filename from wall clock: /vtx/1709312345678.vtx
+  // Convert unix ms to PST (UTC-8) date components for readable filename
+  time_t secs = (time_t)(wallClockMs / 1000) - (8 * 3600);  // UTC to PST
+  struct tm t;
+  gmtime_r(&secs, &t);
+  // Format: /vtx/3_1_2026_12345.vtx (month_day_year_millisInDay)
+  uint32_t msInDay = (uint32_t)(((secs % 86400) * 1000) + (wallClockMs % 1000));
   snprintf(_currentFileName, sizeof(_currentFileName),
-           "%s/%lld.vtx", LOG_DIR, wallClockMs);
+           "%s/%d_%d_%d_%lu.vtx", LOG_DIR,
+           t.tm_mon + 1, t.tm_mday, t.tm_year + 1900, (unsigned long)msInDay);
 
   _writeFile = SD.open(_currentFileName, FILE_WRITE);
   if (!_writeFile) {
@@ -187,10 +193,12 @@ int StorageManager::listFiles(FileEntry* entries, int maxEntries) {
 
   int count = 0;
   File file = dir.openNextFile();
-  while (file && count < maxEntries) {
+  while (file) {
     if (!file.isDirectory()) {
-      strncpy(entries[count].name, file.name(), sizeof(entries[count].name) - 1);
-      entries[count].size = file.size();
+      if (entries && count < maxEntries) {
+        strncpy(entries[count].name, file.name(), sizeof(entries[count].name) - 1);
+        entries[count].size = file.size();
+      }
       count++;
     }
     file = dir.openNextFile();
@@ -235,6 +243,11 @@ uint32_t StorageManager::getFreeSpaceMB() const {
 
 uint32_t StorageManager::getCurrentFileSize() const {
   return _recordCount * VTX_IMU_RECORD_SIZE;
+}
+
+uint32_t StorageManager::getOpenFileSize() const {
+  if (!_readFile) return 0;
+  return _readFile.size();
 }
 
 const char* StorageManager::getCurrentFileName() const {

@@ -34,6 +34,7 @@ export interface SavedDevice {
   id: string;
   name: string;
   lastConnected?: string;
+  firmwareVersion?: 'v1' | 'v2';
 }
 
 export interface DeviceState {

@@ -58,6 +58,9 @@ bool SensorManager::init() {
   // FIFO_CTRL3: No decimation for gyro (0x01) + no decimation for accel (0x08)
   writeRegister(LSM6DS3_FIFO_CTRL3, 0x09);
 
+  // FIFO_CTRL5: First set bypass mode to reset FIFO, then continuous mode
+  writeRegister(LSM6DS3_FIFO_CTRL5, 0x00);  // Bypass (reset)
+  delay(10);
   // FIFO_CTRL5: Continuous mode (0x06) + 104Hz FIFO ODR (0x20)
   writeRegister(LSM6DS3_FIFO_CTRL5, 0x26);
 
@@ -91,17 +94,14 @@ int SensorManager::readFIFO() {
   int numSamples = fifoWords / 6;
   if (numSamples > MAX_FIFO_SAMPLES) numSamples = MAX_FIFO_SAMPLES;
 
-  int bytesToRead = numSamples * 12;  // 6 words * 2 bytes per word
-
-  // Burst-read FIFO data in chunks (I2C buffer limited to ~128 bytes)
-  static const int CHUNK_SIZE = 120;  // Multiple of 12 (one sample) that fits I2C buffer
+  // Read FIFO data: each word is 2 bytes at 0x3E-0x3F.
+  // LSM6DS3 FIFO does NOT support burst reads beyond 2 bytes —
+  // auto-increment goes past 0x3F into unrelated registers.
+  // Read 2 bytes per word (one I2C transaction per word).
+  int totalWords = numSamples * 6;  // 6 words per sample
   uint8_t rawBuf[MAX_FIFO_SAMPLES * 12];
-  int bytesRead = 0;
-  while (bytesRead < bytesToRead) {
-    int chunkLen = bytesToRead - bytesRead;
-    if (chunkLen > CHUNK_SIZE) chunkLen = CHUNK_SIZE;
-    if (!readRegisters(LSM6DS3_FIFO_DATA_OUT_L, &rawBuf[bytesRead], (uint8_t)chunkLen)) return 0;
-    bytesRead += chunkLen;
+  for (int w = 0; w < totalWords; w++) {
+    if (!readRegisters(LSM6DS3_FIFO_DATA_OUT_L, &rawBuf[w * 2], 2)) return 0;
   }
 
   unsigned long now = millis();

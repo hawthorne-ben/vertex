@@ -21,13 +21,49 @@ const IMU_SERVICE_UUID = '12345678-1234-5678-1234-56789abcdef0';
 const IMU_CHARACTERISTIC_UUID = '12345678-1234-5678-1234-56789abcdef1';
 const CONFIG_CHARACTERISTIC_UUID = '12345678-1234-5678-1234-56789abcdef2';
 
-// Configuration commands (matches firmware)
+// V2 additional characteristics (same service UUID)
+const V2_FILE_LIST_CHARACTERISTIC_UUID = '12345678-1234-5678-1234-56789abcdef3';
+
+// Configuration commands (matches firmware V1)
 const CMD_SET_SAMPLE_RATE = 0x01;
 const CMD_CALIBRATE = 0x02;
 const CMD_POWER_MODE = 0x03;
 const CMD_RESET = 0x04;
 const CMD_LED_MODE = 0x05;
 const CMD_QUERY_CONFIG = 0xFF;
+
+// V2 commands (matches firmware V2)
+const CMD_V2_GET_STATUS = 0x01;
+const CMD_V2_START_RECORDING = 0x02;
+const CMD_V2_STOP_RECORDING = 0x03;
+const CMD_V2_LIST_FILES = 0x04;
+const CMD_V2_DELETE_FILE = 0x06;
+const CMD_V2_SET_WIFI = 0x08;
+const CMD_V2_SYNC_CLOCK = 0x09;
+const CMD_V2_SET_USER = 0x0B;
+const CMD_V2_START_SYNC = 0x0C;
+const CMD_V2_CANCEL_SYNC = 0x0D;
+
+export interface V2SyncProgress {
+  currentFile: number;
+  totalFiles: number;
+  bytesSent: number;
+  bytesTotal: number;
+}
+
+export interface V2Status {
+  state: 'idle' | 'recording' | 'syncing' | 'uploading';
+  batteryMv: number;
+  fileCount: number;
+  freeMb: number;
+  clockSynced: boolean;
+  syncProgress?: V2SyncProgress;
+}
+
+export interface V2FileEntry {
+  name: string;
+  size: number;
+}
 
 type ConnectionListener = (device: Device | null, isConnected: boolean) => void;
 
@@ -134,6 +170,20 @@ class BleService {
   }
 
   /**
+   * Check if a device is a V2 firmware device
+   */
+  isV2Device(device: Device): boolean {
+    return device.name?.includes('Vertex-V2') ?? false;
+  }
+
+  /**
+   * Check if the currently connected device is V2
+   */
+  isV2Connected(): boolean {
+    return this.connectedDevice?.name?.includes('Vertex-V2') ?? false;
+  }
+
+  /**
    * Scan for BLE devices
    * @param onDeviceFound Callback when a device is found
    */
@@ -224,9 +274,6 @@ class BleService {
       this.connectedDevice = device;
       console.log('[BLE] Device connected successfully');
 
-      // Notify listeners of connection
-      this.notifyConnectionListeners(device, true);
-
       // Request larger MTU for 56-byte sensor data packets
       try {
         await device.requestMTU(185);
@@ -275,6 +322,20 @@ class BleService {
         console.error('[BLE] Service discovery error:', discoverError?.message);
         // Continue anyway - some devices work without full discovery
       }
+
+      // Auto clock sync for V2 devices
+      if (this.isV2Device(device)) {
+        try {
+          await this.syncClockV2();
+          console.log('[BLE] V2 clock synced on connect');
+        } catch (syncError: any) {
+          console.warn('[BLE] V2 clock sync failed:', syncError?.message);
+        }
+      }
+
+      // Notify listeners AFTER services discovered and clock synced
+      // so that refreshAll() sees the fully-ready connection
+      this.notifyConnectionListeners(device, true);
 
       this.isConnecting = false; // Clear flag on success
       return device;
@@ -912,6 +973,266 @@ class BleService {
    */
   private signedInt16(value: number): number {
     return value > 32767 ? value - 65536 : value;
+  }
+
+  // --- V2 Device Methods ---
+
+  /**
+   * Sync clock with V2 device — sends current timestamp
+   */
+  async syncClockV2(): Promise<void> {
+    if (!this.connectedDevice) throw new Error('No device connected');
+
+    const now = BigInt(Date.now());
+    const command = new Uint8Array(9);
+    command[0] = CMD_V2_SYNC_CLOCK;
+    const view = new DataView(command.buffer);
+    view.setBigInt64(1, now, true); // little-endian int64
+
+    await this.writeConfigCommand(command);
+  }
+
+  /**
+   * Get V2 device status
+   */
+  async getStatusV2(): Promise<V2Status> {
+    if (!this.connectedDevice) throw new Error('No device connected');
+
+    return new Promise<V2Status>((resolve, reject) => {
+      let isResolved = false;
+
+      const timeout = setTimeout(() => {
+        if (!isResolved) {
+          isResolved = true;
+          subscription?.remove();
+          reject(new Error('Timeout waiting for V2 status'));
+        }
+      }, 3000);
+
+      const subscription = this.connectedDevice!.monitorCharacteristicForService(
+        IMU_SERVICE_UUID,
+        IMU_CHARACTERISTIC_UUID,
+        (error, characteristic) => {
+          if (isResolved) return;
+          if (error) {
+            clearTimeout(timeout);
+            isResolved = true;
+            subscription?.remove();
+            reject(error);
+            return;
+          }
+          if (characteristic?.value) {
+            clearTimeout(timeout);
+            isResolved = true;
+            subscription?.remove();
+
+            const data = this.base64ToUint8Array(characteristic.value);
+            if (data.length < 8) {
+              reject(new Error('Invalid V2 status response'));
+              return;
+            }
+
+            const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+            // Pack: state(1) + battery_mv(2) + file_count(2) + free_mb(2) + clock_synced(1)
+            // Extended (state=3/uploading): + current_file(1) + total_files(1) + bytes_sent(4) + bytes_total(4)
+            const stateMap: Record<number, V2Status['state']> = { 0: 'idle', 1: 'recording', 2: 'syncing', 3: 'uploading' };
+            const status: V2Status = {
+              state: stateMap[data[0]] || 'idle',
+              batteryMv: dv.getUint16(1, true),
+              fileCount: dv.getUint16(3, true),
+              freeMb: dv.getUint16(5, true),
+              clockSynced: data[7] === 1,
+            };
+            // Parse sync progress if uploading and extended data present
+            if (data[0] === 3 && data.length >= 18) {
+              status.syncProgress = {
+                currentFile: data[8],
+                totalFiles: data[9],
+                bytesSent: dv.getUint32(10, true),
+                bytesTotal: dv.getUint32(14, true),
+              };
+            }
+            resolve(status);
+          }
+        }
+      );
+
+      // Send status request command
+      const command = new Uint8Array([CMD_V2_GET_STATUS]);
+      this.writeConfigCommand(command).catch((err) => {
+        if (!isResolved) {
+          clearTimeout(timeout);
+          isResolved = true;
+          subscription?.remove();
+          reject(err);
+        }
+      });
+    });
+  }
+
+  /**
+   * Start recording on V2 device
+   */
+  async startRecordingV2(): Promise<void> {
+    if (!this.connectedDevice) throw new Error('No device connected');
+    await this.writeConfigCommand(new Uint8Array([CMD_V2_START_RECORDING]));
+  }
+
+  /**
+   * Stop recording on V2 device
+   */
+  async stopRecordingV2(): Promise<void> {
+    if (!this.connectedDevice) throw new Error('No device connected');
+    await this.writeConfigCommand(new Uint8Array([CMD_V2_STOP_RECORDING]));
+  }
+
+  /**
+   * List files on V2 device
+   */
+  async listFilesV2(): Promise<V2FileEntry[]> {
+    if (!this.connectedDevice) throw new Error('No device connected');
+
+    return new Promise<V2FileEntry[]>((resolve, reject) => {
+      let isResolved = false;
+
+      const timeout = setTimeout(() => {
+        if (!isResolved) {
+          isResolved = true;
+          subscription?.remove();
+          reject(new Error('Timeout waiting for file list'));
+        }
+      }, 5000);
+
+      const subscription = this.connectedDevice!.monitorCharacteristicForService(
+        IMU_SERVICE_UUID,
+        V2_FILE_LIST_CHARACTERISTIC_UUID,
+        (error, characteristic) => {
+          if (isResolved) return;
+          if (error) {
+            clearTimeout(timeout);
+            isResolved = true;
+            subscription?.remove();
+            reject(error);
+            return;
+          }
+          if (characteristic?.value) {
+            clearTimeout(timeout);
+            isResolved = true;
+            subscription?.remove();
+
+            const data = this.base64ToUint8Array(characteristic.value);
+            const files: V2FileEntry[] = [];
+
+            // Parse: totalCount(1) + packedCount(1) + [name_len(1) + name(N) + size(4)] per file
+            let offset = 0;
+            if (data.length < 2) { resolve(files); return; }
+            const _totalCount = data[offset++];  // Total files on SD (for info)
+            const packedCount = data[offset++];   // Files in this response
+
+            for (let i = 0; i < packedCount && offset < data.length; i++) {
+              const nameLen = data[offset++];
+              if (offset + nameLen + 4 > data.length) break;
+
+              const name = String.fromCharCode(...data.slice(offset, offset + nameLen));
+              offset += nameLen;
+
+              const dv = new DataView(data.buffer, data.byteOffset + offset, 4);
+              const size = dv.getUint32(0, true);
+              offset += 4;
+
+              files.push({ name, size });
+            }
+
+            resolve(files);
+          }
+        }
+      );
+
+      // Send list files command
+      const command = new Uint8Array([CMD_V2_LIST_FILES]);
+      this.writeConfigCommand(command).catch((err) => {
+        if (!isResolved) {
+          clearTimeout(timeout);
+          isResolved = true;
+          subscription?.remove();
+          reject(err);
+        }
+      });
+    });
+  }
+
+  /**
+   * Delete a file on V2 device
+   */
+  async deleteFileV2(filename: string): Promise<void> {
+    if (!this.connectedDevice) throw new Error('No device connected');
+
+    const nameBytes = new TextEncoder().encode(filename);
+    const command = new Uint8Array(1 + nameBytes.length);
+    command[0] = CMD_V2_DELETE_FILE;
+    command.set(nameBytes, 1);
+
+    await this.writeConfigCommand(command);
+  }
+
+  /**
+   * Set WiFi credentials on V2 device
+   * Payload: [CMD][SSID\0PASSWORD]
+   */
+  async setWiFiCredentials(ssid: string, password: string): Promise<void> {
+    if (!this.connectedDevice) throw new Error('No device connected');
+
+    const encoder = new TextEncoder();
+    const ssidBytes = encoder.encode(ssid);
+    const passBytes = encoder.encode(password);
+    // Format: CMD + SSID + \0 + PASSWORD
+    const command = new Uint8Array(1 + ssidBytes.length + 1 + passBytes.length);
+    command[0] = CMD_V2_SET_WIFI;
+    command.set(ssidBytes, 1);
+    command[1 + ssidBytes.length] = 0; // null separator
+    command.set(passBytes, 1 + ssidBytes.length + 1);
+
+    await this.writeConfigCommand(command);
+  }
+
+  /**
+   * Set user/API credentials on V2 device
+   * Payload: [CMD][userId\0apiKey\0serverUrl]
+   */
+  async setUserCredentials(userId: string, apiKey: string, serverUrl: string): Promise<void> {
+    if (!this.connectedDevice) throw new Error('No device connected');
+
+    const encoder = new TextEncoder();
+    const userBytes = encoder.encode(userId);
+    const keyBytes = encoder.encode(apiKey);
+    const urlBytes = encoder.encode(serverUrl);
+    // Format: CMD + userId + \0 + apiKey + \0 + serverUrl
+    const command = new Uint8Array(1 + userBytes.length + 1 + keyBytes.length + 1 + urlBytes.length);
+    command[0] = CMD_V2_SET_USER;
+    let offset = 1;
+    command.set(userBytes, offset); offset += userBytes.length;
+    command[offset++] = 0;
+    command.set(keyBytes, offset); offset += keyBytes.length;
+    command[offset++] = 0;
+    command.set(urlBytes, offset);
+
+    await this.writeConfigCommand(command);
+  }
+
+  /**
+   * Trigger WiFi sync (upload all files to cloud)
+   */
+  async startSync(): Promise<void> {
+    if (!this.connectedDevice) throw new Error('No device connected');
+    await this.writeConfigCommand(new Uint8Array([CMD_V2_START_SYNC]));
+  }
+
+  /**
+   * Cancel ongoing WiFi sync
+   */
+  async cancelSync(): Promise<void> {
+    if (!this.connectedDevice) throw new Error('No device connected');
+    await this.writeConfigCommand(new Uint8Array([CMD_V2_CANCEL_SYNC]));
   }
 
   /**

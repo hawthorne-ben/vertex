@@ -46,6 +46,7 @@ public:
   // Status
   uint32_t getFreeSpaceMB() const;
   uint32_t getCurrentFileSize() const;
+  uint32_t getOpenFileSize() const;  // Size of currently open read file
   const char* getCurrentFileName() const;
 
 private:

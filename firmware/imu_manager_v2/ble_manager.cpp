@@ -6,6 +6,7 @@
 #include "ble_manager.h"
 #include "sensor_manager.h"
 #include "storage_manager.h"
+#include "wifi_manager.h"
 
 // Defined in main sketch
 extern void startRecording();
@@ -41,7 +42,7 @@ class ConfigCallbacks : public BLECharacteristicCallbacks {
     if (value.length() < 1) return;
 
     g_ble->_pendingCmd = (uint8_t)value[0];
-    g_ble->_cmdPayloadLen = min((int)value.length() - 1, 63);
+    g_ble->_cmdPayloadLen = min((int)value.length() - 1, 255);
     if (g_ble->_cmdPayloadLen > 0) {
       memcpy(g_ble->_cmdPayload, value.c_str() + 1, g_ble->_cmdPayloadLen);
     }
@@ -57,10 +58,7 @@ BLEManager::BLEManager()
     _connected(false),
     _connectionTime(0),
     _pendingCmd(0),
-    _cmdPayloadLen(0),
-    _transferActive(false),
-    _transferOffset(0),
-    _transferSize(0) {
+    _cmdPayloadLen(0) {
   g_ble = this;
 }
 
@@ -115,18 +113,7 @@ bool BLEManager::isConnected() const {
   return _connected;
 }
 
-void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, StorageManager& storage) {
-  // Continue chunked file transfer if active
-  if (_transferActive) {
-    sendNextChunk(storage);
-    if (!_transferActive) {
-      // Transfer just finished
-      state = STATE_IDLE;
-      Serial.println("[BLE] Transfer complete");
-    }
-    return;
-  }
-
+void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, StorageManager& storage, WiFiUploadManager& wifi) {
   uint8_t cmd = _pendingCmd;
   if (cmd == 0) return;
   _pendingCmd = 0;
@@ -134,9 +121,17 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
   Serial.printf("[BLE] Command: 0x%02X\n", cmd);
 
   switch (cmd) {
-    case CMD_GET_STATUS:
-      sendStatus(state, 0.0f, 0);
+    case CMD_GET_STATUS: {
+      int fileCount = storage.listFiles(nullptr, 0);
+      uint16_t freeMb = (uint16_t)storage.getFreeSpaceMB();
+      if (state == STATE_UPLOADING) {
+        SyncProgress sp = wifi.getProgress();
+        sendStatus(state, 0.0f, fileCount, freeMb, &sp);
+      } else {
+        sendStatus(state, 0.0f, fileCount, freeMb);
+      }
       break;
+    }
 
     case CMD_START_RECORDING:
       startRecording();
@@ -159,15 +154,22 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
 
     case CMD_LIST_FILES: {
       FileEntry entries[32];
-      int count = storage.listFiles(entries, 32);
-      Serial.printf("[BLE] %d files on SD\n", count);
+      int totalCount = storage.listFiles(entries, 32);
+      Serial.printf("[BLE] %d files on SD\n", totalCount);
 
-      // Pack: count(1) + [name_len(1) + name(N) + size(4)] per file
+      // Send the 10 most recent files (last 10 from listing)
+      int startIdx = (totalCount > 10) ? totalCount - 10 : 0;
+      int sendCount = totalCount - startIdx;
+
+      // Pack: totalCount(1) + packedCount(1) + [name_len(1) + name(N) + size(4)] per file
       uint8_t buf[512];
       int off = 0;
-      buf[off++] = (uint8_t)count;
-      for (int i = 0; i < count && off < 500; i++) {
+      buf[off++] = (uint8_t)totalCount;   // Total files on SD
+      buf[off++] = (uint8_t)sendCount;    // Files in this response
+      for (int i = startIdx; i < totalCount; i++) {
         uint8_t nameLen = strlen(entries[i].name);
+        int entrySize = 1 + nameLen + 4;
+        if (off + entrySize > 500) break;
         buf[off++] = nameLen;
         memcpy(buf + off, entries[i].name, nameLen);
         off += nameLen;
@@ -180,36 +182,6 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
       break;
     }
 
-    case CMD_REQUEST_FILE: {
-      if (_cmdPayloadLen > 0 && state == STATE_IDLE) {
-        char filename[64];
-        int len = min((int)_cmdPayloadLen, 63);
-        memcpy(filename, _cmdPayload, len);
-        filename[len] = '\0';
-        Serial.printf("[BLE] File request: %s\n", filename);
-
-        if (storage.openFileForRead(filename)) {
-          _transferActive = true;
-          _transferOffset = 0;
-          _transferSize = 0;  // We'll send until EOF
-          state = STATE_SYNCING;
-
-          // Send header packet: total file size (4 bytes)
-          // The app uses this to show transfer progress
-          // We don't know size upfront easily, so send 0 = "stream until EOF"
-          uint8_t hdr[5];
-          hdr[0] = 0xFF;  // Header marker
-          uint32_t sz = 0;
-          memcpy(hdr + 1, &sz, 4);
-          _fileDataChar->setValue(hdr, 5);
-          _fileDataChar->notify();
-        } else {
-          Serial.printf("[BLE] File not found: %s\n", filename);
-        }
-      }
-      break;
-    }
-
     case CMD_DELETE_FILE: {
       if (_cmdPayloadLen > 0) {
         char filename[64];
@@ -218,6 +190,81 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
         filename[len] = '\0';
         bool ok = storage.deleteFile(filename);
         Serial.printf("[BLE] Delete %s: %s\n", filename, ok ? "OK" : "FAIL");
+      }
+      break;
+    }
+
+    case CMD_SET_WIFI: {
+      // Payload: SSID\0PASSWORD
+      if (_cmdPayloadLen > 1) {
+        char ssid[33] = {0};
+        char password[65] = {0};
+        // Find null separator
+        int sepIdx = -1;
+        for (int i = 0; i < _cmdPayloadLen; i++) {
+          if (_cmdPayload[i] == '\0') { sepIdx = i; break; }
+        }
+        if (sepIdx > 0 && sepIdx < 32) {
+          memcpy(ssid, _cmdPayload, sepIdx);
+          int passLen = _cmdPayloadLen - sepIdx - 1;
+          if (passLen > 0 && passLen < 64) {
+            memcpy(password, _cmdPayload + sepIdx + 1, passLen);
+          }
+          wifi.saveWiFiCredentials(ssid, password);
+        } else {
+          Serial.println("[BLE] SET_WIFI: invalid payload format");
+        }
+      }
+      break;
+    }
+
+    case CMD_SET_USER: {
+      // Payload: userId\0apiKey\0serverUrl
+      if (_cmdPayloadLen > 2) {
+        char userId[64] = {0};
+        char apiKey[65] = {0};
+        char serverUrl[128] = {0};
+        // Find two null separators
+        int sep1 = -1, sep2 = -1;
+        for (int i = 0; i < _cmdPayloadLen; i++) {
+          if (_cmdPayload[i] == '\0') {
+            if (sep1 < 0) sep1 = i;
+            else { sep2 = i; break; }
+          }
+        }
+        if (sep1 > 0 && sep2 > sep1) {
+          int userLen = sep1;
+          int keyLen = sep2 - sep1 - 1;
+          int urlLen = _cmdPayloadLen - sep2 - 1;
+          if (userLen < 64 && keyLen < 65 && urlLen < 128 && urlLen > 0) {
+            memcpy(userId, _cmdPayload, userLen);
+            memcpy(apiKey, _cmdPayload + sep1 + 1, keyLen);
+            memcpy(serverUrl, _cmdPayload + sep2 + 1, urlLen);
+            wifi.saveUserCredentials(userId, apiKey, serverUrl);
+          } else {
+            Serial.println("[BLE] SET_USER: field too long");
+          }
+        } else {
+          Serial.println("[BLE] SET_USER: invalid payload format");
+        }
+      }
+      break;
+    }
+
+    case CMD_START_SYNC: {
+      if (state == STATE_IDLE) {
+        state = STATE_UPLOADING;
+        wifi.startSync(storage);
+      } else {
+        Serial.printf("[BLE] Cannot sync — state=%d\n", state);
+      }
+      break;
+    }
+
+    case CMD_CANCEL_SYNC: {
+      if (state == STATE_UPLOADING) {
+        wifi.cancelSync();
+        state = STATE_IDLE;
       }
       break;
     }
@@ -234,54 +281,31 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
   }
 }
 
-void BLEManager::sendStatus(DeviceState state, float batteryVoltage, uint32_t fileCount) {
+void BLEManager::sendStatus(DeviceState state, float batteryVoltage, uint32_t fileCount, uint16_t freeMb,
+                            const SyncProgress* syncProgress) {
   if (!_connected) return;
 
-  // Pack: state(1) + battery_mv(2) + file_count(2) + free_mb(2) + clock_synced(1)
-  uint8_t buf[8];
+  // Base: state(1) + battery_mv(2) + file_count(2) + free_mb(2) + clock_synced(1) = 8 bytes
+  // Extended (STATE_UPLOADING): + current_file(1) + total_files(1) + bytes_sent(4) + bytes_total(4) = +10 bytes
+  uint8_t buf[18];
   buf[0] = (uint8_t)state;
   uint16_t battMv = (uint16_t)(batteryVoltage * 1000);
   memcpy(buf + 1, &battMv, 2);
   uint16_t fc = (uint16_t)fileCount;
   memcpy(buf + 3, &fc, 2);
-  uint16_t freeMb = 0;  // TODO: pass from storage
   memcpy(buf + 5, &freeMb, 2);
   buf[7] = isClockSynced() ? 1 : 0;
 
-  _statusChar->setValue(buf, 8);
+  int len = 8;
+  if (state == STATE_UPLOADING && syncProgress) {
+    buf[8] = syncProgress->currentFile;
+    buf[9] = syncProgress->totalFiles;
+    memcpy(buf + 10, &syncProgress->bytesSent, 4);
+    memcpy(buf + 14, &syncProgress->bytesTotal, 4);
+    len = 18;
+  }
+
+  _statusChar->setValue(buf, len);
   _statusChar->notify();
 }
 
-void BLEManager::sendNextChunk(StorageManager& storage) {
-  // Read up to 512 bytes and notify
-  // BLE 5 DLE supports up to 512-byte payloads
-  uint8_t buf[516];
-  buf[0] = 0x00;  // Data chunk marker (vs 0xFF header, 0x01 EOF)
-
-  // Sequence number (helps receiver detect drops)
-  uint16_t seq = (uint16_t)(_transferOffset / 512);
-  memcpy(buf + 1, &seq, 2);
-
-  int bytesRead = storage.readFileChunk(buf + 3, 509);
-  if (bytesRead <= 0) {
-    // EOF — send end marker
-    uint8_t eof[3];
-    eof[0] = 0x01;  // EOF marker
-    uint16_t totalChunks = seq;
-    memcpy(eof + 1, &totalChunks, 2);
-    _fileDataChar->setValue(eof, 3);
-    _fileDataChar->notify();
-
-    storage.closeReadFile();
-    _transferActive = false;
-    Serial.printf("[BLE] Transfer done: %lu bytes\n", (unsigned long)_transferOffset);
-    return;
-  }
-
-  _fileDataChar->setValue(buf, 3 + bytesRead);
-  _fileDataChar->notify();
-  _transferOffset += bytesRead;
-
-  // Small delay to let BLE stack breathe
-  delay(5);
-}

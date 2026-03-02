@@ -161,29 +161,47 @@ const DevicesScreen: React.FC = () => {
     stopScanning();
     setShowScanModal(false);
 
+    const name = scannedDevice.device.name || 'Unknown Device';
+    const isV2 = name.includes('Vertex-V2');
+
     // Save to saved devices using store
     const newDevice: SavedDevice = {
       id: scannedDevice.device.id,
-      name: scannedDevice.device.name || 'Unknown Device',
+      name,
       lastConnected: new Date().toISOString(),
+      firmwareVersion: isV2 ? 'v2' : 'v1',
     };
 
     await addSavedDevice(newDevice);
 
-    // Navigate to detail screen and auto-connect for new devices
-    navigation.navigate('DeviceDetail', {
-      deviceId: newDevice.id,
-      deviceName: newDevice.name,
-      autoConnect: true, // Auto-connect only for newly added devices
-    });
+    // Navigate to appropriate detail screen
+    if (isV2) {
+      navigation.navigate('DeviceDetailV2', {
+        deviceId: newDevice.id,
+        deviceName: newDevice.name,
+      });
+    } else {
+      navigation.navigate('DeviceDetail', {
+        deviceId: newDevice.id,
+        deviceName: newDevice.name,
+        autoConnect: true,
+      });
+    }
   };
 
   const handleConnectSaved = async (device: SavedDevice) => {
-    // Navigate to detail screen
-    navigation.navigate('DeviceDetail', {
-      deviceId: device.id,
-      deviceName: device.name,
-    });
+    // Navigate to appropriate detail screen based on device name
+    if (device.name.includes('Vertex-V2') || device.firmwareVersion === 'v2') {
+      navigation.navigate('DeviceDetailV2', {
+        deviceId: device.id,
+        deviceName: device.name,
+      });
+    } else {
+      navigation.navigate('DeviceDetail', {
+        deviceId: device.id,
+        deviceName: device.name,
+      });
+    }
   };
 
   const handleRemoveDevice = (device: SavedDevice) => {

@@ -8,6 +8,8 @@ ESP32-S3 Mini firmware for the VTX V2 puck. Records 104Hz IMU data to SD card in
 - **IMU**: LSM6DS3 6-axis (I2C, addr 0x6B — SA0 floating high on JESSINIE breakout)
 - **Storage**: Micro SD module (SPI)
 - **Charging**: TP4057 USB-C (LiPo charge + protection)
+- **Backfeed Protection**: Schottky diode (1N5817) inline on TP4057 OUT+ to ESP32 5V — prevents USB 5V backfeed during charging
+- **Battery Sense**: 100K/100K voltage divider from BAT+ to GPIO4 (ADC)
 - **Battery**: 360mAh 3.7V LiPo
 - **LED**: Onboard WS2812 NeoPixel on GPIO21
 
@@ -272,7 +274,7 @@ No ACK needed — BLE GATT notifications are reliable (link-layer retransmit). I
 ### TODO
 
 - [ ] **FIFO batch reads**: Currently polling one sample per loop iteration. Should configure LSM6DS3 FIFO (watermark threshold, continuous mode) and burst-read batches of ~10 samples. This reduces I2C overhead and prevents sample drops if the loop stalls.
-- [ ] **Battery ADC**: Requires soldering a 100K/100K voltage divider from BAT+ to an ADC GPIO. Set `BATTERY_ADC_PIN` in config.h, implement `getBatteryVoltage()` in power_manager.
+- [ ] **Battery ADC**: Voltage divider (100K/100K from BAT+ to GPIO4) is documented in BUILD.md. Set `BATTERY_ADC_PIN` to `4` in config.h once wired, implement `getBatteryVoltage()` in power_manager. Note: tap BAT+ before the Schottky diode so the reading reflects true battery voltage.
 - [ ] **App-side BLE client**: Update companion app to discover V2, send commands, receive file transfers, upload to cloud.
 - [ ] **File transfer validation**: Test full BLE transfer of a real recording and verify byte-for-byte match with SD card file.
 - [ ] **OTA firmware updates**: ESP32 OTA partition scheme, triggered via BLE command.

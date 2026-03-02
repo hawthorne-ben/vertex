@@ -23,12 +23,14 @@
 #include "storage_manager.h"
 #include "ble_manager.h"
 #include "power_manager.h"
+#include "wifi_manager.h"
 
 // Manager instances
 SensorManager sensor;
 StorageManager storage;
 BLEManager ble;
 PowerManager power;
+WiFiUploadManager wifiManager;
 
 DeviceState state = STATE_IDLE;
 
@@ -133,6 +135,7 @@ void setup() {
   bool sensorOk = sensor.init();
   bool sdOk = storage.init();
   ble.init();
+  wifiManager.init();
 
   if (!sensorOk) {
     Serial.println("[WARN] IMU init failed — check LSM6DS3 wiring");
@@ -173,7 +176,7 @@ void loop() {
   }
 
   // Process BLE commands
-  ble.processCommands(state, sensor, storage);
+  ble.processCommands(state, sensor, storage, wifiManager);
 
   // Poll IMU regardless of state (for debug logging in IDLE)
   int samplesRead = sensor.readFIFO();
@@ -207,5 +210,15 @@ void loop() {
       power.updateLED(LED_BLINK_SYNCING);
       // File transfer is driven by BLE characteristic reads
       break;
+
+    case STATE_UPLOADING: {
+      power.updateLED(LED_BLINK_SYNCING);
+      bool stillSyncing = wifiManager.tick(storage);
+      if (!stillSyncing) {
+        state = STATE_IDLE;
+        Serial.println("[MAIN] WiFi sync finished");
+      }
+      break;
+    }
   }
 }
