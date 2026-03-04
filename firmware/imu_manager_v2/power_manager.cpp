@@ -19,6 +19,14 @@ PowerManager::PowerManager()
 }
 
 void PowerManager::init() {
+  if (BATTERY_ADC_PIN >= 0) {
+    analogSetAttenuation(ADC_11db);  // Full range 0-3.3V
+    pinMode(BATTERY_ADC_PIN, INPUT);
+    // Take initial reading
+    _lastVoltage = readBatteryVoltage();
+    _lastBatteryRead = millis();
+    Serial.printf("[PWR] Battery: %.2fV\n", _lastVoltage);
+  }
   setLED(0, 0, 20);  // Dim blue on boot
   Serial.println("[PWR] Power manager ready (NeoPixel on GPIO21)");
 }
@@ -28,12 +36,35 @@ void PowerManager::setLED(uint8_t r, uint8_t g, uint8_t b) {
   rgbLedWriteOrdered(LED_PIN, LED_COLOR_ORDER_RGB, r, g, b);
 }
 
+float PowerManager::readBatteryVoltage() {
+  uint32_t sum = 0;
+  for (int i = 0; i < 8; i++) {
+    // analogReadMilliVolts handles attenuation and calibration automatically
+    sum += analogReadMilliVolts(BATTERY_ADC_PIN); 
+  }
+  
+  float avgMillis = (float)sum / 8.0f;
+  float pinVolts = avgMillis / 1000.0f; // Convert mV to V
+    
+  // Calculated magic number for scaling
+  float scaleFactor = 1.042f;
+  
+  // With 100k/100k, multiplier is 2.0
+  return pinVolts * 2.0f * scaleFactor;
+}
+
 float PowerManager::getBatteryVoltage() {
-  return 0.0f;  // Deferred — no ADC wired yet
+  unsigned long now = millis();
+  if (now - _lastBatteryRead >= BATTERY_READ_INTERVAL_MS) {
+    _lastVoltage = readBatteryVoltage();
+    _lastBatteryRead = now;
+  }
+  return _lastVoltage;
 }
 
 bool PowerManager::shouldShutdown() {
-  return false;
+  if (BATTERY_ADC_PIN < 0) return false;
+  return getBatteryVoltage() > 0.5f && getBatteryVoltage() < BATTERY_CUTOFF_VOLTAGE;
 }
 
 void PowerManager::shutdown(const char* reason) {

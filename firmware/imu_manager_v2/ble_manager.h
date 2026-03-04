@@ -19,6 +19,7 @@
 class SensorManager;
 class StorageManager;
 class WiFiUploadManager;
+class PowerManager;
 
 class BLEManager {
 public:
@@ -28,7 +29,7 @@ public:
   bool isConnected() const;
 
   // Process incoming commands, dispatch to sensor/storage/wifi as needed.
-  void processCommands(DeviceState& state, SensorManager& sensor, StorageManager& storage, WiFiUploadManager& wifi);
+  void processCommands(DeviceState& state, SensorManager& sensor, StorageManager& storage, WiFiUploadManager& wifi, PowerManager& power);
 
   // Send status notification (battery, recording state, file count, free space)
   // When state == STATE_UPLOADING, syncProgress is included in the notification

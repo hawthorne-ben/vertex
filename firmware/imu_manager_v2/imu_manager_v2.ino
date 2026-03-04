@@ -176,7 +176,7 @@ void loop() {
   }
 
   // Process BLE commands
-  ble.processCommands(state, sensor, storage, wifiManager);
+  ble.processCommands(state, sensor, storage, wifiManager, power);
 
   // Poll IMU regardless of state (for debug logging in IDLE)
   int samplesRead = sensor.readFIFO();

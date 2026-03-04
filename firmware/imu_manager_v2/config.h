@@ -68,7 +68,7 @@
 // A Schottky diode (1N5817) is inline on TP4057 OUT+ to ESP32 5V pin to
 // prevent USB 5V backfeed into the battery during charging.
 // Tap the divider from BAT+ BEFORE the diode to read true battery voltage.
-#define BATTERY_ADC_PIN -1             // Set to 4 (GPIO4) when divider is wired
+#define BATTERY_ADC_PIN 4              // GPIO4 — 100K/100K divider from BAT+
 #define BATTERY_VOLTAGE_DIVIDER 2.0    // Divider ratio (100K/100K = 2:1)
 #define BATTERY_CUTOFF_VOLTAGE 3.2     // Graceful shutdown threshold
 #define BATTERY_READ_INTERVAL_MS 5000

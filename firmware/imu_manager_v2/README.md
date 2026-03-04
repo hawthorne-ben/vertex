@@ -97,7 +97,7 @@ The device appears as `/dev/cu.usbmodem1101` (may vary). Close any serial monito
 ```bash
 arduino-cli upload \
   --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc,USBMode=hwcdc \
-  --port /dev/cu.usbmodem1101 \
+  --port /dev/cu.usbmodem101 \
   .
 ```
 

@@ -7,6 +7,7 @@
 #include "sensor_manager.h"
 #include "storage_manager.h"
 #include "wifi_manager.h"
+#include "power_manager.h"
 
 // Defined in main sketch
 extern void startRecording();
@@ -113,7 +114,7 @@ bool BLEManager::isConnected() const {
   return _connected;
 }
 
-void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, StorageManager& storage, WiFiUploadManager& wifi) {
+void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, StorageManager& storage, WiFiUploadManager& wifi, PowerManager& power) {
   uint8_t cmd = _pendingCmd;
   if (cmd == 0) return;
   _pendingCmd = 0;
@@ -124,11 +125,12 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
     case CMD_GET_STATUS: {
       int fileCount = storage.listFiles(nullptr, 0);
       uint16_t freeMb = (uint16_t)storage.getFreeSpaceMB();
+      float battV = power.getBatteryVoltage();
       if (state == STATE_UPLOADING) {
         SyncProgress sp = wifi.getProgress();
-        sendStatus(state, 0.0f, fileCount, freeMb, &sp);
+        sendStatus(state, battV, fileCount, freeMb, &sp);
       } else {
-        sendStatus(state, 0.0f, fileCount, freeMb);
+        sendStatus(state, battV, fileCount, freeMb);
       }
       break;
     }
