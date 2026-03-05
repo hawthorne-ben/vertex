@@ -15,7 +15,8 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { theme } from '../../styles/theme';
+import { theme as staticTheme } from '../../styles/theme';
+import { useTheme } from '../../contexts/ThemeContext';
 import { X } from 'lucide-react-native';
 import type { ModalProps } from '../../types/components.types';
 
@@ -28,6 +29,8 @@ export const Modal: React.FC<ModalProps> = ({
   style,
   animationType = 'slide',
 }) => {
+  const { theme } = useTheme();
+
   return (
     <RNModal
       visible={visible}
@@ -43,10 +46,10 @@ export const Modal: React.FC<ModalProps> = ({
           onPress={onClose}
         />
 
-        <View style={[styles.container, style]}>
+        <View style={[styles.container, { backgroundColor: theme.colors.background, borderBottomColor: theme.colors.border }, style]}>
           {/* Header */}
-          <View style={styles.header}>
-            {title && <Text style={styles.title}>{title}</Text>}
+          <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
+            {title && <Text style={[styles.title, { color: theme.colors.textPrimary }]}>{title}</Text>}
             <TouchableOpacity
               onPress={onClose}
               style={styles.closeButton}
@@ -59,7 +62,7 @@ export const Modal: React.FC<ModalProps> = ({
           <View style={styles.content}>{children}</View>
 
           {/* Footer */}
-          {footer && <View style={styles.footer}>{footer}</View>}
+          {footer && <View style={[styles.footer, { borderTopColor: theme.colors.border }]}>{footer}</View>}
         </View>
       </KeyboardAvoidingView>
     </RNModal>
@@ -78,9 +81,8 @@ const styles = StyleSheet.create({
   },
 
   container: {
-    backgroundColor: theme.colors.background,
-    borderTopLeftRadius: theme.borderRadius.lg,
-    borderTopRightRadius: theme.borderRadius.lg,
+    borderTopLeftRadius: staticTheme.borderRadius.lg,
+    borderTopRightRadius: staticTheme.borderRadius.lg,
     maxHeight: '90%',
     shadowColor: '#000',
     shadowOffset: {
@@ -96,32 +98,29 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: theme.spacing.lg,
-    paddingVertical: theme.spacing.md,
+    paddingHorizontal: staticTheme.spacing.lg,
+    paddingVertical: staticTheme.spacing.md,
     borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
   },
 
   title: {
-    fontSize: theme.typography.fontSize.lg,
-    fontWeight: theme.typography.fontWeight.semibold,
-    color: theme.colors.textPrimary,
+    fontSize: staticTheme.typography.fontSize.lg,
+    fontWeight: staticTheme.typography.fontWeight.semibold,
     flex: 1,
   },
 
   closeButton: {
-    padding: theme.spacing.xs,
+    padding: staticTheme.spacing.xs,
   },
 
   content: {
-    paddingHorizontal: theme.spacing.lg,
-    paddingVertical: theme.spacing.lg,
+    paddingHorizontal: staticTheme.spacing.lg,
+    paddingVertical: staticTheme.spacing.lg,
   },
 
   footer: {
-    paddingHorizontal: theme.spacing.lg,
-    paddingVertical: theme.spacing.md,
+    paddingHorizontal: staticTheme.spacing.lg,
+    paddingVertical: staticTheme.spacing.md,
     borderTopWidth: 1,
-    borderTopColor: theme.colors.border,
   },
 });

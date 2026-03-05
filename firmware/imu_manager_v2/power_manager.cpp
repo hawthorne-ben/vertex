@@ -38,19 +38,11 @@ void PowerManager::setLED(uint8_t r, uint8_t g, uint8_t b) {
 
 float PowerManager::readBatteryVoltage() {
   uint32_t sum = 0;
-  for (int i = 0; i < 8; i++) {
-    // analogReadMilliVolts handles attenuation and calibration automatically
-    sum += analogReadMilliVolts(BATTERY_ADC_PIN); 
+  for (int i = 0; i < BATTERY_ADC_SAMPLES; i++) {
+    sum += analogReadMilliVolts(BATTERY_ADC_PIN);
   }
-  
-  float avgMillis = (float)sum / 8.0f;
-  float pinVolts = avgMillis / 1000.0f; // Convert mV to V
-    
-  // Calculated magic number for scaling
-  float scaleFactor = 1.042f;
-  
-  // With 100k/100k, multiplier is 2.0
-  return pinVolts * 2.0f * scaleFactor;
+  float pinVolts = (float)sum / (float)BATTERY_ADC_SAMPLES / 1000.0f;
+  return pinVolts * BATTERY_VOLTAGE_DIVIDER * BATTERY_SCALE_FACTOR;
 }
 
 float PowerManager::getBatteryVoltage() {
@@ -93,7 +85,7 @@ void PowerManager::updateLED(int blinkIntervalMs) {
     return;
   }
 
-  if (blinkIntervalMs == LED_BLINK_SYNCING) {
+  if (blinkIntervalMs == LED_BLINK_UPLOADING) {
     // Fast green blink
     if (now - _lastLEDUpdate >= 100) {
       _lastLEDUpdate = now;

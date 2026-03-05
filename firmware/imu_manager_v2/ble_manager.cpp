@@ -1,6 +1,7 @@
 /*
  * BLE Manager V2 Implementation
  * Command handling, status notifications, chunked file transfer
+ * Uses NimBLE for reduced flash footprint.
  */
 
 #include "ble_manager.h"
@@ -19,33 +20,34 @@ extern int64_t wallClockMs();
 // Global instance for callbacks
 BLEManager* g_ble = nullptr;
 
-class ServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer* server) {
+class ServerCallbacks : public NimBLEServerCallbacks {
+  void onConnect(NimBLEServer* server, NimBLEConnInfo& connInfo) {
     if (g_ble) {
       g_ble->_connected = true;
       g_ble->_connectionTime = millis();
       Serial.println("[BLE] Client connected");
     }
   }
-  void onDisconnect(BLEServer* server) {
+  void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) {
     if (g_ble) {
       g_ble->_connected = false;
       Serial.println("[BLE] Client disconnected");
     }
-    BLEDevice::startAdvertising();
+    NimBLEDevice::startAdvertising();
   }
 };
 
-class ConfigCallbacks : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic* pChar) {
+class ConfigCallbacks : public NimBLECharacteristicCallbacks {
+  void onWrite(NimBLECharacteristic* pChar, NimBLEConnInfo& connInfo) {
     if (!g_ble) return;
-    String value = pChar->getValue();
+    NimBLEAttValue value = pChar->getValue();
     if (value.length() < 1) return;
 
-    g_ble->_pendingCmd = (uint8_t)value[0];
+    const uint8_t* data = value.data();
+    g_ble->_pendingCmd = data[0];
     g_ble->_cmdPayloadLen = min((int)value.length() - 1, 255);
     if (g_ble->_cmdPayloadLen > 0) {
-      memcpy(g_ble->_cmdPayload, value.c_str() + 1, g_ble->_cmdPayloadLen);
+      memcpy(g_ble->_cmdPayload, data + 1, g_ble->_cmdPayloadLen);
     }
   }
 };
@@ -64,48 +66,46 @@ BLEManager::BLEManager()
 }
 
 void BLEManager::init() {
-  Serial.println("[BLE] Initializing...");
+  Serial.println("[BLE] Initializing (NimBLE)...");
 
-  BLEDevice::init(BLE_DEVICE_NAME);
-  _server = BLEDevice::createServer();
+  NimBLEDevice::init(BLE_DEVICE_NAME);
+  _server = NimBLEDevice::createServer();
   _server->setCallbacks(new ServerCallbacks());
 
-  BLEService* service = _server->createService(BLEUUID(SERVICE_UUID), 20);
+  NimBLEService* service = _server->createService(SERVICE_UUID);
 
-  // Status characteristic (notify)
+  // Status characteristic (read + notify)
+  // NimBLE auto-creates 2902 descriptor for notify/indicate
   _statusChar = service->createCharacteristic(
     SENSOR_CHAR_UUID,
-    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
   );
-  _statusChar->addDescriptor(new BLE2902());
 
   // Config/command characteristic (write)
   _configChar = service->createCharacteristic(
     CONFIG_CHAR_UUID,
-    BLECharacteristic::PROPERTY_WRITE
+    NIMBLE_PROPERTY::WRITE
   );
   _configChar->setCallbacks(new ConfigCallbacks());
 
-  // File list characteristic (read/notify)
+  // File list characteristic (read + notify)
   _fileListChar = service->createCharacteristic(
     FILE_LIST_CHAR_UUID,
-    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
+    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
   );
-  _fileListChar->addDescriptor(new BLE2902());
 
-  // File data characteristic (notify) — chunked file transfer
+  // File data characteristic (notify)
   _fileDataChar = service->createCharacteristic(
     FILE_DATA_CHAR_UUID,
-    BLECharacteristic::PROPERTY_NOTIFY
+    NIMBLE_PROPERTY::NOTIFY
   );
-  _fileDataChar->addDescriptor(new BLE2902());
 
   service->start();
 
-  BLEAdvertising* adv = BLEDevice::getAdvertising();
+  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
   adv->addServiceUUID(SERVICE_UUID);
-  adv->setScanResponse(true);
-  BLEDevice::startAdvertising();
+  adv->enableScanResponse(true);
+  NimBLEDevice::startAdvertising();
 
   Serial.printf("[BLE] Advertising as '%s'\n", BLE_DEVICE_NAME);
 }
@@ -255,6 +255,7 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
 
     case CMD_START_SYNC: {
       if (state == STATE_IDLE) {
+        setCpuFrequencyMhz(CPU_MHZ_WIFI);
         state = STATE_UPLOADING;
         wifi.startSync(storage);
       } else {
@@ -266,6 +267,7 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
     case CMD_CANCEL_SYNC: {
       if (state == STATE_UPLOADING) {
         wifi.cancelSync();
+        setCpuFrequencyMhz(CPU_MHZ_NORMAL);
         state = STATE_IDLE;
       }
       break;
@@ -288,8 +290,8 @@ void BLEManager::sendStatus(DeviceState state, float batteryVoltage, uint32_t fi
   if (!_connected) return;
 
   // Base: state(1) + battery_mv(2) + file_count(2) + free_mb(2) + clock_synced(1) = 8 bytes
-  // Extended (STATE_UPLOADING): + current_file(1) + total_files(1) + bytes_sent(4) + bytes_total(4) = +10 bytes
-  uint8_t buf[18];
+  // Extended (uploading/result): + current_file(1) + total_files(1) + bytes_sent(4) + bytes_total(4) + result(1) = +11 bytes
+  uint8_t buf[19];
   buf[0] = (uint8_t)state;
   uint16_t battMv = (uint16_t)(batteryVoltage * 1000);
   memcpy(buf + 1, &battMv, 2);
@@ -299,15 +301,15 @@ void BLEManager::sendStatus(DeviceState state, float batteryVoltage, uint32_t fi
   buf[7] = isClockSynced() ? 1 : 0;
 
   int len = 8;
-  if (state == STATE_UPLOADING && syncProgress) {
+  if (syncProgress) {
     buf[8] = syncProgress->currentFile;
     buf[9] = syncProgress->totalFiles;
     memcpy(buf + 10, &syncProgress->bytesSent, 4);
     memcpy(buf + 14, &syncProgress->bytesTotal, 4);
-    len = 18;
+    buf[18] = syncProgress->result;
+    len = 19;
   }
 
   _statusChar->setValue(buf, len);
   _statusChar->notify();
 }
-

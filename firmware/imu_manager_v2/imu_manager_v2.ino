@@ -144,6 +144,7 @@ void setup() {
     Serial.println("[WARN] SD init failed — check card/wiring");
   }
 
+  setCpuFrequencyMhz(CPU_MHZ_NORMAL);
   Serial.println("[READY] Idle — press BOOT button or send BLE command to record\n");
 }
 
@@ -206,17 +207,30 @@ void loop() {
       break;
     }
 
-    case STATE_SYNCING:
-      power.updateLED(LED_BLINK_SYNCING);
-      // File transfer is driven by BLE characteristic reads
-      break;
-
     case STATE_UPLOADING: {
-      power.updateLED(LED_BLINK_SYNCING);
+      power.updateLED(LED_BLINK_UPLOADING);
       bool stillSyncing = wifiManager.tick(storage);
+
+      // Push status to app every 500ms during upload
+      static unsigned long lastStatusPush = 0;
+      if (millis() - lastStatusPush >= 500) {
+        lastStatusPush = millis();
+        SyncProgress sp = wifiManager.getProgress();
+        int fileCount = storage.listFiles(nullptr, 0);
+        uint16_t freeMb = (uint16_t)storage.getFreeSpaceMB();
+        ble.sendStatus(state, power.getBatteryVoltage(), fileCount, freeMb, &sp);
+      }
+
       if (!stillSyncing) {
+        // Send final status with result before transitioning to idle
+        SyncProgress sp = wifiManager.getProgress();
+        int fileCount = storage.listFiles(nullptr, 0);
+        uint16_t freeMb = (uint16_t)storage.getFreeSpaceMB();
+        ble.sendStatus(STATE_IDLE, power.getBatteryVoltage(), fileCount, freeMb, &sp);
+
+        setCpuFrequencyMhz(CPU_MHZ_NORMAL);
         state = STATE_IDLE;
-        Serial.println("[MAIN] WiFi sync finished");
+        Serial.println("[MAIN] WiFi sync finished, CPU → 80MHz");
       }
       break;
     }

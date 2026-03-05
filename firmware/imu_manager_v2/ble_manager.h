@@ -2,17 +2,14 @@
  * BLE Manager V2 - Command processing, status notifications, file transfer
  *
  * Reuses V1 service UUID for app compatibility.
- * Adds file listing + chunked file transfer characteristics.
+ * Uses NimBLE for ~50% less flash than Bluedroid.
  */
 
 #ifndef BLE_MANAGER_H
 #define BLE_MANAGER_H
 
 #include <Arduino.h>
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEUtils.h>
-#include <BLE2902.h>
+#include <NimBLEDevice.h>
 #include "config.h"
 
 // Forward declarations
@@ -37,11 +34,11 @@ public:
                   const struct SyncProgress* syncProgress = nullptr);
 
 private:
-  BLEServer* _server;
-  BLECharacteristic* _statusChar;
-  BLECharacteristic* _configChar;
-  BLECharacteristic* _fileListChar;
-  BLECharacteristic* _fileDataChar;
+  NimBLEServer* _server;
+  NimBLECharacteristic* _statusChar;
+  NimBLECharacteristic* _configChar;
+  NimBLECharacteristic* _fileListChar;
+  NimBLECharacteristic* _fileDataChar;
 
   bool _connected;
   unsigned long _connectionTime;

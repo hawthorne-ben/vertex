@@ -32,7 +32,7 @@ public:
 
   // Recording file management
   bool openNewFile(int64_t wallClockMs);  // Wall clock unix ms from synced clock
-  void writeSamples(const IMURecord* samples, int count);
+  bool writeSamples(const IMURecord* samples, int count);  // Returns false on SD write error
   void closeFile(int64_t wallClockMs);    // Patches header with final endTimestamp + recordCount
   bool isFileOpen() const;
 
@@ -57,6 +57,8 @@ private:
   bool _sdReady;
   uint32_t _recordCount;
 
+  // Validate filename (no traversal, .vtx extension, safe chars)
+  bool isValidFilename(const char* name);
   // Write the 64-byte VTX header + JSON metadata section
   void writeVTXHeader(int64_t startTimestampMs);
   // Patch header fields in-place (seek to offset, write, seek back)

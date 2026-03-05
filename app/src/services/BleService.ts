@@ -49,10 +49,11 @@ export interface V2SyncProgress {
   totalFiles: number;
   bytesSent: number;
   bytesTotal: number;
+  result: 'in_progress' | 'success' | 'error';
 }
 
 export interface V2Status {
-  state: 'idle' | 'recording' | 'syncing' | 'uploading';
+  state: 'idle' | 'recording' | 'uploading';
   batteryMv: number;
   fileCount: number;
   freeMb: number;
@@ -1033,9 +1034,9 @@ class BleService {
             }
 
             const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
-            // Pack: state(1) + battery_mv(2) + file_count(2) + free_mb(2) + clock_synced(1)
-            // Extended (state=3/uploading): + current_file(1) + total_files(1) + bytes_sent(4) + bytes_total(4)
-            const stateMap: Record<number, V2Status['state']> = { 0: 'idle', 1: 'recording', 2: 'syncing', 3: 'uploading' };
+            // Base: state(1) + battery_mv(2) + file_count(2) + free_mb(2) + clock_synced(1) = 8 bytes
+            // Extended: + current_file(1) + total_files(1) + bytes_sent(4) + bytes_total(4) + result(1) = +11 bytes
+            const stateMap: Record<number, V2Status['state']> = { 0: 'idle', 1: 'recording', 2: 'uploading' };
             const status: V2Status = {
               state: stateMap[data[0]] || 'idle',
               batteryMv: dv.getUint16(1, true),
@@ -1043,13 +1044,15 @@ class BleService {
               freeMb: dv.getUint16(5, true),
               clockSynced: data[7] === 1,
             };
-            // Parse sync progress if uploading and extended data present
-            if (data[0] === 3 && data.length >= 18) {
+            // Parse sync progress if extended data present (19 bytes)
+            if (data.length >= 19) {
+              const resultMap: Record<number, V2SyncProgress['result']> = { 0: 'in_progress', 1: 'success', 2: 'error' };
               status.syncProgress = {
                 currentFile: data[8],
                 totalFiles: data[9],
                 bytesSent: dv.getUint32(10, true),
                 bytesTotal: dv.getUint32(14, true),
+                result: resultMap[data[18]] || 'in_progress',
               };
             }
             resolve(status);
@@ -1068,6 +1071,47 @@ class BleService {
         }
       });
     });
+  }
+
+  /**
+   * Subscribe to status push notifications (device sends during upload).
+   * Returns unsubscribe function.
+   */
+  subscribeToStatus(callback: (status: V2Status) => void): () => void {
+    if (!this.connectedDevice) return () => {};
+
+    const subscription = this.connectedDevice.monitorCharacteristicForService(
+      IMU_SERVICE_UUID,
+      IMU_CHARACTERISTIC_UUID,
+      (error, characteristic) => {
+        if (error || !characteristic?.value) return;
+        const data = this.base64ToUint8Array(characteristic.value);
+        if (data.length < 8) return;
+
+        const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+        const stateMap: Record<number, V2Status['state']> = { 0: 'idle', 1: 'recording', 2: 'uploading' };
+        const status: V2Status = {
+          state: stateMap[data[0]] || 'idle',
+          batteryMv: dv.getUint16(1, true),
+          fileCount: dv.getUint16(3, true),
+          freeMb: dv.getUint16(5, true),
+          clockSynced: data[7] === 1,
+        };
+        if (data.length >= 19) {
+          const resultMap: Record<number, V2SyncProgress['result']> = { 0: 'in_progress', 1: 'success', 2: 'error' };
+          status.syncProgress = {
+            currentFile: data[8],
+            totalFiles: data[9],
+            bytesSent: dv.getUint32(10, true),
+            bytesTotal: dv.getUint32(14, true),
+            result: resultMap[data[18]] || 'in_progress',
+          };
+        }
+        callback(status);
+      }
+    );
+
+    return () => subscription?.remove();
   }
 
   /**

@@ -69,8 +69,10 @@
 // prevent USB 5V backfeed into the battery during charging.
 // Tap the divider from BAT+ BEFORE the diode to read true battery voltage.
 #define BATTERY_ADC_PIN 4              // GPIO4 — 100K/100K divider from BAT+
-#define BATTERY_VOLTAGE_DIVIDER 2.0    // Divider ratio (100K/100K = 2:1)
-#define BATTERY_CUTOFF_VOLTAGE 3.2     // Graceful shutdown threshold
+#define BATTERY_VOLTAGE_DIVIDER 2.0f   // Divider ratio (100K/100K = 2:1)
+#define BATTERY_ADC_SAMPLES 8          // Number of ADC reads to average
+#define BATTERY_SCALE_FACTOR 1.042f    // Empirical calibration vs multimeter
+#define BATTERY_CUTOFF_VOLTAGE 3.2f    // Graceful shutdown threshold (volts)
 #define BATTERY_READ_INTERVAL_MS 5000
 
 // ===== IMU Configuration (LSM6DS3) =====
@@ -100,11 +102,15 @@
 #define IDLE_TIMEOUT_MS 300000     // 5 min idle before auto-stop recording
 #define LED_BLINK_IDLE 2000        // Slow blink when idle
 #define LED_BLINK_RECORDING 500    // Medium blink when recording
-#define LED_BLINK_SYNCING 100      // Fast blink when transferring
+#define LED_BLINK_UPLOADING 100    // Fast blink when uploading via WiFi
 
 // ===== WiFi Upload Configuration =====
 #define WIFI_CONNECT_TIMEOUT_MS 10000  // 10s to connect to WiFi
 #define WIFI_UPLOAD_CHUNK_SIZE 4096    // Read SD in 4KB chunks for HTTP upload
+
+// ===== CPU Frequency =====
+#define CPU_MHZ_NORMAL 80          // 80MHz for recording/idle (saves ~32mA vs 240MHz)
+#define CPU_MHZ_WIFI 240           // 240MHz required for WiFi
 
 // ===== I2C Configuration =====
 #define I2C_CLOCK_SPEED 400000     // 400kHz fast mode
@@ -113,7 +119,6 @@
 enum DeviceState : int {
   STATE_IDLE,       // Waiting — BLE advertising, not recording
   STATE_RECORDING,  // Active recording — FIFO reads + SD writes
-  STATE_SYNCING,    // File transfer in progress over BLE
   STATE_UPLOADING,  // WiFi upload in progress
 };
 

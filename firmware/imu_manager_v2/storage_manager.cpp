@@ -133,15 +133,15 @@ void StorageManager::writeVTXHeader(int64_t startTimestampMs) {
   _writeFile.flush();
 }
 
-void StorageManager::writeSamples(const IMURecord* samples, int count) {
-  if (!_writeFile) return;
+bool StorageManager::writeSamples(const IMURecord* samples, int count) {
+  if (!_writeFile) return false;
 
-  // IMURecord is already packed as float32 values matching the VTX format
   size_t bytes = count * sizeof(IMURecord);
   size_t written = _writeFile.write((const uint8_t*)samples, bytes);
 
   if (written != bytes) {
     Serial.printf("[SD] Write error: %d/%d bytes\n", written, bytes);
+    return false;
   }
 
   _recordCount += count;
@@ -150,6 +150,7 @@ void StorageManager::writeSamples(const IMURecord* samples, int count) {
   if (_recordCount % (IMU_ODR_HZ * 10) == 0) {
     _writeFile.flush();
   }
+  return true;
 }
 
 void StorageManager::closeFile(int64_t wallClockMs) {
@@ -209,6 +210,7 @@ int StorageManager::listFiles(FileEntry* entries, int maxEntries) {
 
 bool StorageManager::openFileForRead(const char* name) {
   if (!_sdReady) return false;
+  if (!isValidFilename(name)) return false;
 
   char path[64];
   snprintf(path, sizeof(path), "%s/%s", LOG_DIR, name);
@@ -228,8 +230,28 @@ void StorageManager::closeReadFile() {
   }
 }
 
+bool StorageManager::isValidFilename(const char* name) {
+  if (!name || name[0] == '\0') return false;
+  // Reject path traversal and absolute paths
+  if (strstr(name, "..") != nullptr) return false;
+  if (name[0] == '/') return false;
+  // Must end in .vtx
+  int len = strlen(name);
+  if (len < 5 || strcmp(name + len - 4, ".vtx") != 0) return false;
+  // Only allow alphanumeric, underscore, dot
+  for (int i = 0; i < len; i++) {
+    char c = name[i];
+    if (!isalnum(c) && c != '_' && c != '.') return false;
+  }
+  return true;
+}
+
 bool StorageManager::deleteFile(const char* name) {
   if (!_sdReady) return false;
+  if (!isValidFilename(name)) {
+    Serial.printf("[SD] Invalid filename rejected: %s\n", name);
+    return false;
+  }
 
   char path[64];
   snprintf(path, sizeof(path), "%s/%s", LOG_DIR, name);

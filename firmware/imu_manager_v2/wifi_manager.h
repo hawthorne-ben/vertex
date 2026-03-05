@@ -25,11 +25,17 @@ enum WiFiSyncState : int {
   WIFI_ERROR,
 };
 
+// Sync result codes (sent in status notification byte [18])
+#define SYNC_RESULT_IN_PROGRESS 0
+#define SYNC_RESULT_SUCCESS     1
+#define SYNC_RESULT_ERROR       2
+
 struct SyncProgress {
   uint8_t currentFile;
   uint8_t totalFiles;
   uint32_t bytesSent;
   uint32_t bytesTotal;
+  uint8_t result;  // SYNC_RESULT_*
 };
 
 class WiFiUploadManager {
@@ -80,11 +86,16 @@ private:
   int _fileCount;
   int _currentFileIndex;
 
-  // Connect to WiFi (blocking within tick, with timeout)
-  bool connectWiFi();
-
   // Upload a single file — returns true on success
   bool uploadFile(StorageManager& storage, const char* filename);
+
+  // Send HTTP request and stream file data over an already-connected client
+  bool sendRequest(Client& client, StorageManager& storage,
+                   const char* filename, const String& host,
+                   uint32_t fileSize, uint8_t* buf);
+
+  // Parse _serverUrl into host, port, useSSL
+  void parseServerUrl(String& host, int& port, bool& useSSL);
 
   // Disconnect WiFi
   void disconnectWiFi();

@@ -14,6 +14,7 @@ import {
   FlatList,
   ScrollView,
   TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -30,6 +31,8 @@ import {
   XCircle,
   Wifi,
   Upload,
+  CheckCircle,
+  AlertCircle,
   Eye,
   EyeOff,
 } from 'lucide-react-native';
@@ -38,7 +41,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
 import { BackButton, Button, Card, ConfirmDialog, Modal } from '../components/ui';
 import { API_URL, DEVICE_API_KEY } from '@env';
-import BleService, { V2Status, V2FileEntry } from '../services/BleService';
+import BleService, { V2Status, V2FileEntry, V2SyncProgress } from '../services/BleService';
 import { useAuth } from '../contexts/AuthContext';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { useDeviceStore } from '../stores/deviceStore';
@@ -67,6 +70,11 @@ const DeviceDetailV2Screen: React.FC = () => {
   const [wifiPassword, setWifiPassword] = useState('');
   const [wifiSaving, setWifiSaving] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+
+  // Upload overlay
+  const [syncProgress, setSyncProgress] = useState<V2SyncProgress | null>(null);
+  const [showSyncOverlay, setShowSyncOverlay] = useState(false);
+  const syncUnsubRef = useRef<(() => void) | null>(null);
 
   // Dialogs
   const [fileToDelete, setFileToDelete] = useState<string | null>(null);
@@ -97,6 +105,7 @@ const DeviceDetailV2Screen: React.FC = () => {
       isMountedRef.current = false;
       unsubscribe();
       if (statusPollRef.current) clearInterval(statusPollRef.current);
+      if (syncUnsubRef.current) syncUnsubRef.current();
     };
   }, [deviceId]);
 
@@ -223,12 +232,47 @@ const DeviceDetailV2Screen: React.FC = () => {
       return;
     }
     try {
-      // Provision user credentials to device before syncing
       const serverUrl = API_URL.startsWith('http') ? API_URL : `https://${API_URL}`;
       await BleService.setUserCredentials(user.id, DEVICE_API_KEY, serverUrl);
+
+      // Show overlay and subscribe to push notifications
+      setSyncProgress(null);
+      setShowSyncOverlay(true);
+
+      // Subscribe to device-pushed status updates
+      syncUnsubRef.current = BleService.subscribeToStatus((s) => {
+        if (!isMountedRef.current) return;
+        setStatus(s);
+        if (s.syncProgress) {
+          setSyncProgress(s.syncProgress);
+          if (s.syncProgress.result === 'success') {
+            syncUnsubRef.current?.();
+            syncUnsubRef.current = null;
+            setShowSyncOverlay(false);
+            showToast({
+              message: `Synced ${s.syncProgress.totalFiles} file${s.syncProgress.totalFiles === 1 ? '' : 's'} to cloud`,
+              variant: 'success',
+              duration: 3000,
+            });
+            setTimeout(refreshAll, 500);
+          } else if (s.syncProgress.result === 'error') {
+            syncUnsubRef.current?.();
+            syncUnsubRef.current = null;
+            setShowSyncOverlay(false);
+            showToast({
+              message: 'Upload failed — check WiFi credentials',
+              variant: 'error',
+              duration: 4000,
+            });
+          }
+        }
+      });
+
       await BleService.startSync();
-      showToast({ message: 'Sync started', variant: 'success', duration: 2000 });
     } catch (e: any) {
+      setShowSyncOverlay(false);
+      syncUnsubRef.current?.();
+      syncUnsubRef.current = null;
       showToast({ message: `Failed to start sync: ${e?.message}`, variant: 'error' });
     }
   };
@@ -236,6 +280,10 @@ const DeviceDetailV2Screen: React.FC = () => {
   const handleCancelSync = async () => {
     try {
       await BleService.cancelSync();
+      syncUnsubRef.current?.();
+      syncUnsubRef.current = null;
+      setShowSyncOverlay(false);
+      setSyncProgress(null);
       showToast({ message: 'Sync cancelled', variant: 'success', duration: 2000 });
     } catch (e: any) {
       showToast({ message: `Cancel failed: ${e?.message}`, variant: 'error' });
@@ -259,7 +307,6 @@ const DeviceDetailV2Screen: React.FC = () => {
   const stateLabel = (s: V2Status['state']) => {
     switch (s) {
       case 'recording': return 'Recording';
-      case 'syncing': return 'Syncing';
       case 'uploading': return 'Uploading';
       default: return 'Idle';
     }
@@ -268,7 +315,6 @@ const DeviceDetailV2Screen: React.FC = () => {
   const stateColor = (s: V2Status['state']) => {
     switch (s) {
       case 'recording': return theme.colors.error;
-      case 'syncing': return theme.colors.primary;
       case 'uploading': return theme.colors.primary;
       default: return theme.colors.success;
     }
@@ -395,60 +441,29 @@ const DeviceDetailV2Screen: React.FC = () => {
               </TouchableOpacity>
             </View>
 
-            {/* Sync / Upload Progress */}
-            {status?.state === 'uploading' && status.syncProgress ? (
-              <View style={styles.actionSection}>
-                <Card variant="default" padding="none" style={styles.card} header={null}>
-                  <View style={styles.syncProgressContainer}>
-                    <Upload size={20} color={theme.colors.primary} />
-                    <Text style={[styles.syncProgressText, { color: theme.colors.textPrimary }]}>
-                      Uploading file {status.syncProgress.currentFile}/{status.syncProgress.totalFiles}
-                    </Text>
-                    <View style={[styles.progressBar, { backgroundColor: theme.colors.muted }]}>
-                      <View style={[
-                        styles.progressFill,
-                        {
-                          width: `${status.syncProgress.bytesTotal > 0
-                            ? Math.round((status.syncProgress.bytesSent / status.syncProgress.bytesTotal) * 100)
-                            : 0}%`,
-                          backgroundColor: theme.colors.primary,
-                        },
-                      ]} />
-                    </View>
-                    <Text style={[styles.syncBytes, { color: theme.colors.textTertiary }]}>
-                      {formatSize(status.syncProgress.bytesSent)} / {formatSize(status.syncProgress.bytesTotal)}
-                    </Text>
-                  </View>
-                </Card>
-                <Button variant="secondary" onPress={handleCancelSync}>
-                  Cancel Sync
+            {/* Actions */}
+            <View style={styles.actionSection}>
+              {status?.state === 'recording' ? (
+                <Button variant="danger" onPress={handleStopRecording}>
+                  Stop Recording
                 </Button>
-              </View>
-            ) : (
-              <View style={styles.actionSection}>
-                {/* Record Button */}
-                {status?.state === 'recording' ? (
-                  <Button variant="danger" onPress={handleStopRecording}>
-                    Stop Recording
+              ) : (
+                <View style={{ gap: 12 }}>
+                  <Button
+                    variant="primary"
+                    onPress={handleStartRecording}
+                    disabled={status?.state === 'uploading'}>
+                    Start Recording
                   </Button>
-                ) : (
-                  <View style={{ gap: 12 }}>
-                    <Button
-                      variant="primary"
-                      onPress={handleStartRecording}
-                      disabled={status?.state === 'syncing' || status?.state === 'uploading'}>
-                      Start Recording
-                    </Button>
-                    <Button
-                      variant="secondary"
-                      onPress={handleStartSync}
-                      disabled={status?.state !== 'idle' || (status?.fileCount ?? 0) === 0}>
-                      Sync to Cloud
-                    </Button>
-                  </View>
-                )}
-              </View>
-            )}
+                  <Button
+                    variant="secondary"
+                    onPress={handleStartSync}
+                    disabled={status?.state !== 'idle' || (status?.fileCount ?? 0) === 0}>
+                    Sync to Cloud
+                  </Button>
+                </View>
+              )}
+            </View>
 
             {/* File List */}
             <View style={styles.sectionHeader}>
@@ -523,6 +538,44 @@ const DeviceDetailV2Screen: React.FC = () => {
           { label: 'Forget', onPress: handleForget, variant: 'danger' },
         ]}
       />
+
+      {/* Sync Overlay */}
+      <Modal
+        visible={showSyncOverlay}
+        onClose={() => {}}
+        title="Syncing to Cloud">
+        <View style={styles.syncOverlay}>
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+          {syncProgress ? (
+            <>
+              <Text style={[styles.syncOverlayFile, { color: theme.colors.textPrimary }]}>
+                File {syncProgress.currentFile} of {syncProgress.totalFiles}
+              </Text>
+              <View style={[styles.progressBar, { backgroundColor: theme.colors.muted, width: '100%' }]}>
+                <View style={[
+                  styles.progressFill,
+                  {
+                    width: `${syncProgress.bytesTotal > 0
+                      ? Math.min(100, Math.round((syncProgress.bytesSent / syncProgress.bytesTotal) * 100))
+                      : 0}%`,
+                    backgroundColor: theme.colors.primary,
+                  },
+                ]} />
+              </View>
+              <Text style={[styles.syncOverlayBytes, { color: theme.colors.textTertiary }]}>
+                {formatSize(syncProgress.bytesSent)} / {formatSize(syncProgress.bytesTotal)}
+              </Text>
+            </>
+          ) : (
+            <Text style={[styles.syncOverlayFile, { color: theme.colors.textSecondary }]}>
+              Connecting to WiFi...
+            </Text>
+          )}
+          <Button variant="secondary" onPress={handleCancelSync} style={{ marginTop: 8 }}>
+            Cancel
+          </Button>
+        </View>
+      </Modal>
 
       {/* WiFi Setup Modal */}
       <Modal
@@ -699,17 +752,17 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
-  syncProgressContainer: {
-    padding: 16,
+  syncOverlay: {
     alignItems: 'center',
-    gap: 8,
+    gap: 16,
+    paddingVertical: 16,
   },
-  syncProgressText: {
-    fontSize: 14,
+  syncOverlayFile: {
+    fontSize: 16,
     fontWeight: '600',
   },
-  syncBytes: {
-    fontSize: 12,
+  syncOverlayBytes: {
+    fontSize: 13,
     fontFamily: staticTheme.typography.mono,
   },
   wifiModal: {
