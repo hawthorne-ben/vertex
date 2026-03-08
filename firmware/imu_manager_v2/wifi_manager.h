@@ -19,7 +19,10 @@ class StorageManager;
 enum WiFiSyncState : int {
   WIFI_IDLE,
   WIFI_CONNECTING,
-  WIFI_UPLOADING,
+  WIFI_CHECK_EXISTING,  // Ask server which files already exist
+  WIFI_UPLOADING,       // Open file + connect + send headers
+  WIFI_STREAMING,       // Stream file data one chunk per tick()
+  WIFI_WAIT_RESPONSE,   // Wait for HTTP response after streaming
   WIFI_NEXT_FILE,
   WIFI_DONE,
   WIFI_ERROR,
@@ -64,6 +67,9 @@ public:
   // Progress for BLE status
   SyncProgress getProgress() const { return _progress; }
 
+  // Check if a file has been synced to server (exists or was uploaded this session)
+  bool isFileSynced(const char* filename) const;
+
   // Credential management (called from BLE command handlers)
   void saveWiFiCredentials(const char* ssid, const char* password);
   void saveUserCredentials(const char* userId, const char* apiKey, const char* serverUrl);
@@ -83,16 +89,21 @@ private:
   // File list for upload
   static const int MAX_UPLOAD_FILES = 32;
   char _fileNames[MAX_UPLOAD_FILES][32];
+  uint32_t _fileSizes[MAX_UPLOAD_FILES];
   int _fileCount;
   int _currentFileIndex;
 
-  // Upload a single file — returns true on success
-  bool uploadFile(StorageManager& storage, const char* filename);
+  // Begin uploading current file — opens connection, sends HTTP headers
+  bool beginFileUpload(StorageManager& storage, const char* filename);
 
-  // Send HTTP request and stream file data over an already-connected client
-  bool sendRequest(Client& client, StorageManager& storage,
-                   const char* filename, const String& host,
-                   uint32_t fileSize, uint8_t* buf);
+  // Stream one chunk — returns true while data remains
+  bool streamNextChunk(StorageManager& storage);
+
+  // Read HTTP response after streaming completes — returns true on 200
+  bool readResponse();
+
+  // Clean up current file upload state
+  void endFileUpload(StorageManager& storage);
 
   // Parse _serverUrl into host, port, useSSL
   void parseServerUrl(String& host, int& port, bool& useSSL);
@@ -102,6 +113,17 @@ private:
 
   // Load credentials from NVS
   void loadCredentials();
+
+  // Check server for already-uploaded files, mark them to skip
+  bool checkExistingFiles();
+
+  // Streaming state for non-blocking upload
+  Client* _activeClient;         // Current TCP connection (owned, heap-allocated)
+  bool _clientIsSSL;             // Whether _activeClient is WiFiClientSecure
+  uint8_t* _uploadBuf;           // Chunk buffer (heap-allocated)
+  uint32_t _fileRemaining;       // Bytes left to stream
+  String _partFooter;            // Multipart footer to send after file data
+  bool _fileSkip[MAX_UPLOAD_FILES];  // Files that already exist on server
 };
 
 #endif // WIFI_MANAGER_H

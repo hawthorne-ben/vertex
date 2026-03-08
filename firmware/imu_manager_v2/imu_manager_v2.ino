@@ -93,6 +93,12 @@ int checkButtonPress() {
 }
 
 // ===== Recording control =====
+static unsigned long _recordingStartMs = 0;
+
+uint32_t getRecordingElapsedSecs() {
+  if (state != STATE_RECORDING) return 0;
+  return (uint32_t)((millis() - _recordingStartMs) / 1000);
+}
 
 void startRecording() {
   if (state != STATE_IDLE) return;
@@ -103,6 +109,7 @@ void startRecording() {
 
   sensor.resetTimestamp();
   if (storage.openNewFile(wallClockMs())) {
+    _recordingStartMs = millis();
     state = STATE_RECORDING;
     Serial.println("[REC] Started");
   } else {
@@ -144,7 +151,9 @@ void setup() {
     Serial.println("[WARN] SD init failed — check card/wiring");
   }
 
-  setCpuFrequencyMhz(CPU_MHZ_NORMAL);
+  // NOTE: setCpuFrequencyMhz(80) after BLE init kills NimBLE advertising
+  // on ESP32-S3 with core 3.3.6. Leave at 240MHz until root-caused.
+  // setCpuFrequencyMhz(CPU_MHZ_NORMAL);
   Serial.println("[READY] Idle — press BOOT button or send BLE command to record\n");
 }
 
@@ -218,7 +227,10 @@ void loop() {
         SyncProgress sp = wifiManager.getProgress();
         int fileCount = storage.listFiles(nullptr, 0);
         uint16_t freeMb = (uint16_t)storage.getFreeSpaceMB();
-        ble.sendStatus(state, power.getBatteryVoltage(), fileCount, freeMb, &sp);
+        float ax, ay, az;
+        sensor.getLatestAccel(ax, ay, az);
+        ble.sendStatus(state, power.getBatteryVoltage(), fileCount, freeMb,
+                       storage.isReady(), sensor.isHealthy(), ax, ay, az, &sp);
       }
 
       if (!stillSyncing) {
@@ -226,7 +238,10 @@ void loop() {
         SyncProgress sp = wifiManager.getProgress();
         int fileCount = storage.listFiles(nullptr, 0);
         uint16_t freeMb = (uint16_t)storage.getFreeSpaceMB();
-        ble.sendStatus(STATE_IDLE, power.getBatteryVoltage(), fileCount, freeMb, &sp);
+        float ax2, ay2, az2;
+        sensor.getLatestAccel(ax2, ay2, az2);
+        ble.sendStatus(STATE_IDLE, power.getBatteryVoltage(), fileCount, freeMb,
+                       storage.isReady(), sensor.isHealthy(), ax2, ay2, az2, &sp);
 
         setCpuFrequencyMhz(CPU_MHZ_NORMAL);
         state = STATE_IDLE;

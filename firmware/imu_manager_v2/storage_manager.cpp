@@ -133,6 +133,9 @@ void StorageManager::writeVTXHeader(int64_t startTimestampMs) {
   _writeFile.flush();
 }
 
+// Defined in main sketch
+extern int64_t wallClockMs();
+
 bool StorageManager::writeSamples(const IMURecord* samples, int count) {
   if (!_writeFile) return false;
 
@@ -147,7 +150,11 @@ bool StorageManager::writeSamples(const IMURecord* samples, int count) {
   _recordCount += count;
 
   // Flush periodically (~every 10 seconds at 104Hz)
+  // Also patch header so file is valid if power is lost
   if (_recordCount % (IMU_ODR_HZ * 10) == 0) {
+    size_t pos = _writeFile.position();
+    patchHeader(wallClockMs());
+    _writeFile.seek(pos);
     _writeFile.flush();
   }
   return true;

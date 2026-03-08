@@ -27,7 +27,6 @@ import {
   RefreshCw,
   Heart,
   Circle,
-  Settings,
 } from 'lucide-react-native';
 import { theme as staticTheme } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
@@ -877,12 +876,7 @@ const DeviceDetailScreenContent: React.FC = () => {
           <Text style={[styles.title, { color: theme.colors.textPrimary }]}>{deviceName}</Text>
           <Text style={[styles.deviceId, { color: theme.colors.textTertiary }]}>{deviceId}</Text>
         </View>
-        <TouchableOpacity
-          onPress={() => navigation.navigate('DeviceSettings' as any)}
-          style={styles.settingsButton}
-        >
-          <Settings size={24} color={theme.colors.textPrimary} />
-        </TouchableOpacity>
+        <View style={{ width: 40 }} />
       </View>
 
       <ScrollView
@@ -1096,10 +1090,6 @@ const styles = StyleSheet.create({
   },
   headerInfo: {
     flex: 1,
-  },
-  settingsButton: {
-    padding: staticTheme.spacing.sm,
-    marginLeft: staticTheme.spacing.md,
   },
   title: {
     fontSize: staticTheme.typography.fontSize.xl,

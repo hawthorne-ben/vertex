@@ -228,15 +228,31 @@ With a 360mAh battery: ~7-8 hours theoretical, ~5-6 hours practical (accounting 
 
 ```bash
 brew install arduino-cli
-arduino-cli core install esp32:esp32
-arduino-cli lib install "SparkFun LSM6DS3 Breakout"
+arduino-cli core install esp32:esp32@3.3.6
 ```
 
-### Initial Flash (via ESP32-S3 USB)
+No external libraries required. BLE uses the built-in Bluedroid stack (not NimBLE — see known issues in firmware README).
+
+**Pinned version**: ESP32 Arduino core must be **3.3.6**. Core 3.3.7 breaks NimBLE on S3, and NimBLE 2.3.8's fix silently kills advertising. Bluedroid works on both but was validated on 3.3.6.
+
+### Compile & Flash
+
+The `huge_app` partition scheme is required — Bluedroid pushes the firmware past the default 1.25MB app partition. This uses a single 3MB app partition (no OTA slots).
 
 ```bash
-arduino-cli compile --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc .
-arduino-cli upload --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc --port /dev/cu.usbmodemXXXX .
+arduino-cli compile \
+  --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc,USBMode=hwcdc,PartitionScheme=huge_app \
+  .
+
+arduino-cli upload \
+  --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc,USBMode=hwcdc,PartitionScheme=huge_app \
+  --port /dev/cu.usbmodem1101 \
+  .
 ```
 
-After initial flash, all subsequent updates should be OTA.
+### Compilation Stats
+
+```
+Sketch uses 1,311,131 bytes (41%) of program storage space. Maximum is 3,145,728 bytes.
+Global variables use 54,268 bytes (16%) of dynamic memory.
+```

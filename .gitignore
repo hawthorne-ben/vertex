@@ -95,3 +95,6 @@ firmware/**/credentials.h
 *.old
 *.tmp
 .aider*
+
+# Hardware assets (STL, etc.)
+assets/

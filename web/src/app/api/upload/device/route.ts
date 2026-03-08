@@ -11,6 +11,50 @@ const supabase = createClient(
 )
 
 /**
+ * Check which files already exist for a user.
+ * Firmware calls this before uploading to skip already-synced files.
+ *
+ * Query: ?filenames=file1.vtx,file2.vtx
+ * Returns: { "existing": ["file1.vtx"] }
+ */
+export async function GET(request: NextRequest) {
+  try {
+    const deviceKey = request.headers.get('x-device-key')
+    if (!deviceKey || deviceKey !== process.env.DEVICE_API_KEY) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const userId = request.headers.get('x-user-id')
+    if (!userId) {
+      return NextResponse.json({ error: 'Missing X-User-Id' }, { status: 400 })
+    }
+
+    const filenames = request.nextUrl.searchParams.get('filenames')
+    if (!filenames) {
+      return NextResponse.json({ error: 'Missing filenames param' }, { status: 400 })
+    }
+
+    const filenameList = filenames.split(',').map(f => f.trim()).filter(Boolean)
+
+    const { data: existing } = await supabase
+      .from('recordings')
+      .select('filename')
+      .eq('user_id', userId)
+      .in('filename', filenameList)
+
+    return NextResponse.json({
+      existing: (existing || []).map(r => r.filename),
+    })
+  } catch (error) {
+    console.error('Device check error:', error)
+    return NextResponse.json(
+      { error: 'Internal server error' },
+      { status: 500 }
+    )
+  }
+}
+
+/**
  * Device upload relay endpoint
  *
  * ESP32 uploads .vtx files directly via WiFi.

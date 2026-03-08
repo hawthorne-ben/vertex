@@ -36,11 +36,6 @@ class DeviceStatusService {
     console.warn('[DeviceStatusService] Initial connection status:', isConnected);
     useDeviceStore.getState().setConnectionStatus(isConnected);
 
-    // Query device configuration on connection
-    if (isConnected) {
-      this.queryDeviceConfig();
-    }
-
     // Listen for immediate connection changes (in addition to polling)
     this.connectionListener = BleService.addConnectionListener((device, isConn) => {
       const monitoredDeviceId = useDeviceStore.getState().deviceId;
@@ -150,30 +145,6 @@ class DeviceStatusService {
 
     // Poll every 10 seconds
     this.batteryPollingInterval = setInterval(checkBattery, 10000);
-  }
-
-  /**
-   * Query device configuration
-   * Note: Firmware responds via sensor characteristic notification
-   * For now, this just triggers the query - proper parsing would require
-   * subscribing to notifications
-   */
-  private async queryDeviceConfig(): Promise<void> {
-    try {
-      console.warn('[DeviceStatusService] Querying device configuration...');
-      await BleService.queryConfiguration();
-
-      // TODO: Parse response from notification
-      // For now, we'll set a default config based on known firmware defaults
-      // Firmware defaults: 20ms interval (50 Hz), powerMode=1, ledMode=1
-      useDeviceStore.getState().setDeviceConfig({
-        sampleRate: 50, // 50 Hz default
-        ledMode: 1,     // Status LED
-        powerMode: 1,   // Normal power
-      });
-    } catch (error: any) {
-      console.warn('[DeviceStatusService] Config query failed:', error.message);
-    }
   }
 
   /**

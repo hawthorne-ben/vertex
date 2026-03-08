@@ -14,7 +14,6 @@ import LoadingScreen from '../components/LoadingScreen';
 import DeviceDetailScreen from '../screens/DeviceDetailScreen';
 import RecordScreen from '../screens/RecordScreen';
 import DataDetailScreen from '../screens/DataDetailScreen';
-import DeviceSettingsScreen from '../screens/DeviceSettingsScreen';
 import RideDetailScreen from '../screens/RideDetailScreen';
 import DeviceDetailV2Screen from '../screens/DeviceDetailV2Screen';
 
@@ -26,7 +25,6 @@ export type RootStackParamList = {
   DeviceDetailV2: { deviceId: string; deviceName: string };
   Record: { deviceId: string; deviceName: string };
   DataDetail: { fileName: string; filePath: string };
-  DeviceSettings: undefined;
   RideDetail: { rideId: string };
 };
 
@@ -51,7 +49,6 @@ const AppNavigator: React.FC = () => {
         <AppStack.Screen name="DeviceDetailV2" component={DeviceDetailV2Screen} />
         <AppStack.Screen name="Record" component={RecordScreen} />
         <AppStack.Screen name="DataDetail" component={DataDetailScreen} />
-        <AppStack.Screen name="DeviceSettings" component={DeviceSettingsScreen} />
         <AppStack.Screen name="RideDetail" component={RideDetailScreen} />
       </AppStack.Navigator>
     );

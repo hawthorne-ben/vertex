@@ -138,6 +138,12 @@ void SensorManager::resetTimestamp() {
   _recordingStartMs = millis();
 }
 
+void SensorManager::getLatestAccel(float &ax, float &ay, float &az) const {
+  ax = _buffer[0].accel_x;
+  ay = _buffer[0].accel_y;
+  az = _buffer[0].accel_z;
+}
+
 // --- I2C register helpers ---
 
 bool SensorManager::writeRegister(uint8_t reg, uint8_t value) {

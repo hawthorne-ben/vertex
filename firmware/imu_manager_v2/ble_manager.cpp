@@ -1,7 +1,7 @@
 /*
  * BLE Manager V2 Implementation
  * Command handling, status notifications, chunked file transfer
- * Uses NimBLE for reduced flash footprint.
+ * Uses Bluedroid (ESP32 built-in BLE stack).
  */
 
 #include "ble_manager.h"
@@ -16,34 +16,35 @@ extern void stopRecording();
 extern void syncClock(int64_t unixMs);
 extern bool isClockSynced();
 extern int64_t wallClockMs();
+extern uint32_t getRecordingElapsedSecs();
 
 // Global instance for callbacks
 BLEManager* g_ble = nullptr;
 
-class ServerCallbacks : public NimBLEServerCallbacks {
-  void onConnect(NimBLEServer* server, NimBLEConnInfo& connInfo) {
+class ServerCallbacks : public BLEServerCallbacks {
+  void onConnect(BLEServer* server) {
     if (g_ble) {
       g_ble->_connected = true;
       g_ble->_connectionTime = millis();
       Serial.println("[BLE] Client connected");
     }
   }
-  void onDisconnect(NimBLEServer* server, NimBLEConnInfo& connInfo, int reason) {
+  void onDisconnect(BLEServer* server) {
     if (g_ble) {
       g_ble->_connected = false;
       Serial.println("[BLE] Client disconnected");
     }
-    NimBLEDevice::startAdvertising();
+    BLEDevice::startAdvertising();
   }
 };
 
-class ConfigCallbacks : public NimBLECharacteristicCallbacks {
-  void onWrite(NimBLECharacteristic* pChar, NimBLEConnInfo& connInfo) {
+class ConfigCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic* pChar) {
     if (!g_ble) return;
-    NimBLEAttValue value = pChar->getValue();
+    String value = pChar->getValue();
     if (value.length() < 1) return;
 
-    const uint8_t* data = value.data();
+    const uint8_t* data = (const uint8_t*)value.c_str();
     g_ble->_pendingCmd = data[0];
     g_ble->_cmdPayloadLen = min((int)value.length() - 1, 255);
     if (g_ble->_cmdPayloadLen > 0) {
@@ -66,46 +67,49 @@ BLEManager::BLEManager()
 }
 
 void BLEManager::init() {
-  Serial.println("[BLE] Initializing (NimBLE)...");
+  Serial.println("[BLE] Initializing (Bluedroid)...");
 
-  NimBLEDevice::init(BLE_DEVICE_NAME);
-  _server = NimBLEDevice::createServer();
+  BLEDevice::init(BLE_DEVICE_NAME);
+  _server = BLEDevice::createServer();
   _server->setCallbacks(new ServerCallbacks());
 
-  NimBLEService* service = _server->createService(SERVICE_UUID);
+  BLEService* service = _server->createService(BLEUUID(SERVICE_UUID), 20);
 
   // Status characteristic (read + notify)
-  // NimBLE auto-creates 2902 descriptor for notify/indicate
   _statusChar = service->createCharacteristic(
     SENSOR_CHAR_UUID,
-    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
+    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
   );
+  _statusChar->addDescriptor(new BLE2902());
 
   // Config/command characteristic (write)
   _configChar = service->createCharacteristic(
     CONFIG_CHAR_UUID,
-    NIMBLE_PROPERTY::WRITE
+    BLECharacteristic::PROPERTY_WRITE
   );
   _configChar->setCallbacks(new ConfigCallbacks());
 
   // File list characteristic (read + notify)
   _fileListChar = service->createCharacteristic(
     FILE_LIST_CHAR_UUID,
-    NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY
+    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY
   );
+  _fileListChar->addDescriptor(new BLE2902());
 
   // File data characteristic (notify)
   _fileDataChar = service->createCharacteristic(
     FILE_DATA_CHAR_UUID,
-    NIMBLE_PROPERTY::NOTIFY
+    BLECharacteristic::PROPERTY_NOTIFY
   );
+  _fileDataChar->addDescriptor(new BLE2902());
 
   service->start();
 
-  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+  BLEAdvertising* adv = BLEDevice::getAdvertising();
   adv->addServiceUUID(SERVICE_UUID);
-  adv->enableScanResponse(true);
-  NimBLEDevice::startAdvertising();
+  adv->setScanResponse(true);
+  adv->setMinPreferred(0x06);
+  BLEDevice::startAdvertising();
 
   Serial.printf("[BLE] Advertising as '%s'\n", BLE_DEVICE_NAME);
 }
@@ -126,11 +130,19 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
       int fileCount = storage.listFiles(nullptr, 0);
       uint16_t freeMb = (uint16_t)storage.getFreeSpaceMB();
       float battV = power.getBatteryVoltage();
+      bool sdOk = storage.isReady();
+      bool imuOk = sensor.isHealthy();
+      float ax, ay, az;
+      sensor.getLatestAccel(ax, ay, az);
       if (state == STATE_UPLOADING) {
         SyncProgress sp = wifi.getProgress();
-        sendStatus(state, battV, fileCount, freeMb, &sp);
+        sendStatus(state, battV, fileCount, freeMb, sdOk, imuOk, ax, ay, az, &sp);
+      } else if (state == STATE_RECORDING) {
+        uint32_t recSecs = getRecordingElapsedSecs();
+        uint32_t recBytes = storage.getCurrentFileSize();
+        sendStatus(state, battV, fileCount, freeMb, sdOk, imuOk, ax, ay, az, nullptr, recSecs, recBytes);
       } else {
-        sendStatus(state, battV, fileCount, freeMb);
+        sendStatus(state, battV, fileCount, freeMb, sdOk, imuOk, ax, ay, az);
       }
       break;
     }
@@ -163,14 +175,14 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
       int startIdx = (totalCount > 10) ? totalCount - 10 : 0;
       int sendCount = totalCount - startIdx;
 
-      // Pack: totalCount(1) + packedCount(1) + [name_len(1) + name(N) + size(4)] per file
+      // Pack: totalCount(1) + packedCount(1) + [name_len(1) + name(N) + size(4) + synced(1)] per file
       uint8_t buf[512];
       int off = 0;
       buf[off++] = (uint8_t)totalCount;   // Total files on SD
       buf[off++] = (uint8_t)sendCount;    // Files in this response
       for (int i = startIdx; i < totalCount; i++) {
         uint8_t nameLen = strlen(entries[i].name);
-        int entrySize = 1 + nameLen + 4;
+        int entrySize = 1 + nameLen + 4 + 1;
         if (off + entrySize > 500) break;
         buf[off++] = nameLen;
         memcpy(buf + off, entries[i].name, nameLen);
@@ -178,6 +190,7 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
         uint32_t sz = entries[i].size;
         memcpy(buf + off, &sz, 4);
         off += 4;
+        buf[off++] = wifi.isFileSynced(entries[i].name) ? 1 : 0;
       }
       _fileListChar->setValue(buf, off);
       _fileListChar->notify();
@@ -286,12 +299,16 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
 }
 
 void BLEManager::sendStatus(DeviceState state, float batteryVoltage, uint32_t fileCount, uint16_t freeMb,
-                            const SyncProgress* syncProgress) {
+                            bool sdOk, bool imuOk, float accelX, float accelY, float accelZ,
+                            const SyncProgress* syncProgress,
+                            uint32_t recordingSecs, uint32_t recordingBytes) {
   if (!_connected) return;
 
-  // Base: state(1) + battery_mv(2) + file_count(2) + free_mb(2) + clock_synced(1) = 8 bytes
-  // Extended (uploading/result): + current_file(1) + total_files(1) + bytes_sent(4) + bytes_total(4) + result(1) = +11 bytes
-  uint8_t buf[19];
+  // Base: state(1) + battery_mv(2) + file_count(2) + free_mb(2) + clock_synced(1)
+  //       + flags(1) + accel_x(2) + accel_y(2) + accel_z(2) = 15 bytes
+  // Recording: + rec_secs(4) + rec_bytes(4) = +8 bytes (total 23)
+  // Uploading:  + current_file(1) + total_files(1) + bytes_sent(4) + bytes_total(4) + result(1) = +11 bytes (total 26)
+  uint8_t buf[26];
   buf[0] = (uint8_t)state;
   uint16_t battMv = (uint16_t)(batteryVoltage * 1000);
   memcpy(buf + 1, &battMv, 2);
@@ -300,14 +317,29 @@ void BLEManager::sendStatus(DeviceState state, float batteryVoltage, uint32_t fi
   memcpy(buf + 5, &freeMb, 2);
   buf[7] = isClockSynced() ? 1 : 0;
 
-  int len = 8;
+  // Flags: bit0 = SD OK, bit1 = IMU OK
+  buf[8] = (sdOk ? 0x01 : 0x00) | (imuOk ? 0x02 : 0x00);
+
+  // Accel as int16 in milli-g (1g ≈ 9.81 m/s², so mg = m/s² * 1000 / 9.80665)
+  int16_t axMg = (int16_t)(accelX * (1000.0f / 9.80665f));
+  int16_t ayMg = (int16_t)(accelY * (1000.0f / 9.80665f));
+  int16_t azMg = (int16_t)(accelZ * (1000.0f / 9.80665f));
+  memcpy(buf + 9, &axMg, 2);
+  memcpy(buf + 11, &ayMg, 2);
+  memcpy(buf + 13, &azMg, 2);
+
+  int len = 15;
   if (syncProgress) {
-    buf[8] = syncProgress->currentFile;
-    buf[9] = syncProgress->totalFiles;
-    memcpy(buf + 10, &syncProgress->bytesSent, 4);
-    memcpy(buf + 14, &syncProgress->bytesTotal, 4);
-    buf[18] = syncProgress->result;
-    len = 19;
+    buf[15] = syncProgress->currentFile;
+    buf[16] = syncProgress->totalFiles;
+    memcpy(buf + 17, &syncProgress->bytesSent, 4);
+    memcpy(buf + 21, &syncProgress->bytesTotal, 4);
+    buf[25] = syncProgress->result;
+    len = 26;
+  } else if (state == STATE_RECORDING && (recordingSecs > 0 || recordingBytes > 0)) {
+    memcpy(buf + 15, &recordingSecs, 4);
+    memcpy(buf + 19, &recordingBytes, 4);
+    len = 23;
   }
 
   _statusChar->setValue(buf, len);

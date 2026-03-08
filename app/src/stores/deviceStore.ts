@@ -24,12 +24,6 @@ export interface SensorReading {
   temperature: number;
 }
 
-export interface DeviceConfig {
-  sampleRate: number; // Hz
-  ledMode: number; // 0=Off, 1=Status, 2=Always On
-  powerMode: number; // 0=Low Power, 1=Normal, 2=High Performance
-}
-
 export interface SavedDevice {
   id: string;
   name: string;
@@ -54,9 +48,6 @@ export interface DeviceState {
   latestReading: SensorReading | null;
   sampleRate: number | null; // Hz (actual measured rate)
 
-  // Device config
-  deviceConfig: DeviceConfig | null;
-
   // Saved devices
   savedDevices: SavedDevice[];
 
@@ -67,7 +58,6 @@ export interface DeviceState {
   setBattery: (level: number | null, voltage: number | null, isCharging?: boolean | null) => void;
   setLatestReading: (reading: SensorReading) => void;
   setSampleRate: (rate: number) => void;
-  setDeviceConfig: (config: DeviceConfig) => void;
   loadSavedDevices: () => Promise<void>;
   addSavedDevice: (device: SavedDevice) => Promise<void>;
   removeSavedDevice: (deviceId: string) => Promise<void>;
@@ -86,7 +76,6 @@ const initialState = {
   isCharging: null,
   latestReading: null,
   sampleRate: null,
-  deviceConfig: null,
   savedDevices: [],
 };
 
@@ -110,9 +99,6 @@ export const useDeviceStore = create<DeviceState>((set, get) => ({
 
   setSampleRate: (rate) =>
     set({ sampleRate: rate }),
-
-  setDeviceConfig: (config) =>
-    set({ deviceConfig: config }),
 
   loadSavedDevices: async () => {
     try {

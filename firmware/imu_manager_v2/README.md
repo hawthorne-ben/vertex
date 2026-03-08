@@ -75,18 +75,24 @@ imu_manager_v2/
 arduino-cli core install esp32:esp32
 ```
 
-No external libraries required. LSM6DS3 is driven via raw I2C register access. NeoPixel uses the ESP32 core's built-in `rgbLedWriteOrdered()`. SD and BLE are included with the ESP32 Arduino core.
+No external libraries required. LSM6DS3 is driven via raw I2C register access. NeoPixel uses the ESP32 core's built-in `rgbLedWriteOrdered()`. SD and BLE (Bluedroid) are included with the ESP32 Arduino core.
+
+**Pinned versions** (NimBLE 2.3.7/2.3.8 has broken BLE advertising on ESP32-S3 with core 3.3.6/3.3.7):
+```bash
+arduino-cli core install esp32:esp32@3.3.6
+```
 
 ### Compile
 
-The **generic ESP32-S3 board definition** must be used (not the Waveshare-specific one, which has linker issues when CDC is enabled). Two critical flags:
+The **generic ESP32-S3 board definition** must be used (not the Waveshare-specific one, which has linker issues when CDC is enabled). Three critical flags:
 
 - `CDCOnBoot=cdc` — enables Serial output over USB (without this, no serial output at all)
 - `USBMode=hwcdc` — uses hardware USB-Serial/JTAG (the ESP32-S3-Zero's native USB)
+- `PartitionScheme=huge_app` — 3MB app partition (required for Bluedroid BLE stack, which uses ~26KB more flash than NimBLE)
 
 ```bash
 arduino-cli compile \
-  --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc,USBMode=hwcdc \
+  --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc,USBMode=hwcdc,PartitionScheme=huge_app \
   .
 ```
 
@@ -96,8 +102,8 @@ The device appears as `/dev/cu.usbmodem1101` (may vary). Close any serial monito
 
 ```bash
 arduino-cli upload \
-  --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc,USBMode=hwcdc \
-  --port /dev/cu.usbmodem101 \
+  --fqbn esp32:esp32:esp32s3:CDCOnBoot=cdc,USBMode=hwcdc,PartitionScheme=huge_app \
+  --port /dev/cu.usbmodem1101 \
   .
 ```
 
@@ -123,7 +129,7 @@ arduino-cli monitor --port /dev/cu.usbmodem1101 --config baudrate=115200
 [IMU] Configured: 104Hz, +/-8g, +/-1000dps
 [SD] Initializing...
 [SD] Ready — 7664MB total, 7664MB free
-[BLE] Initializing...
+[BLE] Initializing (Bluedroid)...
 [BLE] Advertising as 'Vertex-V2'
 [READY] Idle — press BOOT button or send BLE command to record
 ```
@@ -134,6 +140,7 @@ If IMU shows `WHO_AM_I mismatch: got 0xFF` on first boot, it's a cold-start I2C 
 
 - **I2C cold-start flakiness**: The LSM6DS3 occasionally fails WHO_AM_I on first power-up. Firmware retries 3x with 50ms delays. Usually succeeds on attempt 2. Caused by marginal solder joints on SDA (GPIO2) / SCL (GPIO1).
 - **Waveshare board def + CDC**: The `waveshare_esp32_s3_zero` board definition produces linker errors (`cannot find -lm, -lstdc++, -lgcc`) when `CDCOnBoot=cdc` is set. Use the generic `esp32s3` board def instead — works fine.
+- **NimBLE broken on ESP32-S3**: NimBLE-Arduino 2.3.7 crashes on init with ESP32 Arduino core 3.3.7. NimBLE 2.3.8 fixes the crash but silently breaks BLE advertising on S3 (firmware logs success but no RF output). Switched to Bluedroid (ESP32 built-in BLE stack), which requires `PartitionScheme=huge_app` due to ~26KB larger flash footprint. This trades OTA dual-partition support for working BLE — acceptable for dev prototype with 4MB flash.
 
 ## VTX File Format
 

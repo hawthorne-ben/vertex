@@ -14,14 +14,12 @@ import {
   FlatList,
   ScrollView,
   TextInput,
-  ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   Bluetooth,
-  Settings,
   Circle,
   Trash2,
   Clock,
@@ -39,7 +37,8 @@ import {
 import { theme as staticTheme } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
-import { BackButton, Button, Card, ConfirmDialog, Modal } from '../components/ui';
+import { BackButton, Button, Card, ConfirmDialog } from '../components/ui';
+import Inclinometer from '../components/Inclinometer';
 import { API_URL, DEVICE_API_KEY } from '@env';
 import BleService, { V2Status, V2FileEntry, V2SyncProgress } from '../services/BleService';
 import { useAuth } from '../contexts/AuthContext';
@@ -71,15 +70,20 @@ const DeviceDetailV2Screen: React.FC = () => {
   const [wifiSaving, setWifiSaving] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
-  // Upload overlay
+  // Upload progress (inline, replaces action buttons)
   const [syncProgress, setSyncProgress] = useState<V2SyncProgress | null>(null);
-  const [showSyncOverlay, setShowSyncOverlay] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   const syncUnsubRef = useRef<(() => void) | null>(null);
 
   // Dialogs
   const [fileToDelete, setFileToDelete] = useState<string | null>(null);
   const [showDisconnectDialog, setShowDisconnectDialog] = useState(false);
   const [showForgetDialog, setShowForgetDialog] = useState(false);
+
+  // Client-side recording duration interpolation
+  const [displaySecs, setDisplaySecs] = useState(0);
+  const recordingBaseRef = useRef<{ serverSecs: number; localMs: number } | null>(null);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isMountedRef = useRef(true);
   const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -101,17 +105,71 @@ const DeviceDetailV2Screen: React.FC = () => {
       }
     });
 
+    // Auto-connect on mount
+    if (!BleService.isConnected()) {
+      handleConnect();
+    } else {
+      setIsConnected(true);
+      refreshAll();
+    }
+
     return () => {
       isMountedRef.current = false;
       unsubscribe();
       if (statusPollRef.current) clearInterval(statusPollRef.current);
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
       if (syncUnsubRef.current) syncUnsubRef.current();
     };
   }, [deviceId]);
 
-  // Status polling
+  // Client-side recording timer: update displaySecs every 1s while recording
   useEffect(() => {
-    if (isConnected) {
+    const isRecording = status?.state === 'recording';
+
+    if (isRecording) {
+      // Sync baseline from BLE-reported elapsed seconds
+      const serverSecs = status?.recordingInfo?.elapsedSecs ?? 0;
+      recordingBaseRef.current = { serverSecs, localMs: Date.now() };
+      setDisplaySecs(serverSecs);
+
+      // Start 1s tick
+      if (!recordingTimerRef.current) {
+        recordingTimerRef.current = setInterval(() => {
+          if (!recordingBaseRef.current) return;
+          const elapsed = Math.floor((Date.now() - recordingBaseRef.current.localMs) / 1000);
+          setDisplaySecs(recordingBaseRef.current.serverSecs + elapsed);
+        }, 1000);
+      }
+    } else {
+      // Not recording — stop timer
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      recordingBaseRef.current = null;
+    }
+
+    return () => {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+    };
+  }, [status?.state, status?.recordingInfo?.elapsedSecs]);
+
+  // Refresh file list when transitioning from recording → idle (e.g. physical button stop)
+  const prevStateRef = useRef<string | undefined>();
+  useEffect(() => {
+    const prev = prevStateRef.current;
+    prevStateRef.current = status?.state;
+    if (prev === 'recording' && status?.state === 'idle') {
+      refreshAll();
+    }
+  }, [status?.state, refreshAll]);
+
+  // Status polling — 500ms when idle/recording, skip during upload (firmware pushes)
+  useEffect(() => {
+    if (isConnected && !isSyncing) {
       statusPollRef.current = setInterval(async () => {
         if (!isMountedRef.current || !BleService.isConnected()) return;
         try {
@@ -120,7 +178,7 @@ const DeviceDetailV2Screen: React.FC = () => {
         } catch {
           // Ignore poll errors
         }
-      }, 2000);
+      }, 500);
     } else {
       if (statusPollRef.current) {
         clearInterval(statusPollRef.current);
@@ -131,7 +189,7 @@ const DeviceDetailV2Screen: React.FC = () => {
     return () => {
       if (statusPollRef.current) clearInterval(statusPollRef.current);
     };
-  }, [isConnected]);
+  }, [isConnected, isSyncing]);
 
   const refreshAll = useCallback(async () => {
     try {
@@ -235,9 +293,9 @@ const DeviceDetailV2Screen: React.FC = () => {
       const serverUrl = API_URL.startsWith('http') ? API_URL : `https://${API_URL}`;
       await BleService.setUserCredentials(user.id, DEVICE_API_KEY, serverUrl);
 
-      // Show overlay and subscribe to push notifications
+      // Show inline progress and subscribe to push notifications
       setSyncProgress(null);
-      setShowSyncOverlay(true);
+      setIsSyncing(true);
 
       // Subscribe to device-pushed status updates
       syncUnsubRef.current = BleService.subscribeToStatus((s) => {
@@ -248,7 +306,7 @@ const DeviceDetailV2Screen: React.FC = () => {
           if (s.syncProgress.result === 'success') {
             syncUnsubRef.current?.();
             syncUnsubRef.current = null;
-            setShowSyncOverlay(false);
+            setIsSyncing(false);
             showToast({
               message: `Synced ${s.syncProgress.totalFiles} file${s.syncProgress.totalFiles === 1 ? '' : 's'} to cloud`,
               variant: 'success',
@@ -258,7 +316,7 @@ const DeviceDetailV2Screen: React.FC = () => {
           } else if (s.syncProgress.result === 'error') {
             syncUnsubRef.current?.();
             syncUnsubRef.current = null;
-            setShowSyncOverlay(false);
+            setIsSyncing(false);
             showToast({
               message: 'Upload failed — check WiFi credentials',
               variant: 'error',
@@ -270,7 +328,7 @@ const DeviceDetailV2Screen: React.FC = () => {
 
       await BleService.startSync();
     } catch (e: any) {
-      setShowSyncOverlay(false);
+      setIsSyncing(false);
       syncUnsubRef.current?.();
       syncUnsubRef.current = null;
       showToast({ message: `Failed to start sync: ${e?.message}`, variant: 'error' });
@@ -282,7 +340,7 @@ const DeviceDetailV2Screen: React.FC = () => {
       await BleService.cancelSync();
       syncUnsubRef.current?.();
       syncUnsubRef.current = null;
-      setShowSyncOverlay(false);
+      setIsSyncing(false);
       setSyncProgress(null);
       showToast({ message: 'Sync cancelled', variant: 'success', duration: 2000 });
     } catch (e: any) {
@@ -326,16 +384,28 @@ const DeviceDetailV2Screen: React.FC = () => {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  const formatDuration = (secs: number) => {
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = secs % 60;
+    if (h > 0) return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  };
+
   const renderFileItem = ({ item }: { item: V2FileEntry }) => {
     return (
       <View style={[styles.fileRow, { borderBottomColor: theme.colors.border }]}>
-        <FileText size={16} color={theme.colors.textSecondary} />
+        {item.synced ? (
+          <CheckCircle size={16} color={theme.colors.success} />
+        ) : (
+          <FileText size={16} color={theme.colors.textSecondary} />
+        )}
         <View style={styles.fileInfo}>
           <Text style={[styles.fileName, { color: theme.colors.textPrimary }]}>
             {item.name}
           </Text>
           <Text style={[styles.fileSize, { color: theme.colors.textTertiary }]}>
-            {formatSize(item.size)}
+            {formatSize(item.size)}{item.synced ? ' · Synced' : ''}
           </Text>
         </View>
         <TouchableOpacity
@@ -361,11 +431,7 @@ const DeviceDetailV2Screen: React.FC = () => {
               {deviceId.substring(0, 17)}
             </Text>
           </View>
-          <TouchableOpacity
-            onPress={() => navigation.navigate('DeviceSettings' as any)}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-            <Settings size={22} color={theme.colors.textSecondary} />
-          </TouchableOpacity>
+          <View style={{ width: 22 }} />
         </View>
       </View>
 
@@ -373,56 +439,183 @@ const DeviceDetailV2Screen: React.FC = () => {
         style={styles.scrollView}
         contentContainerStyle={[styles.content, { paddingTop: insets.top + 72 }]}>
 
-        {/* Connection */}
-        {!isConnected ? (
-          <View style={styles.connectSection}>
+        {/* Status Card — always visible */}
+        <Card variant="default" padding="none" style={styles.card} header={null}>
+          <View style={styles.statusGrid}>
+            <View style={styles.statusItem}>
+              <Circle size={12} color={isConnected ? stateColor(status?.state ?? 'idle') : theme.colors.error} fill={isConnected ? stateColor(status?.state ?? 'idle') : theme.colors.error} />
+              <Text style={[styles.statusLabel, { color: theme.colors.textSecondary }]}>State</Text>
+              <Text style={[styles.statusValue, { color: isConnected ? theme.colors.textPrimary : theme.colors.error }]}>
+                {isConnected ? stateLabel(status?.state ?? 'idle') : 'Disconnected'}
+              </Text>
+            </View>
+            <View style={styles.statusItem}>
+              <Battery size={16} color={theme.colors.textSecondary} />
+              <Text style={[styles.statusLabel, { color: theme.colors.textSecondary }]}>Battery</Text>
+              <Text style={[styles.statusValue, { color: isConnected ? theme.colors.textPrimary : theme.colors.textTertiary }]}>
+                {isConnected && status ? `${status.batteryMv} mV` : '—'}
+              </Text>
+            </View>
+            <View style={styles.statusItem}>
+              <HardDrive size={16} color={isConnected && status && !status.sdOk ? theme.colors.error : theme.colors.textSecondary} />
+              <Text style={[styles.statusLabel, { color: isConnected && status && !status.sdOk ? theme.colors.error : theme.colors.textSecondary }]}>
+                {isConnected && status && !status.sdOk ? 'SD Error' : 'SD Free'}
+              </Text>
+              <Text style={[styles.statusValue, { color: isConnected && status && !status.sdOk ? theme.colors.error : isConnected ? theme.colors.textPrimary : theme.colors.textTertiary }]}>
+                {isConnected && status ? (status.sdOk ? `${status.freeMb} MB` : 'FAIL') : '—'}
+              </Text>
+            </View>
+            <View style={styles.statusItem}>
+              <FileText size={16} color={theme.colors.textSecondary} />
+              <Text style={[styles.statusLabel, { color: theme.colors.textSecondary }]}>Files</Text>
+              <Text style={[styles.statusValue, { color: isConnected ? theme.colors.textPrimary : theme.colors.textTertiary }]}>
+                {isConnected && status ? status.fileCount : '—'}
+              </Text>
+            </View>
+          </View>
+        </Card>
+
+        {/* WiFi Setup (inline) — only when connected */}
+        {isConnected && showWifiModal && (
+          <Card variant="default" style={styles.card} header={null}>
+            <Text style={[styles.wifiLabel, { color: theme.colors.textSecondary }]}>
+              Network Name
+            </Text>
+            <TextInput
+              style={[styles.wifiInput, { color: theme.colors.textPrimary, borderColor: theme.colors.border, backgroundColor: theme.colors.muted }]}
+              value={wifiSsid}
+              onChangeText={setWifiSsid}
+              placeholder="SSID"
+              placeholderTextColor={theme.colors.textTertiary}
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <Text style={[styles.wifiLabel, { color: theme.colors.textSecondary, marginTop: 12 }]}>
+              Password
+            </Text>
+            <View style={styles.passwordInputWrapper}>
+              <TextInput
+                style={[styles.wifiInput, styles.passwordInput, { color: theme.colors.textPrimary, borderColor: theme.colors.border, backgroundColor: theme.colors.muted }]}
+                value={wifiPassword}
+                onChangeText={setWifiPassword}
+                placeholder="Password"
+                placeholderTextColor={theme.colors.textTertiary}
+                secureTextEntry={!showPassword}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <TouchableOpacity
+                onPress={() => setShowPassword(!showPassword)}
+                style={styles.eyeButtonInline}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                {showPassword
+                  ? <EyeOff size={18} color={theme.colors.textTertiary} />
+                  : <Eye size={18} color={theme.colors.textTertiary} />}
+              </TouchableOpacity>
+            </View>
+            <View style={styles.wifiActions}>
+              <Button
+                variant="primary"
+                onPress={handleSaveWifi}
+                disabled={!wifiSsid.trim() || wifiSaving}>
+                {wifiSaving ? 'Saving...' : 'Save to Device'}
+              </Button>
+              <Button
+                variant="secondary"
+                onPress={() => setShowWifiModal(false)}>
+                Cancel
+              </Button>
+            </View>
+          </Card>
+        )}
+
+        {/* Actions / Sync Progress */}
+        {!showWifiModal && <View style={styles.actionSection}>
+          {!isConnected ? (
             <Button
               variant="primary"
               onPress={handleConnect}
               disabled={isConnecting}>
               {isConnecting ? 'Connecting...' : 'Connect'}
             </Button>
-          </View>
-        ) : (
-          <>
-            {/* Status Card */}
-            {status && (
-              <Card variant="default" padding="none" style={styles.card} header={null}>
-                <View style={styles.statusGrid}>
-                  <View style={styles.statusItem}>
-                    <Circle size={12} color={stateColor(status.state)} fill={stateColor(status.state)} />
-                    <Text style={[styles.statusLabel, { color: theme.colors.textSecondary }]}>State</Text>
-                    <Text style={[styles.statusValue, { color: theme.colors.textPrimary }]}>
-                      {stateLabel(status.state)}
-                    </Text>
-                  </View>
-                  <View style={styles.statusItem}>
-                    <Battery size={16} color={theme.colors.textSecondary} />
-                    <Text style={[styles.statusLabel, { color: theme.colors.textSecondary }]}>Battery</Text>
-                    <Text style={[styles.statusValue, { color: theme.colors.textPrimary }]}>
-                      {status.batteryMv} mV
-                    </Text>
-                  </View>
-                  <View style={styles.statusItem}>
-                    <HardDrive size={16} color={theme.colors.textSecondary} />
-                    <Text style={[styles.statusLabel, { color: theme.colors.textSecondary }]}>SD Free</Text>
-                    <Text style={[styles.statusValue, { color: theme.colors.textPrimary }]}>
-                      {status.freeMb} MB
-                    </Text>
-                  </View>
-                  <View style={styles.statusItem}>
-                    <FileText size={16} color={theme.colors.textSecondary} />
-                    <Text style={[styles.statusLabel, { color: theme.colors.textSecondary }]}>Files</Text>
-                    <Text style={[styles.statusValue, { color: theme.colors.textPrimary }]}>
-                      {status.fileCount}
-                    </Text>
-                  </View>
+          ) : isSyncing ? (
+            <Card variant="default" padding="none" style={styles.card} header={null}>
+              <View style={styles.syncInline}>
+                <View style={styles.syncInlineHeader}>
+                  <Upload size={16} color={theme.colors.primary} />
+                  <Text style={[styles.syncInlineTitle, { color: theme.colors.textPrimary }]}>
+                    {syncProgress
+                      ? `Uploading ${syncProgress.currentFile} of ${syncProgress.totalFiles}`
+                      : 'Connecting to WiFi...'}
+                  </Text>
                 </View>
-              </Card>
-            )}
+                {syncProgress && (
+                  <>
+                    <View style={[styles.progressBar, { backgroundColor: theme.colors.muted }]}>
+                      <View style={[
+                        styles.progressFill,
+                        {
+                          width: `${syncProgress.bytesTotal > 0
+                            ? Math.min(100, Math.round((syncProgress.bytesSent / syncProgress.bytesTotal) * 100))
+                            : 0}%`,
+                          backgroundColor: theme.colors.primary,
+                        },
+                      ]} />
+                    </View>
+                    <View style={styles.syncInlineFooter}>
+                      <Text style={[styles.syncInlineBytes, { color: theme.colors.textTertiary }]}>
+                        {formatSize(syncProgress.bytesSent)} / {formatSize(syncProgress.bytesTotal)}
+                      </Text>
+                      <Text style={[styles.syncInlineBytes, { color: theme.colors.textTertiary }]}>
+                        {syncProgress.bytesTotal > 0
+                          ? `${Math.round((syncProgress.bytesSent / syncProgress.bytesTotal) * 100)}%`
+                          : '0%'}
+                      </Text>
+                    </View>
+                  </>
+                )}
+                <TouchableOpacity onPress={handleCancelSync} style={styles.syncCancelButton}>
+                  <XCircle size={14} color={theme.colors.error} />
+                  <Text style={[styles.syncCancelText, { color: theme.colors.error }]}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </Card>
+          ) : status?.state === 'recording' ? (
+            <View style={{ gap: 12 }}>
+              <View style={styles.recordingInfo}>
+                <Text style={[styles.recordingInfoText, { color: theme.colors.error }]}>
+                  {formatDuration(displaySecs)}
+                </Text>
+                <Text style={[styles.recordingInfoText, { color: theme.colors.textTertiary }]}>
+                  {formatSize(status.recordingInfo?.fileBytes ?? 0)}
+                </Text>
+              </View>
+              <Button variant="danger" onPress={handleStopRecording}>
+                Stop Recording
+              </Button>
+            </View>
+          ) : (
+            <View style={{ gap: 12 }}>
+              <Button
+                variant="primary"
+                onPress={handleStartRecording}
+                disabled={status?.state === 'uploading'}>
+                Start Recording
+              </Button>
+              <Button
+                variant="secondary"
+                onPress={handleStartSync}
+                disabled={status?.state !== 'idle' || (status?.fileCount ?? 0) === 0}>
+                Sync to Cloud
+              </Button>
+            </View>
+          )}
+        </View>}
 
-            {/* Quick Actions */}
-            <View style={styles.quickActions}>
+        {/* Quick Actions + Inclinometer — side by side, only when connected */}
+        {isConnected && !showWifiModal && !isSyncing && (
+          <View style={styles.controlsRow}>
+            <View style={styles.controlsButtons}>
               <TouchableOpacity
                 style={[styles.quickAction, { borderColor: theme.colors.border }]}
                 onPress={handleSyncClock}>
@@ -440,32 +633,31 @@ const DeviceDetailV2Screen: React.FC = () => {
                 </Text>
               </TouchableOpacity>
             </View>
+            {status?.accel && (
+              <View style={styles.controlsInclinometer}>
+                <Inclinometer
+                  accelX={status.accel.x}
+                  accelY={status.accel.y}
+                  accelZ={status.accel.z}
+                  imuOk={status.imuOk}
+                  size={100}
+                  colors={{
+                    ring: theme.colors.border,
+                    dot: status.imuOk ? theme.colors.primary : theme.colors.error,
+                    crosshair: theme.colors.textTertiary,
+                    error: theme.colors.error,
+                    text: theme.colors.textPrimary,
+                    textSecondary: theme.colors.textTertiary,
+                  }}
+                />
+              </View>
+            )}
+          </View>
+        )}
 
-            {/* Actions */}
-            <View style={styles.actionSection}>
-              {status?.state === 'recording' ? (
-                <Button variant="danger" onPress={handleStopRecording}>
-                  Stop Recording
-                </Button>
-              ) : (
-                <View style={{ gap: 12 }}>
-                  <Button
-                    variant="primary"
-                    onPress={handleStartRecording}
-                    disabled={status?.state === 'uploading'}>
-                    Start Recording
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onPress={handleStartSync}
-                    disabled={status?.state !== 'idle' || (status?.fileCount ?? 0) === 0}>
-                    Sync to Cloud
-                  </Button>
-                </View>
-              )}
-            </View>
-
-            {/* File List */}
+        {/* File List — only when connected */}
+        {isConnected && (
+          <>
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>
                 Files ({files.length})
@@ -479,25 +671,35 @@ const DeviceDetailV2Screen: React.FC = () => {
             ) : (
               <Card variant="default" padding="none" style={styles.card} header={null}>
                 <FlatList
-                  data={[...files].reverse()}
+                  data={[...files].sort((a, b) => {
+                    const parse = (n: string) => {
+                      const m = n.replace('.vtx', '').split('_');
+                      return m.length === 4
+                        ? new Date(+m[2], +m[0] - 1, +m[1]).getTime() + +m[3]
+                        : 0;
+                    };
+                    return parse(b.name) - parse(a.name);
+                  })}
                   renderItem={renderFileItem}
                   keyExtractor={(item) => item.name}
                   scrollEnabled={false}
                 />
               </Card>
             )}
-
-            {/* Secondary Actions */}
-            <View style={styles.secondaryActions}>
-              <Button variant="secondary" onPress={() => setShowDisconnectDialog(true)}>
-                Disconnect
-              </Button>
-              <Button variant="secondary" onPress={() => setShowForgetDialog(true)}>
-                Forget Device
-              </Button>
-            </View>
           </>
         )}
+
+        {/* Secondary Actions */}
+        <View style={styles.secondaryActions}>
+          {isConnected && (
+            <Button variant="secondary" onPress={() => setShowDisconnectDialog(true)}>
+              Disconnect
+            </Button>
+          )}
+          <Button variant="secondary" onPress={() => setShowForgetDialog(true)}>
+            Forget Device
+          </Button>
+        </View>
       </ScrollView>
 
       {/* Delete File Dialog */}
@@ -539,98 +741,6 @@ const DeviceDetailV2Screen: React.FC = () => {
         ]}
       />
 
-      {/* Sync Overlay */}
-      <Modal
-        visible={showSyncOverlay}
-        onClose={() => {}}
-        title="Syncing to Cloud">
-        <View style={styles.syncOverlay}>
-          <ActivityIndicator size="large" color={theme.colors.primary} />
-          {syncProgress ? (
-            <>
-              <Text style={[styles.syncOverlayFile, { color: theme.colors.textPrimary }]}>
-                File {syncProgress.currentFile} of {syncProgress.totalFiles}
-              </Text>
-              <View style={[styles.progressBar, { backgroundColor: theme.colors.muted, width: '100%' }]}>
-                <View style={[
-                  styles.progressFill,
-                  {
-                    width: `${syncProgress.bytesTotal > 0
-                      ? Math.min(100, Math.round((syncProgress.bytesSent / syncProgress.bytesTotal) * 100))
-                      : 0}%`,
-                    backgroundColor: theme.colors.primary,
-                  },
-                ]} />
-              </View>
-              <Text style={[styles.syncOverlayBytes, { color: theme.colors.textTertiary }]}>
-                {formatSize(syncProgress.bytesSent)} / {formatSize(syncProgress.bytesTotal)}
-              </Text>
-            </>
-          ) : (
-            <Text style={[styles.syncOverlayFile, { color: theme.colors.textSecondary }]}>
-              Connecting to WiFi...
-            </Text>
-          )}
-          <Button variant="secondary" onPress={handleCancelSync} style={{ marginTop: 8 }}>
-            Cancel
-          </Button>
-        </View>
-      </Modal>
-
-      {/* WiFi Setup Modal */}
-      <Modal
-        visible={showWifiModal}
-        onClose={() => setShowWifiModal(false)}
-        title="WiFi Setup">
-        <View style={styles.wifiModal}>
-          <Text style={[styles.wifiLabel, { color: theme.colors.textSecondary }]}>
-            SSID
-          </Text>
-          <TextInput
-            style={[styles.wifiInput, { color: theme.colors.textPrimary, borderColor: theme.colors.border, backgroundColor: theme.colors.muted }]}
-            value={wifiSsid}
-            onChangeText={setWifiSsid}
-            placeholder="Network name"
-            placeholderTextColor={theme.colors.textTertiary}
-            autoCapitalize="none"
-            autoCorrect={false}
-          />
-          <Text style={[styles.wifiLabel, { color: theme.colors.textSecondary, marginTop: 12 }]}>
-            Password
-          </Text>
-          <View style={styles.passwordRow}>
-            <TextInput
-              style={[styles.wifiInput, { flex: 1, color: theme.colors.textPrimary, borderColor: theme.colors.border, backgroundColor: theme.colors.muted }]}
-              value={wifiPassword}
-              onChangeText={setWifiPassword}
-              placeholder="Password"
-              placeholderTextColor={theme.colors.textTertiary}
-              secureTextEntry={!showPassword}
-              autoCapitalize="none"
-              autoCorrect={false}
-            />
-            <TouchableOpacity
-              onPress={() => setShowPassword(!showPassword)}
-              style={styles.eyeButton}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              {showPassword
-                ? <EyeOff size={20} color={theme.colors.textTertiary} />
-                : <Eye size={20} color={theme.colors.textTertiary} />}
-            </TouchableOpacity>
-          </View>
-          <View style={styles.wifiModalActions}>
-            <Button variant="secondary" onPress={() => setShowWifiModal(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              onPress={handleSaveWifi}
-              disabled={!wifiSsid.trim() || wifiSaving}>
-              {wifiSaving ? 'Saving...' : 'Save to Device'}
-            </Button>
-          </View>
-        </View>
-      </Modal>
     </View>
   );
 };
@@ -672,10 +782,6 @@ const styles = StyleSheet.create({
     padding: 24,
     paddingBottom: 48,
   },
-  connectSection: {
-    marginTop: 40,
-    alignItems: 'center',
-  },
   card: {
     marginBottom: 16,
   },
@@ -700,13 +806,22 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontFamily: staticTheme.typography.mono,
   },
-  quickActions: {
+  controlsRow: {
     flexDirection: 'row',
-    gap: 12,
-    marginBottom: 16,
+    gap: 16,
+    marginBottom: 24,
+  },
+  controlsButtons: {
+    flex: 1,
+    gap: 8,
+    justifyContent: 'center',
+  },
+  controlsInclinometer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   quickAction: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
@@ -752,21 +867,48 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 2,
   },
-  syncOverlay: {
-    alignItems: 'center',
-    gap: 16,
-    paddingVertical: 16,
+  syncInline: {
+    padding: 16,
+    gap: 10,
   },
-  syncOverlayFile: {
-    fontSize: 16,
+  syncInlineHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  syncInlineTitle: {
+    fontSize: 14,
     fontWeight: '600',
   },
-  syncOverlayBytes: {
-    fontSize: 13,
+  syncInlineFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  syncInlineBytes: {
+    fontSize: 12,
     fontFamily: staticTheme.typography.mono,
   },
-  wifiModal: {
-    paddingVertical: 8,
+  syncCancelButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingTop: 4,
+  },
+  syncCancelText: {
+    fontSize: 13,
+    fontWeight: '500',
+  },
+  recordingInfo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+  },
+  recordingInfoText: {
+    fontSize: 15,
+    fontWeight: '600',
+    fontFamily: staticTheme.typography.mono,
   },
   wifiLabel: {
     fontSize: 12,
@@ -781,19 +923,22 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     fontSize: 15,
   },
-  passwordRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
+  passwordInputWrapper: {
+    position: 'relative',
+  },
+  passwordInput: {
+    paddingRight: 44,
+  },
+  eyeButtonInline: {
+    position: 'absolute',
+    right: 12,
+    top: 0,
+    bottom: 0,
+    justifyContent: 'center',
+  },
+  wifiActions: {
+    marginTop: 16,
     gap: 8,
-  },
-  eyeButton: {
-    padding: 8,
-  },
-  wifiModalActions: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 20,
-    justifyContent: 'flex-end',
   },
   secondaryActions: {
     marginTop: 32,

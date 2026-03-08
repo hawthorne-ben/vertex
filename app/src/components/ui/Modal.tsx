@@ -13,8 +13,10 @@ import {
   TouchableOpacity,
   StyleSheet,
   KeyboardAvoidingView,
+  ScrollView,
   Platform,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { theme as staticTheme } from '../../styles/theme';
 import { useTheme } from '../../contexts/ThemeContext';
 import { X } from 'lucide-react-native';
@@ -30,12 +32,15 @@ export const Modal: React.FC<ModalProps> = ({
   animationType = 'slide',
 }) => {
   const { theme } = useTheme();
+  const insets = useSafeAreaInsets();
 
   return (
     <RNModal
       visible={visible}
       animationType={animationType}
       transparent={true}
+      presentationStyle="overFullScreen"
+      statusBarTranslucent={true}
       onRequestClose={onClose}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -46,7 +51,7 @@ export const Modal: React.FC<ModalProps> = ({
           onPress={onClose}
         />
 
-        <View style={[styles.container, { backgroundColor: theme.colors.background, borderBottomColor: theme.colors.border }, style]}>
+        <View style={[styles.container, { backgroundColor: theme.colors.background }, style]}>
           {/* Header */}
           <View style={[styles.header, { borderBottomColor: theme.colors.border }]}>
             {title && <Text style={[styles.title, { color: theme.colors.textPrimary }]}>{title}</Text>}
@@ -59,11 +64,19 @@ export const Modal: React.FC<ModalProps> = ({
           </View>
 
           {/* Content */}
-          <View style={styles.content}>{children}</View>
+          <ScrollView
+            style={styles.content}
+            bounces={false}
+            keyboardShouldPersistTaps="handled">
+            {children}
+          </ScrollView>
 
           {/* Footer */}
           {footer && <View style={[styles.footer, { borderTopColor: theme.colors.border }]}>{footer}</View>}
         </View>
+
+        {/* Safe area fill — extends background below modal to screen edge */}
+        <View style={{ backgroundColor: theme.colors.background, height: insets.bottom }} />
       </KeyboardAvoidingView>
     </RNModal>
   );

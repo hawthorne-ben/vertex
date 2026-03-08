@@ -26,7 +26,6 @@ import {
   Bluetooth,
   Activity,
   WifiOff,
-  Settings,
   HardDrive,
   Battery,
   BatteryFull,
@@ -62,7 +61,7 @@ const RecordScreen: React.FC = () => {
   const { deviceId, deviceName } = route.params;
 
   // Zustand stores (battery, sample rate, connection is local to this screen)
-  const { batteryLevel, batteryVoltage, sampleRate } = useDeviceStore();
+  const { batteryLevel, batteryVoltage } = useDeviceStore();
 
   // Local connection state for THIS device
   const [isConnected, setIsConnected] = useState(false);
@@ -327,8 +326,7 @@ const RecordScreen: React.FC = () => {
       const newSession = await RecordingService.startRecording(
         deviceId,
         deviceName,
-        zeroPointRef.current, // Pass current zero point to recording service
-        sampleRate || 10 // Use measured sample rate from device, fallback to 10 Hz
+        zeroPointRef.current // Pass current zero point to recording service
       );
 
       if (isMountedRef.current) {
@@ -726,14 +724,7 @@ const RecordScreen: React.FC = () => {
             {currentTime.toLocaleTimeString()}
           </Text>
         </View>
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            onPress={() => (navigation as any).navigate('DeviceSettings')}
-            style={styles.settingsButton}
-          >
-            <Settings size={24} color={theme.colors.textPrimary} />
-          </TouchableOpacity>
-        </View>
+        <View style={{ width: 40 }} />
       </View>
 
       <ScrollView style={styles.content} contentContainerStyle={{ paddingTop: insets.top + 56 }}>
@@ -1138,14 +1129,6 @@ const styles = StyleSheet.create({
   headerCenter: {
     flex: 1,
     marginLeft: staticTheme.spacing.md,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: staticTheme.spacing.xs,
-  },
-  settingsButton: {
-    padding: staticTheme.spacing.sm,
   },
   title: {
     fontSize: staticTheme.typography.fontSize.xl,

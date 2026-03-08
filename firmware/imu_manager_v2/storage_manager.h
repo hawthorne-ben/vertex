@@ -44,6 +44,7 @@ public:
   bool deleteFile(const char* name);
 
   // Status
+  bool isReady() const { return _sdReady; }
   uint32_t getFreeSpaceMB() const;
   uint32_t getCurrentFileSize() const;
   uint32_t getOpenFileSize() const;  // Size of currently open read file

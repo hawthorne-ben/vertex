@@ -24,14 +24,6 @@ const CONFIG_CHARACTERISTIC_UUID = '12345678-1234-5678-1234-56789abcdef2';
 // V2 additional characteristics (same service UUID)
 const V2_FILE_LIST_CHARACTERISTIC_UUID = '12345678-1234-5678-1234-56789abcdef3';
 
-// Configuration commands (matches firmware V1)
-const CMD_SET_SAMPLE_RATE = 0x01;
-const CMD_CALIBRATE = 0x02;
-const CMD_POWER_MODE = 0x03;
-const CMD_RESET = 0x04;
-const CMD_LED_MODE = 0x05;
-const CMD_QUERY_CONFIG = 0xFF;
-
 // V2 commands (matches firmware V2)
 const CMD_V2_GET_STATUS = 0x01;
 const CMD_V2_START_RECORDING = 0x02;
@@ -52,18 +44,28 @@ export interface V2SyncProgress {
   result: 'in_progress' | 'success' | 'error';
 }
 
+export interface V2RecordingInfo {
+  elapsedSecs: number;
+  fileBytes: number;
+}
+
 export interface V2Status {
   state: 'idle' | 'recording' | 'uploading';
   batteryMv: number;
   fileCount: number;
   freeMb: number;
   clockSynced: boolean;
+  sdOk: boolean;
+  imuOk: boolean;
+  accel?: { x: number; y: number; z: number }; // milli-g
   syncProgress?: V2SyncProgress;
+  recordingInfo?: V2RecordingInfo;
 }
 
 export interface V2FileEntry {
   name: string;
   size: number;
+  synced: boolean;
 }
 
 type ConnectionListener = (device: Device | null, isConnected: boolean) => void;
@@ -1033,28 +1035,7 @@ class BleService {
               return;
             }
 
-            const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
-            // Base: state(1) + battery_mv(2) + file_count(2) + free_mb(2) + clock_synced(1) = 8 bytes
-            // Extended: + current_file(1) + total_files(1) + bytes_sent(4) + bytes_total(4) + result(1) = +11 bytes
-            const stateMap: Record<number, V2Status['state']> = { 0: 'idle', 1: 'recording', 2: 'uploading' };
-            const status: V2Status = {
-              state: stateMap[data[0]] || 'idle',
-              batteryMv: dv.getUint16(1, true),
-              fileCount: dv.getUint16(3, true),
-              freeMb: dv.getUint16(5, true),
-              clockSynced: data[7] === 1,
-            };
-            // Parse sync progress if extended data present (19 bytes)
-            if (data.length >= 19) {
-              const resultMap: Record<number, V2SyncProgress['result']> = { 0: 'in_progress', 1: 'success', 2: 'error' };
-              status.syncProgress = {
-                currentFile: data[8],
-                totalFiles: data[9],
-                bytesSent: dv.getUint32(10, true),
-                bytesTotal: dv.getUint32(14, true),
-                result: resultMap[data[18]] || 'in_progress',
-              };
-            }
+            const status = this.parseV2Status(data);
             resolve(status);
           }
         }
@@ -1088,25 +1069,7 @@ class BleService {
         const data = this.base64ToUint8Array(characteristic.value);
         if (data.length < 8) return;
 
-        const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
-        const stateMap: Record<number, V2Status['state']> = { 0: 'idle', 1: 'recording', 2: 'uploading' };
-        const status: V2Status = {
-          state: stateMap[data[0]] || 'idle',
-          batteryMv: dv.getUint16(1, true),
-          fileCount: dv.getUint16(3, true),
-          freeMb: dv.getUint16(5, true),
-          clockSynced: data[7] === 1,
-        };
-        if (data.length >= 19) {
-          const resultMap: Record<number, V2SyncProgress['result']> = { 0: 'in_progress', 1: 'success', 2: 'error' };
-          status.syncProgress = {
-            currentFile: data[8],
-            totalFiles: data[9],
-            bytesSent: dv.getUint32(10, true),
-            bytesTotal: dv.getUint32(14, true),
-            result: resultMap[data[18]] || 'in_progress',
-          };
-        }
+        const status = this.parseV2Status(data);
         callback(status);
       }
     );
@@ -1120,6 +1083,58 @@ class BleService {
   async startRecordingV2(): Promise<void> {
     if (!this.connectedDevice) throw new Error('No device connected');
     await this.writeConfigCommand(new Uint8Array([CMD_V2_START_RECORDING]));
+  }
+
+  /**
+   * Parse V2 status packet from raw BLE data
+   * Base (15 bytes): state(1) + battery_mv(2) + file_count(2) + free_mb(2) + clock_synced(1)
+   *                  + flags(1) + accel_x(2) + accel_y(2) + accel_z(2)
+   * Recording (+8 = 23): + rec_secs(4) + rec_bytes(4)
+   * Uploading (+11 = 26): + current_file(1) + total_files(1) + bytes_sent(4) + bytes_total(4) + result(1)
+   */
+  private parseV2Status(data: Uint8Array): V2Status {
+    const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+    const stateMap: Record<number, V2Status['state']> = { 0: 'idle', 1: 'recording', 2: 'uploading' };
+    const status: V2Status = {
+      state: stateMap[data[0]] || 'idle',
+      batteryMv: dv.getUint16(1, true),
+      fileCount: dv.getUint16(3, true),
+      freeMb: dv.getUint16(5, true),
+      clockSynced: data[7] === 1,
+      sdOk: true,
+      imuOk: true,
+    };
+
+    if (data.length >= 15) {
+      const flags = data[8];
+      status.sdOk = (flags & 0x01) !== 0;
+      status.imuOk = (flags & 0x02) !== 0;
+      status.accel = {
+        x: dv.getInt16(9, true),
+        y: dv.getInt16(11, true),
+        z: dv.getInt16(13, true),
+      };
+
+      if (data.length >= 26) {
+        const resultMap: Record<number, V2SyncProgress['result']> = { 0: 'in_progress', 1: 'success', 2: 'error' };
+        status.syncProgress = {
+          currentFile: data[15],
+          totalFiles: data[16],
+          bytesSent: dv.getUint32(17, true),
+          bytesTotal: dv.getUint32(21, true),
+          result: resultMap[data[25]] || 'in_progress',
+        };
+      } else if (data.length >= 23 && status.state === 'recording') {
+        status.recordingInfo = {
+          elapsedSecs: dv.getUint32(15, true),
+          fileBytes: dv.getUint32(19, true),
+        };
+      }
+    } else if (data.length >= 8) {
+      // Legacy 8-byte packet (pre-flags firmware) — fallback
+    }
+
+    return status;
   }
 
   /**
@@ -1175,7 +1190,7 @@ class BleService {
 
             for (let i = 0; i < packedCount && offset < data.length; i++) {
               const nameLen = data[offset++];
-              if (offset + nameLen + 4 > data.length) break;
+              if (offset + nameLen + 4 + 1 > data.length) break;
 
               const name = String.fromCharCode(...data.slice(offset, offset + nameLen));
               offset += nameLen;
@@ -1184,7 +1199,9 @@ class BleService {
               const size = dv.getUint32(0, true);
               offset += 4;
 
-              files.push({ name, size });
+              const synced = data[offset++] === 1;
+
+              files.push({ name, size, synced });
             }
 
             resolve(files);
@@ -1314,144 +1331,19 @@ class BleService {
   }
 
   /**
-   * Set device sample rate
-   * @param hz Desired frequency in Hz (1-50Hz)
-   */
-  async setSampleRate(hz: number): Promise<void> {
-    if (!this.connectedDevice) {
-      throw new Error('No device connected');
-    }
-
-    // Validate range
-    if (hz < 1 || hz > 50) {
-      throw new Error('Sample rate must be between 1-50 Hz');
-    }
-
-    const intervalMs = Math.round(1000 / hz);
-    console.log(`[CONFIG] Setting sample rate to ${hz} Hz (${intervalMs} ms)`);
-
-    // Build command: [CMD_SET_SAMPLE_RATE, intervalMs (4 bytes, little-endian)]
-    const command = new Uint8Array(5);
-    command[0] = CMD_SET_SAMPLE_RATE;
-    const view = new DataView(command.buffer);
-    view.setUint32(1, intervalMs, true); // little-endian
-
-    await this.writeConfigCommand(command);
-  }
-
-  /**
-   * Trigger device calibration
-   */
-  async triggerCalibration(): Promise<void> {
-    if (!this.connectedDevice) {
-      throw new Error('No device connected');
-    }
-
-    console.log('[CONFIG] Triggering calibration');
-    const command = new Uint8Array([CMD_CALIBRATE]);
-    await this.writeConfigCommand(command);
-  }
-
-  /**
-   * Set device power mode
-   * @param mode 0=low, 1=normal, 2=high performance
-   */
-  async setPowerMode(mode: number): Promise<void> {
-    if (!this.connectedDevice) {
-      throw new Error('No device connected');
-    }
-
-    if (mode < 0 || mode > 2) {
-      throw new Error('Power mode must be 0 (low), 1 (normal), or 2 (high)');
-    }
-
-    const modeNames = ['LOW', 'NORMAL', 'HIGH'];
-    console.log(`[CONFIG] Setting power mode to ${modeNames[mode]}`);
-
-    const command = new Uint8Array([CMD_POWER_MODE, mode]);
-    await this.writeConfigCommand(command);
-  }
-
-  /**
-   * Reset the device (soft reset)
-   */
-  async resetDevice(): Promise<void> {
-    if (!this.connectedDevice) {
-      throw new Error('No device connected');
-    }
-
-    console.log('[CONFIG] Resetting device');
-    const command = new Uint8Array([CMD_RESET]);
-    await this.writeConfigCommand(command);
-
-    // Device will disconnect after reset
-    this.connectedDevice = null;
-    this.notifyConnectionListeners(null, false);
-  }
-
-  /**
-   * Set LED mode
-   * @param mode 0=off, 1=status, 2=always-on
-   */
-  async setLEDMode(mode: number): Promise<void> {
-    if (!this.connectedDevice) {
-      throw new Error('No device connected');
-    }
-
-    if (mode < 0 || mode > 2) {
-      throw new Error('LED mode must be 0 (off), 1 (status), or 2 (always-on)');
-    }
-
-    const modeNames = ['OFF', 'STATUS', 'ALWAYS-ON'];
-    console.log(`[CONFIG] Setting LED mode to ${modeNames[mode]}`);
-
-    const command = new Uint8Array([CMD_LED_MODE, mode]);
-    await this.writeConfigCommand(command);
-  }
-
-  /**
-   * Query device configuration
-   * Returns current device settings
-   */
-  async queryConfiguration(): Promise<any> {
-    if (!this.connectedDevice) {
-      throw new Error('No device connected');
-    }
-
-    console.log('[CONFIG] Querying device configuration');
-    const command = new Uint8Array([CMD_QUERY_CONFIG]);
-    await this.writeConfigCommand(command);
-
-    // The device will send a notification response
-    // For now, we'll just trigger the command
-    // A complete implementation would subscribe to notifications first
-    return { status: 'Query sent - check device logs for response' };
-  }
-
-  /**
-   * Write a configuration command to the device
-   * @param command Uint8Array containing command bytes
+   * Write a command to the config characteristic
    */
   private async writeConfigCommand(command: Uint8Array): Promise<void> {
     if (!this.connectedDevice) {
       throw new Error('No device connected');
     }
 
-    try {
-      // Convert Uint8Array to base64 for BLE library
-      const base64Value = btoa(String.fromCharCode(...command));
-
-      await this.connectedDevice.writeCharacteristicWithResponseForService(
-        IMU_SERVICE_UUID,
-        CONFIG_CHARACTERISTIC_UUID,
-        base64Value
-      );
-
-      console.log(`[CONFIG] Command written successfully (${command.length} bytes)`);
-    } catch (error: any) {
-      console.error('[CONFIG] Write error:', error?.message);
-      throw new Error(`Failed to write config command: ${error?.message || 'Unknown error'}`);
-    }
+    const base64Value = btoa(String.fromCharCode(...command));
+    await this.connectedDevice.writeCharacteristicWithResponseForService(
+      IMU_SERVICE_UUID,
+      CONFIG_CHARACTERISTIC_UUID,
+      base64Value
+    );
   }
 
   /**

@@ -43,6 +43,12 @@ public:
   // Set recording start timestamp (call when recording begins)
   void resetTimestamp();
 
+  // Latest accel sample (for status reports)
+  void getLatestAccel(float &ax, float &ay, float &az) const;
+
+  // Whether the sensor initialized successfully
+  bool isHealthy() const { return _initialized; }
+
 private:
   // FIFO read buffer (enough for ~1 second at 104Hz)
   static const int MAX_FIFO_SAMPLES = 128;
