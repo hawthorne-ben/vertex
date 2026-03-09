@@ -1,8 +1,8 @@
 /*
- * WiFi Upload Manager - Direct file upload to server via WiFi
+ * WiFi Upload Manager - Direct file upload to Supabase Storage via presigned URLs
  *
  * Non-blocking state machine driven by tick() in loop().
- * Connects to WiFi, uploads .vtx files via HTTP POST, disconnects.
+ * Flow per file: presign (get URL) → PUT to Supabase → complete (create DB record)
  * Credentials stored in NVS (Non-Volatile Storage).
  */
 
@@ -20,15 +20,16 @@ enum WiFiSyncState : int {
   WIFI_IDLE,
   WIFI_CONNECTING,
   WIFI_CHECK_EXISTING,  // Ask server which files already exist
-  WIFI_UPLOADING,       // Open file + connect + send headers
-  WIFI_STREAMING,       // Stream file data one chunk per tick()
-  WIFI_WAIT_RESPONSE,   // Wait for HTTP response after streaming
+  WIFI_PRESIGN,         // Get presigned upload URL from server
+  WIFI_STREAMING,       // PUT file data directly to Supabase Storage
+  WIFI_WAIT_RESPONSE,   // Wait for PUT response
+  WIFI_COMPLETE,        // Notify server to create DB record
   WIFI_NEXT_FILE,
   WIFI_DONE,
   WIFI_ERROR,
 };
 
-// Sync result codes (sent in status notification byte [18])
+// Sync result codes (sent in status notification byte)
 #define SYNC_RESULT_IN_PROGRESS 0
 #define SYNC_RESULT_SUCCESS     1
 #define SYNC_RESULT_ERROR       2
@@ -45,32 +46,16 @@ class WiFiUploadManager {
 public:
   WiFiUploadManager();
 
-  // Load credentials from NVS
   void init();
-
-  // Check if WiFi + auth credentials are provisioned
   bool hasCredentials() const;
-
-  // Begin upload sequence — sets state to WIFI_CONNECTING
   void startSync(StorageManager& storage);
-
-  // Cancel current upload
   void cancelSync();
-
-  // Non-blocking tick — call from loop() when state == STATE_UPLOADING
-  // Returns true while sync is in progress
   bool tick(StorageManager& storage);
 
-  // Current state for BLE status reporting
   WiFiSyncState getSyncState() const { return _state; }
-
-  // Progress for BLE status
   SyncProgress getProgress() const { return _progress; }
-
-  // Check if a file has been synced to server (exists or was uploaded this session)
   bool isFileSynced(const char* filename) const;
 
-  // Credential management (called from BLE command handlers)
   void saveWiFiCredentials(const char* ssid, const char* password);
   void saveUserCredentials(const char* userId, const char* apiKey, const char* serverUrl);
 
@@ -93,37 +78,48 @@ private:
   int _fileCount;
   int _currentFileIndex;
 
-  // Begin uploading current file — opens connection, sends HTTP headers
-  bool beginFileUpload(StorageManager& storage, const char* filename);
+  // Presigned upload state
+  String _uploadUrl;      // Full presigned URL from Supabase
+  String _storagePath;    // Storage path for complete call
 
-  // Stream one chunk — returns true while data remains
+  // Streaming state
+  Client* _activeClient;
+  bool _clientIsSSL;
+  uint8_t* _uploadBuf;
+  uint32_t _fileRemaining;
+  bool _fileSkip[MAX_UPLOAD_FILES];
+
+  // Get presigned URL from server
+  bool requestPresignedUrl(const char* filename, uint32_t fileSize);
+
+  // Open connection to Supabase and send PUT headers
+  bool beginDirectUpload(StorageManager& storage, const char* filename);
+
+  // Stream one chunk
   bool streamNextChunk(StorageManager& storage);
 
-  // Read HTTP response after streaming completes — returns true on 200
+  // Read HTTP response
   bool readResponse();
 
-  // Clean up current file upload state
+  // Notify server that upload is complete
+  bool notifyComplete(const char* filename, uint32_t fileSize);
+
+  // Clean up upload state
   void endFileUpload(StorageManager& storage);
 
-  // Parse _serverUrl into host, port, useSSL
-  void parseServerUrl(String& host, int& port, bool& useSSL);
+  // Parse URL into host, port, path, useSSL
+  static void parseUrl(const String& url, String& host, int& port, String& path, bool& useSSL);
 
-  // Disconnect WiFi
+  // Connect a client to host:port
+  Client* connectClient(const String& host, int port, bool useSSL);
+  void deleteClient();
+
   void disconnectWiFi();
-
-  // Load credentials from NVS
   void loadCredentials();
-
-  // Check server for already-uploaded files, mark them to skip
   bool checkExistingFiles();
 
-  // Streaming state for non-blocking upload
-  Client* _activeClient;         // Current TCP connection (owned, heap-allocated)
-  bool _clientIsSSL;             // Whether _activeClient is WiFiClientSecure
-  uint8_t* _uploadBuf;           // Chunk buffer (heap-allocated)
-  uint32_t _fileRemaining;       // Bytes left to stream
-  String _partFooter;            // Multipart footer to send after file data
-  bool _fileSkip[MAX_UPLOAD_FILES];  // Files that already exist on server
+  // Send a JSON POST to our API server, return response body
+  String apiPost(const char* endpoint, const String& jsonBody);
 };
 
 #endif // WIFI_MANAGER_H

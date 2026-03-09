@@ -474,7 +474,7 @@ const DataDetailScreen: React.FC = () => {
     switch (type) {
       case 'orientation': return 'Orientation (degrees)';
       case 'accelerometer': return 'Accelerometer (m/s²)';
-      case 'gyroscope': return 'Gyroscope (rad/s)';
+      case 'gyroscope': return 'Gyroscope (deg/s)';
       // Magnetometer removed
     }
   };

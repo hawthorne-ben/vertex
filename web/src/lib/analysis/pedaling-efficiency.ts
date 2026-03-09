@@ -10,7 +10,7 @@
  *    HPF accel-x/z for roughness, HPF accel-y for position
  * 3. Second pass (windowed): Compute time-domain RMS for stability,
  *    RMS for roughness, position detection
- * 4. Third pass: Interpolate windowed output (2 Hz) to 25 Hz for output arrays
+ * 4. Third pass: Downsample windowed output (2 Hz) to 5 Hz for output arrays
  *
  * v6.0.0 Changes:
  * - Time-domain RMS stability (replaces FFT spectral analysis)
@@ -358,7 +358,7 @@ export function calculatePedalingEfficiency(
   }
 
   // ============================================
-  // THIRD PASS: Interpolate STFT results to 25 Hz + position detection
+  // THIRD PASS: Output at OUTPUT_SAMPLE_RATE_HZ + position detection
   // ============================================
 
   const efficiencySamples: PedalingEfficiencyOutput[] = []
@@ -372,7 +372,10 @@ export function calculatePedalingEfficiency(
   const positionAccelWeight = options.accelWeight ?? C.POSITION_ACCEL_WEIGHT
   const positionWindowSamples = Math.round(C.POSITION_WINDOW_SECONDS * sampleRate)
 
-  for (let i = 0; i < processedSamples.length; i++) {
+  // Step through at output rate (e.g. every 20th sample at 100Hz input → 5Hz output)
+  const outputStep = Math.max(1, Math.round(sampleRate / C.OUTPUT_SAMPLE_RATE_HZ))
+
+  for (let i = 0; i < processedSamples.length; i += outputStep) {
     const sample = processedSamples[i]
 
     // Interpolate STFT results to this sample index
@@ -401,7 +404,7 @@ export function calculatePedalingEfficiency(
     })
 
     // ============================================
-    // RIDING POSITION DETECTION (unchanged from v4)
+    // RIDING POSITION DETECTION
     // ============================================
 
     const posWindowStart = Math.max(0, i - Math.floor(positionWindowSamples / 2))
@@ -445,20 +448,22 @@ export function calculatePedalingEfficiency(
 
   const downsampledPosition = downsamplePositionByMajorityVote(positionSamples, 1000)
 
+  const outputRate = C.OUTPUT_SAMPLE_RATE_HZ
+
   const efficiencyMetadata = calculateMetadata(
     efficiencySamples,
     grades,
-    sampleRate,
+    outputRate,
     includeDebug,
     { stableThreshold: options.stableThreshold, unstableThreshold: options.unstableThreshold }
   )
 
   const positionMetadata = calculateRidingPositionMetadata(
     downsampledPosition,
-    sampleRate
+    outputRate
   )
 
-  const roughnessMetadata = calculateRoughnessMetadata(roughnessSamples, sampleRate)
+  const roughnessMetadata = calculateRoughnessMetadata(roughnessSamples, outputRate)
 
   return {
     efficiency: { samples: efficiencySamples, metadata: efficiencyMetadata },

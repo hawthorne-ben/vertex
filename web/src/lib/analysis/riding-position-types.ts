@@ -8,7 +8,7 @@ export interface RidingPositionSample {
   timestamp: string
   position: 'standing' | 'seated' | null  // null when not pedaling
   rockingMagnitude: number  // Y-axis oscillation amplitude
-  rollRms?: number  // Gyro-derived roll rate RMS (rad/s)
+  rollRms?: number  // Gyro-derived roll rate RMS (deg/s)
   cadence: number | null  // RPM from FIT sensor
 }
 

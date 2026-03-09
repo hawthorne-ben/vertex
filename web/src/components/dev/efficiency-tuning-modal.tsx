@@ -331,7 +331,7 @@ export function EfficiencyTuningModal({
                 hint="Low-pass cutoff for gyro roll. Rejects road vibration above cadence"
               />
               <FormField
-                label="Roll RMS Threshold (rad/s)"
+                label="Roll RMS Threshold (deg/s)"
                 value={parameters.rollRmsThreshold}
                 onChange={(v) => setParameters({ ...parameters, rollRmsThreshold: v })}
                 hint="Gyro roll rate RMS threshold for standing. 2.5 = default"

@@ -843,7 +843,7 @@ class BleService {
    * - Timestamp (4 bytes) - uint32_t milliseconds since boot
    * - Euler Angles (12 bytes) - 3x float (roll, pitch, yaw in degrees)
    * - Acceleration (12 bytes) - 3x float (x, y, z in m/s²)
-   * - Gyroscope (12 bytes) - 3x float (x, y, z in rad/s)
+   * - Gyroscope (12 bytes) - 3x float (x, y, z in deg/s)
    * - Calibration (3 bytes) - 3x uint8_t (sys, gyro, accel: 0-3)
    * - Battery Voltage (4 bytes) - float (volts)
    *

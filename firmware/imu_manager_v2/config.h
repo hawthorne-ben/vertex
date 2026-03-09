@@ -85,8 +85,8 @@
 // LSM6DS3 scale factors (raw register value → physical units)
 // Accel: at +/-8g range, sensitivity = 0.244 mg/LSB → multiply by 0.000244 * 9.80665 for m/s²
 #define ACCEL_SCALE (0.000244f * 9.80665f)  // raw → m/s²
-// Gyro: at +/-1000dps range, sensitivity = 35 mdps/LSB → multiply by 0.035 * PI/180 for rad/s
-#define GYRO_SCALE (0.035f * 3.14159265f / 180.0f)  // raw → rad/s
+// Gyro: at +/-1000dps range, sensitivity = 35 mdps/LSB → 0.035 deg/s per LSB
+#define GYRO_SCALE 0.035f  // raw → deg/s
 
 // ===== SD Card Configuration =====
 #define SD_SPI_SPEED 16000000      // 16 MHz SPI clock
@@ -106,7 +106,8 @@
 
 // ===== WiFi Upload Configuration =====
 #define WIFI_CONNECT_TIMEOUT_MS 10000  // 10s to connect to WiFi
-#define WIFI_UPLOAD_CHUNK_SIZE 4096    // Read SD in 4KB chunks for HTTP upload
+#define WIFI_UPLOAD_CHUNK_SIZE 16384   // Read SD in 16KB chunks for HTTP upload
+#define WIFI_STREAM_BUDGET_MS 100     // Max ms to spend streaming per tick() before yielding
 
 // ===== CPU Frequency =====
 #define CPU_MHZ_NORMAL 80          // 80MHz for recording/idle (saves ~32mA vs 240MHz)

@@ -7,7 +7,7 @@ export interface IMUSample {
   accel_x: number      // m/s^2
   accel_y: number
   accel_z: number
-  gyro_x: number       // rad/s
+  gyro_x: number       // deg/s
   gyro_y: number
   gyro_z: number
   mag_x?: number       // microtesla (optional)

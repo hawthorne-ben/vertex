@@ -45,12 +45,11 @@ export async function POST(
       )
     }
 
-    // Delete existing failed analyses to allow fresh computation
+    // Delete all existing analyses to force fresh computation
     const { error: deleteError } = await supabase
       .from('ride_analysis')
       .delete()
       .eq('ride_id', rideId)
-      .in('status', ['failed', 'processing']) // Remove failed or stuck analyses
 
     if (deleteError) {
       console.error('[ReanalyzeAPI] Failed to delete old analyses:', deleteError)

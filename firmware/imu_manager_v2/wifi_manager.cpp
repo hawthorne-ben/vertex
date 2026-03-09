@@ -1,8 +1,12 @@
 /*
- * WiFi Upload Manager Implementation
+ * WiFi Upload Manager — Presigned URL direct-to-Supabase upload
  *
- * Non-blocking state machine for uploading .vtx files to server.
- * Streams file data via raw WiFiClient sockets.
+ * Flow per file:
+ *   1. POST /api/upload/device/presign → {url, token, storagePath}
+ *   2. PUT raw bytes to Supabase signed URL
+ *   3. POST /api/upload/device/complete → server creates DB record
+ *
+ * Non-blocking state machine driven by tick() in loop().
  */
 
 #include "wifi_manager.h"
@@ -148,21 +152,10 @@ void WiFiUploadManager::cancelSync() {
   if (_state == WIFI_IDLE) return;
   Serial.println("[WiFi] Sync cancelled");
 
-  // Clean up any in-progress file upload
-  if (_activeClient || _uploadBuf) {
-    // Need a StorageManager ref to close the file — but we can just clean up our side
-    if (_activeClient) {
-      _activeClient->stop();
-      if (_clientIsSSL)
-        delete static_cast<WiFiClientSecure*>(_activeClient);
-      else
-        delete static_cast<WiFiClient*>(_activeClient);
-      _activeClient = nullptr;
-    }
-    if (_uploadBuf) {
-      free(_uploadBuf);
-      _uploadBuf = nullptr;
-    }
+  deleteClient();
+  if (_uploadBuf) {
+    free(_uploadBuf);
+    _uploadBuf = nullptr;
   }
 
   disconnectWiFi();
@@ -194,29 +187,34 @@ bool WiFiUploadManager::tick(StorageManager& storage) {
 
     case WIFI_CHECK_EXISTING: {
       checkExistingFiles();
-
-      // Recalculate bytesTotal excluding skipped files
-      // and advance to first non-skipped file
       _state = WIFI_NEXT_FILE;
       _currentFileIndex = -1;  // NEXT_FILE will increment to 0
       _stateEnteredAt = millis();
       break;
     }
 
-    case WIFI_UPLOADING: {
-      // Open file, connect to server, send HTTP headers
+    case WIFI_PRESIGN: {
       const char* filename = _fileNames[_currentFileIndex];
+      uint32_t fileSize = _fileSizes[_currentFileIndex];
       _progress.currentFile = (uint8_t)(_currentFileIndex + 1);
 
-      Serial.printf("[WiFi] Uploading file %d/%d: %s\n",
-                    _currentFileIndex + 1, _fileCount, filename);
+      Serial.printf("[WiFi] Requesting presigned URL for %s (%lu bytes)\n",
+                    filename, (unsigned long)fileSize);
 
-      if (beginFileUpload(storage, filename)) {
+      if (requestPresignedUrl(filename, fileSize)) {
         _state = WIFI_STREAMING;
         _stateEnteredAt = millis();
+
+        // Open file and begin PUT to Supabase
+        if (!beginDirectUpload(storage, filename)) {
+          Serial.printf("[WiFi] Failed to begin upload: %s\n", filename);
+          endFileUpload(storage);
+          disconnectWiFi();
+          _state = WIFI_ERROR;
+          _stateEnteredAt = millis();
+        }
       } else {
-        Serial.printf("[WiFi] Upload setup failed: %s\n", filename);
-        endFileUpload(storage);
+        Serial.printf("[WiFi] Presign failed: %s\n", filename);
         disconnectWiFi();
         _state = WIFI_ERROR;
         _stateEnteredAt = millis();
@@ -225,19 +223,20 @@ bool WiFiUploadManager::tick(StorageManager& storage) {
     }
 
     case WIFI_STREAMING: {
-      // Stream one chunk per tick — returns to main loop between chunks
-      // so BLE status pushes can fire
-      if (_fileRemaining > 0) {
+      // Stream chunks in a time-budgeted loop
+      unsigned long streamStart = millis();
+      while (_fileRemaining > 0 && (millis() - streamStart) < WIFI_STREAM_BUDGET_MS) {
         if (!streamNextChunk(storage)) {
           Serial.println("[WiFi] Stream error");
           endFileUpload(storage);
           disconnectWiFi();
           _state = WIFI_ERROR;
           _stateEnteredAt = millis();
+          break;
         }
-      } else {
-        // File data done — send multipart footer
-        _activeClient->print(_partFooter);
+      }
+      if (_state == WIFI_STREAMING && _fileRemaining == 0) {
+        // All bytes sent, wait for response
         _state = WIFI_WAIT_RESPONSE;
         _stateEnteredAt = millis();
       }
@@ -249,12 +248,29 @@ bool WiFiUploadManager::tick(StorageManager& storage) {
       endFileUpload(storage);
 
       if (success) {
-        Serial.printf("[WiFi] Upload complete: %s\n", _fileNames[_currentFileIndex]);
-        _fileSkip[_currentFileIndex] = true;  // Mark as synced
+        Serial.printf("[WiFi] PUT complete: %s\n", _fileNames[_currentFileIndex]);
+        _state = WIFI_COMPLETE;
+        _stateEnteredAt = millis();
+      } else {
+        Serial.printf("[WiFi] PUT failed: %s\n", _fileNames[_currentFileIndex]);
+        disconnectWiFi();
+        _state = WIFI_ERROR;
+        _stateEnteredAt = millis();
+      }
+      break;
+    }
+
+    case WIFI_COMPLETE: {
+      const char* filename = _fileNames[_currentFileIndex];
+      uint32_t fileSize = _fileSizes[_currentFileIndex];
+
+      if (notifyComplete(filename, fileSize)) {
+        Serial.printf("[WiFi] Complete notified: %s\n", filename);
+        _fileSkip[_currentFileIndex] = true;
         _state = WIFI_NEXT_FILE;
         _stateEnteredAt = millis();
       } else {
-        Serial.printf("[WiFi] Upload failed: %s\n", _fileNames[_currentFileIndex]);
+        Serial.printf("[WiFi] Complete notification failed: %s\n", filename);
         disconnectWiFi();
         _state = WIFI_ERROR;
         _stateEnteredAt = millis();
@@ -264,7 +280,6 @@ bool WiFiUploadManager::tick(StorageManager& storage) {
 
     case WIFI_NEXT_FILE: {
       _currentFileIndex++;
-      // Skip files that already exist on server
       while (_currentFileIndex < _fileCount && _fileSkip[_currentFileIndex]) {
         Serial.printf("[WiFi] Skipping %s (already on server)\n", _fileNames[_currentFileIndex]);
         _currentFileIndex++;
@@ -273,7 +288,7 @@ bool WiFiUploadManager::tick(StorageManager& storage) {
         _state = WIFI_DONE;
         _stateEnteredAt = millis();
       } else {
-        _state = WIFI_UPLOADING;
+        _state = WIFI_PRESIGN;
         _stateEnteredAt = millis();
       }
       break;
@@ -298,78 +313,122 @@ bool WiFiUploadManager::tick(StorageManager& storage) {
   return _state != WIFI_IDLE;
 }
 
-void WiFiUploadManager::disconnectWiFi() {
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
-  Serial.println("[WiFi] Disconnected");
-}
+// ─── URL Parsing ───────────────────────────────────────────────────────────────
 
-bool WiFiUploadManager::checkExistingFiles() {
-  // Build comma-separated filename list for query param
-  String filenames;
-  for (int i = 0; i < _fileCount; i++) {
-    if (i > 0) filenames += ",";
-    filenames += _fileNames[i];
+/* static */
+void WiFiUploadManager::parseUrl(const String& url, String& host, int& port, String& path, bool& useSSL) {
+  String s = url;
+  useSSL = false;
+  port = 80;
+
+  if (s.startsWith("https://")) {
+    s = s.substring(8);
+    useSSL = true;
+    port = 443;
+  } else if (s.startsWith("http://")) {
+    s = s.substring(7);
   }
 
+  int slashIdx = s.indexOf('/');
+  String hostPort;
+  if (slashIdx > 0) {
+    hostPort = s.substring(0, slashIdx);
+    path = s.substring(slashIdx);
+  } else {
+    hostPort = s;
+    path = "/";
+  }
+
+  int colonIdx = hostPort.indexOf(':');
+  if (colonIdx > 0) {
+    host = hostPort.substring(0, colonIdx);
+    port = hostPort.substring(colonIdx + 1).toInt();
+  } else {
+    host = hostPort;
+  }
+}
+
+// ─── Client Management ────────────────────────────────────────────────────────
+
+Client* WiFiUploadManager::connectClient(const String& host, int port, bool useSSL) {
+  if (useSSL) {
+    WiFiClientSecure* ssl = new WiFiClientSecure();
+    ssl->setInsecure();  // Skip cert verification (ESP32 has limited CA store)
+    if (!ssl->connect(host.c_str(), port)) {
+      Serial.printf("[WiFi] SSL connect failed: %s:%d\n", host.c_str(), port);
+      delete ssl;
+      return nullptr;
+    }
+    return ssl;
+  } else {
+    WiFiClient* plain = new WiFiClient();
+    if (!plain->connect(host.c_str(), port)) {
+      Serial.printf("[WiFi] Connect failed: %s:%d\n", host.c_str(), port);
+      delete plain;
+      return nullptr;
+    }
+    return plain;
+  }
+}
+
+void WiFiUploadManager::deleteClient() {
+  if (_activeClient) {
+    _activeClient->stop();
+    if (_clientIsSSL)
+      delete static_cast<WiFiClientSecure*>(_activeClient);
+    else
+      delete static_cast<WiFiClient*>(_activeClient);
+    _activeClient = nullptr;
+  }
+}
+
+// ─── API Helpers ───────────────────────────────────────────────────────────────
+
+String WiFiUploadManager::apiPost(const char* endpoint, const String& jsonBody) {
   String host;
   int port;
   bool useSSL;
-  parseServerUrl(host, port, useSSL);
+  String path;
 
-  // Build query path
-  String path = "/api/upload/device?filenames=" + filenames;
+  // Parse server URL and append endpoint
+  String serverStr(_serverUrl);
+  parseUrl(serverStr, host, port, path, useSSL);
+  path = String(endpoint);
 
-  Serial.printf("[WiFi] Checking existing files on %s:%d\n", host.c_str(), port);
+  Client* client = connectClient(host, port, useSSL);
+  if (!client) return "";
 
-  Client* client;
-  WiFiClientSecure* sslClient = nullptr;
-  WiFiClient* plainClient = nullptr;
-
-  if (useSSL) {
-    sslClient = new WiFiClientSecure();
-    sslClient->setInsecure();
-    if (!sslClient->connect(host.c_str(), port)) {
-      Serial.println("[WiFi] Check connection failed");
-      delete sslClient;
-      return false;
-    }
-    client = sslClient;
-  } else {
-    plainClient = new WiFiClient();
-    if (!plainClient->connect(host.c_str(), port)) {
-      Serial.println("[WiFi] Check connection failed");
-      delete plainClient;
-      return false;
-    }
-    client = plainClient;
-  }
-
-  // Send GET request
-  client->printf("GET %s HTTP/1.1\r\n", path.c_str());
+  // Send POST
+  client->printf("POST %s HTTP/1.1\r\n", path.c_str());
   client->printf("Host: %s\r\n", host.c_str());
   client->printf("X-Device-Key: %s\r\n", _apiKey);
   client->printf("X-User-Id: %s\r\n", _userId);
+  client->print("Content-Type: application/json\r\n");
+  client->printf("Content-Length: %d\r\n", jsonBody.length());
   client->print("Connection: close\r\n\r\n");
+  client->print(jsonBody);
 
-  // Read response
+  // Wait for response
   unsigned long respStart = millis();
-  while (!client->available() && millis() - respStart < 10000) {
+  while (!client->available() && millis() - respStart < 15000) {
     delay(10);
   }
 
-  // Skip status line and headers, then read body
-  // Next.js uses chunked transfer encoding: headers, blank line, chunk size, JSON body
+  // Read status line
+  String statusLine = client->readStringUntil('\n');
+  Serial.printf("[WiFi] API %s → %s\n", endpoint, statusLine.c_str());
+
+  // Skip headers, read body
   bool headersEnd = false;
   String body;
-  while (client->available() || millis() - respStart < 5000) {
+  while (client->available() || millis() - respStart < 10000) {
     if (client->available()) {
       String line = client->readStringUntil('\n');
       line.trim();
       if (!headersEnd) {
         if (line.length() == 0) headersEnd = true;
       } else {
-        // Skip chunked encoding size lines (hex digits only) and empty lines
+        // Skip chunked encoding size lines
         if (line.length() > 0 && line.startsWith("{")) {
           body = line;
           break;
@@ -381,8 +440,239 @@ bool WiFiUploadManager::checkExistingFiles() {
   }
 
   client->stop();
-  if (sslClient) delete sslClient;
-  if (plainClient) delete plainClient;
+  // Delete client — figure out type from SSL flag
+  if (useSSL)
+    delete static_cast<WiFiClientSecure*>(client);
+  else
+    delete static_cast<WiFiClient*>(client);
+
+  return body;
+}
+
+// ─── Presigned URL Request ─────────────────────────────────────────────────────
+
+bool WiFiUploadManager::requestPresignedUrl(const char* filename, uint32_t fileSize) {
+  String json = "{\"filename\":\"" + String(filename) + "\",\"fileSize\":" + String(fileSize) + "}";
+
+  String body = apiPost("/api/upload/device/presign", json);
+  if (body.length() == 0) {
+    Serial.println("[WiFi] No response from presign");
+    return false;
+  }
+
+  Serial.printf("[WiFi] Presign response: %s\n", body.c_str());
+
+  // Parse "url" and "storagePath" from JSON response
+  // Simple string parsing (no JSON library)
+  int urlIdx = body.indexOf("\"url\":\"");
+  if (urlIdx < 0) {
+    Serial.println("[WiFi] No url in presign response");
+    return false;
+  }
+  int urlStart = urlIdx + 7;
+  int urlEnd = body.indexOf("\"", urlStart);
+  if (urlEnd < 0) return false;
+  _uploadUrl = body.substring(urlStart, urlEnd);
+
+  int spIdx = body.indexOf("\"storagePath\":\"");
+  if (spIdx < 0) {
+    Serial.println("[WiFi] No storagePath in presign response");
+    return false;
+  }
+  int spStart = spIdx + 15;
+  int spEnd = body.indexOf("\"", spStart);
+  if (spEnd < 0) return false;
+  _storagePath = body.substring(spStart, spEnd);
+
+  Serial.printf("[WiFi] Upload URL: %s\n", _uploadUrl.c_str());
+  Serial.printf("[WiFi] Storage path: %s\n", _storagePath.c_str());
+
+  return true;
+}
+
+// ─── Direct Upload to Supabase ─────────────────────────────────────────────────
+
+bool WiFiUploadManager::beginDirectUpload(StorageManager& storage, const char* filename) {
+  if (!storage.openFileForRead(filename)) {
+    Serial.printf("[WiFi] Failed to open file: %s\n", filename);
+    return false;
+  }
+
+  uint32_t fileSize = storage.getOpenFileSize();
+
+  _uploadBuf = (uint8_t*)malloc(WIFI_UPLOAD_CHUNK_SIZE);
+  if (!_uploadBuf) {
+    Serial.println("[WiFi] Failed to allocate upload buffer");
+    storage.closeReadFile();
+    return false;
+  }
+
+  // Parse the presigned URL to get host, port, path
+  String host, path;
+  int port;
+  bool useSSL;
+  parseUrl(_uploadUrl, host, port, path, useSSL);
+
+  Serial.printf("[WiFi] PUT to %s:%d%s (SSL=%d)\n", host.c_str(), port, path.c_str(), useSSL);
+
+  Client* client = connectClient(host, port, useSSL);
+  if (!client) {
+    free(_uploadBuf);
+    _uploadBuf = nullptr;
+    storage.closeReadFile();
+    return false;
+  }
+
+  _activeClient = client;
+  _clientIsSSL = useSSL;
+
+  // Send PUT headers — raw binary body, no multipart
+  _activeClient->printf("PUT %s HTTP/1.1\r\n", path.c_str());
+  _activeClient->printf("Host: %s\r\n", host.c_str());
+  _activeClient->print("Content-Type: application/octet-stream\r\n");
+  _activeClient->printf("Content-Length: %lu\r\n", (unsigned long)fileSize);
+  _activeClient->print("Connection: close\r\n\r\n");
+
+  _fileRemaining = fileSize;
+  return true;
+}
+
+// ─── Stream Chunk ──────────────────────────────────────────────────────────────
+
+bool WiFiUploadManager::streamNextChunk(StorageManager& storage) {
+  int toRead = min((uint32_t)WIFI_UPLOAD_CHUNK_SIZE, _fileRemaining);
+  int bytesRead = storage.readFileChunk(_uploadBuf, toRead);
+  if (bytesRead <= 0) return false;
+
+  int written = _activeClient->write(_uploadBuf, bytesRead);
+  if (written != bytesRead) {
+    Serial.printf("[WiFi] Write error: %d/%d\n", written, bytesRead);
+    return false;
+  }
+
+  _fileRemaining -= bytesRead;
+  _progress.bytesSent += bytesRead;
+  return true;
+}
+
+// ─── Read HTTP Response ────────────────────────────────────────────────────────
+
+bool WiFiUploadManager::readResponse() {
+  unsigned long respStart = millis();
+  while (!_activeClient->available() && millis() - respStart < 30000) {
+    delay(10);
+  }
+
+  String statusLine = _activeClient->readStringUntil('\n');
+  Serial.printf("[WiFi] Response: %s\n", statusLine.c_str());
+
+  // Drain headers + body
+  bool headersEnd = false;
+  while (_activeClient->available() || millis() - respStart < 5000) {
+    if (_activeClient->available()) {
+      String line = _activeClient->readStringUntil('\n');
+      if (!headersEnd) {
+        if (line == "\r" || line.length() == 0) headersEnd = true;
+      } else {
+        Serial.printf("[WiFi] Body: %s\n", line.c_str());
+        break;
+      }
+    } else {
+      delay(10);
+    }
+  }
+
+  // 200 OK or 201 Created = success
+  return statusLine.indexOf("200") > 0 || statusLine.indexOf("201") > 0;
+}
+
+// ─── Complete Notification ─────────────────────────────────────────────────────
+
+bool WiFiUploadManager::notifyComplete(const char* filename, uint32_t fileSize) {
+  String json = "{\"filename\":\"" + String(filename)
+    + "\",\"storagePath\":\"" + _storagePath
+    + "\",\"fileSize\":" + String(fileSize) + "}";
+
+  String body = apiPost("/api/upload/device/complete", json);
+  if (body.length() == 0) {
+    Serial.println("[WiFi] No response from complete");
+    return false;
+  }
+
+  Serial.printf("[WiFi] Complete response: %s\n", body.c_str());
+
+  return body.indexOf("\"success\":true") >= 0;
+}
+
+// ─── Cleanup ───────────────────────────────────────────────────────────────────
+
+void WiFiUploadManager::endFileUpload(StorageManager& storage) {
+  storage.closeReadFile();
+  deleteClient();
+
+  if (_uploadBuf) {
+    free(_uploadBuf);
+    _uploadBuf = nullptr;
+  }
+}
+
+// ─── Check Existing Files ──────────────────────────────────────────────────────
+
+bool WiFiUploadManager::checkExistingFiles() {
+  // Build comma-separated filename list
+  String filenames;
+  for (int i = 0; i < _fileCount; i++) {
+    if (i > 0) filenames += ",";
+    filenames += _fileNames[i];
+  }
+
+  String host, path;
+  int port;
+  bool useSSL;
+  String serverStr(_serverUrl);
+  parseUrl(serverStr, host, port, path, useSSL);
+
+  String reqPath = "/api/upload/device?filenames=" + filenames;
+  Serial.printf("[WiFi] Checking existing files on %s:%d\n", host.c_str(), port);
+
+  Client* client = connectClient(host, port, useSSL);
+  if (!client) return false;
+
+  client->printf("GET %s HTTP/1.1\r\n", reqPath.c_str());
+  client->printf("Host: %s\r\n", host.c_str());
+  client->printf("X-Device-Key: %s\r\n", _apiKey);
+  client->printf("X-User-Id: %s\r\n", _userId);
+  client->print("Connection: close\r\n\r\n");
+
+  unsigned long respStart = millis();
+  while (!client->available() && millis() - respStart < 10000) {
+    delay(10);
+  }
+
+  bool headersEnd = false;
+  String body;
+  while (client->available() || millis() - respStart < 5000) {
+    if (client->available()) {
+      String line = client->readStringUntil('\n');
+      line.trim();
+      if (!headersEnd) {
+        if (line.length() == 0) headersEnd = true;
+      } else {
+        if (line.length() > 0 && line.startsWith("{")) {
+          body = line;
+          break;
+        }
+      }
+    } else {
+      delay(10);
+    }
+  }
+
+  client->stop();
+  if (useSSL)
+    delete static_cast<WiFiClientSecure*>(client);
+  else
+    delete static_cast<WiFiClient*>(client);
 
   if (body.length() == 0) {
     Serial.println("[WiFi] No response body from check");
@@ -391,8 +681,6 @@ bool WiFiUploadManager::checkExistingFiles() {
 
   Serial.printf("[WiFi] Existing files response: %s\n", body.c_str());
 
-  // Parse the "existing" array from JSON response
-  // Simple parsing: look for each filename in the response body
   int skipped = 0;
   uint32_t skippedBytes = 0;
   for (int i = 0; i < _fileCount; i++) {
@@ -412,159 +700,8 @@ bool WiFiUploadManager::checkExistingFiles() {
   return true;
 }
 
-void WiFiUploadManager::parseServerUrl(String& host, int& port, bool& useSSL) {
-  String serverStr(_serverUrl);
-  useSSL = false;
-  port = 80;
-
-  if (serverStr.startsWith("https://")) {
-    serverStr = serverStr.substring(8);
-    useSSL = true;
-    port = 443;
-  } else if (serverStr.startsWith("http://")) {
-    serverStr = serverStr.substring(7);
-  }
-
-  int colonIdx = serverStr.indexOf(':');
-  int slashIdx = serverStr.indexOf('/');
-  if (colonIdx > 0 && (slashIdx < 0 || colonIdx < slashIdx)) {
-    host = serverStr.substring(0, colonIdx);
-    if (slashIdx > 0) {
-      port = serverStr.substring(colonIdx + 1, slashIdx).toInt();
-    } else {
-      port = serverStr.substring(colonIdx + 1).toInt();
-    }
-  } else if (slashIdx > 0) {
-    host = serverStr.substring(0, slashIdx);
-  } else {
-    host = serverStr;
-  }
-}
-
-bool WiFiUploadManager::beginFileUpload(StorageManager& storage, const char* filename) {
-  if (!storage.openFileForRead(filename)) {
-    Serial.printf("[WiFi] Failed to open file: %s\n", filename);
-    return false;
-  }
-
-  uint32_t fileSize = storage.getOpenFileSize();
-
-  _uploadBuf = (uint8_t*)malloc(WIFI_UPLOAD_CHUNK_SIZE);
-  if (!_uploadBuf) {
-    Serial.println("[WiFi] Failed to allocate upload buffer");
-    storage.closeReadFile();
-    return false;
-  }
-
-  String host;
-  int port;
-  bool useSSL;
-  parseServerUrl(host, port, useSSL);
-
-  Serial.printf("[WiFi] Connecting to %s:%d (SSL=%d)\n", host.c_str(), port, useSSL);
-
-  // Create heap-allocated client so it persists across tick() calls
-  if (useSSL) {
-    WiFiClientSecure* sslClient = new WiFiClientSecure();
-    sslClient->setInsecure();  // TODO: cert pinning for production
-    if (!sslClient->connect(host.c_str(), port)) {
-      Serial.println("[WiFi] SSL connection failed");
-      delete sslClient;
-      return false;
-    }
-    _activeClient = sslClient;
-    _clientIsSSL = true;
-  } else {
-    WiFiClient* client = new WiFiClient();
-    if (!client->connect(host.c_str(), port)) {
-      Serial.println("[WiFi] Connection failed");
-      delete client;
-      return false;
-    }
-    _activeClient = client;
-    _clientIsSSL = false;
-  }
-
-  // Build and send HTTP headers + multipart header
-  String boundary = "----VertexUpload";
-  String partHeader = "--" + boundary + "\r\n"
-    "Content-Disposition: form-data; name=\"file\"; filename=\"" + String(filename) + "\"\r\n"
-    "Content-Type: application/octet-stream\r\n\r\n";
-  _partFooter = "\r\n--" + boundary + "--\r\n";
-  uint32_t contentLength = partHeader.length() + fileSize + _partFooter.length();
-
-  _activeClient->printf("POST /api/upload/device HTTP/1.1\r\n");
-  _activeClient->printf("Host: %s\r\n", host.c_str());
-  _activeClient->printf("X-Device-Key: %s\r\n", _apiKey);
-  _activeClient->printf("X-User-Id: %s\r\n", _userId);
-  _activeClient->printf("Content-Type: multipart/form-data; boundary=%s\r\n", boundary.c_str());
-  _activeClient->printf("Content-Length: %lu\r\n", (unsigned long)contentLength);
-  _activeClient->print("Connection: close\r\n\r\n");
-  _activeClient->print(partHeader);
-
-  _fileRemaining = fileSize;
-  return true;
-}
-
-bool WiFiUploadManager::streamNextChunk(StorageManager& storage) {
-  int toRead = min((uint32_t)WIFI_UPLOAD_CHUNK_SIZE, _fileRemaining);
-  int bytesRead = storage.readFileChunk(_uploadBuf, toRead);
-  if (bytesRead <= 0) return false;
-
-  int written = _activeClient->write(_uploadBuf, bytesRead);
-  if (written != bytesRead) {
-    Serial.printf("[WiFi] Write error: %d/%d\n", written, bytesRead);
-    return false;
-  }
-
-  _fileRemaining -= bytesRead;
-  _progress.bytesSent += bytesRead;
-  return true;
-}
-
-bool WiFiUploadManager::readResponse() {
-  // Wait for response (blocking, but should be fast after upload)
-  unsigned long respStart = millis();
-  while (!_activeClient->available() && millis() - respStart < 30000) {
-    delay(10);
-  }
-
-  String statusLine = _activeClient->readStringUntil('\n');
-  Serial.printf("[WiFi] Response: %s\n", statusLine.c_str());
-
-  // Drain headers, print first body line
-  bool headersEnd = false;
-  while (_activeClient->available() || millis() - respStart < 5000) {
-    if (_activeClient->available()) {
-      String line = _activeClient->readStringUntil('\n');
-      if (!headersEnd) {
-        if (line == "\r" || line.length() == 0) headersEnd = true;
-      } else {
-        Serial.printf("[WiFi] Body: %s\n", line.c_str());
-        break;
-      }
-    } else {
-      delay(10);
-    }
-  }
-
-  return statusLine.indexOf("200") > 0;
-}
-
-void WiFiUploadManager::endFileUpload(StorageManager& storage) {
-  storage.closeReadFile();
-
-  if (_activeClient) {
-    _activeClient->stop();
-    if (_clientIsSSL)
-      delete static_cast<WiFiClientSecure*>(_activeClient);
-    else
-      delete static_cast<WiFiClient*>(_activeClient);
-    _activeClient = nullptr;
-  }
-
-  if (_uploadBuf) {
-    free(_uploadBuf);
-    _uploadBuf = nullptr;
-  }
+void WiFiUploadManager::disconnectWiFi() {
+  WiFi.disconnect(true);
+  WiFi.mode(WIFI_OFF);
+  Serial.println("[WiFi] Disconnected");
 }

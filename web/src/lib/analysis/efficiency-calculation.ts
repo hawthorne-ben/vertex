@@ -20,7 +20,7 @@ import * as C from './pedaling-efficiency-constants'
  * Per-axis RMS result
  */
 export interface AxisCadenceRms {
-  cadenceRms: number      // Time-domain RMS of BPF'd signal (rad/s or m/s²)
+  cadenceRms: number      // Time-domain RMS of BPF'd signal (deg/s or m/s²)
   cadenceEnergy: number   // Reserved for future spectral use (always 0)
 }
 

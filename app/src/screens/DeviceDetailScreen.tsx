@@ -823,7 +823,7 @@ const DeviceDetailScreenContent: React.FC = () => {
             {(latestReading.gyroX !== undefined || latestReading.gyroY !== undefined || latestReading.gyroZ !== undefined) && (
               <>
                 <View style={[styles.divider, { backgroundColor: theme.colors.border }]} />
-                <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Angular Velocity (rad/s)</Text>
+                <Text style={[styles.sectionLabel, { color: theme.colors.textSecondary }]}>Angular Velocity (deg/s)</Text>
                 <View style={styles.sensorGrid}>
                   <View style={[styles.sensorValue, { backgroundColor: theme.colors.background }]}>
                     <Text style={[styles.sensorLabel, { color: theme.colors.textSecondary }]}>X</Text>

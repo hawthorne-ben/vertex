@@ -16,7 +16,7 @@
  * Version string for cache invalidation
  * Bump this when changing any constants or algorithm logic
  */
-export const ALGORITHM_VERSION = '6.0.0'  // Time-domain RMS stability (replaces FFT spectral analysis)
+export const ALGORITHM_VERSION = '6.1.0'  // Output at 5 Hz (was input rate), fixes 100 Hz timeout
 
 // ============================================
 // WINDOWED RMS CONFIGURATION
@@ -79,7 +79,7 @@ export const LOW_CADENCE_BAND_HALF_WIDTH_HZ = 0.3
  */
 export const STABILITY_ROLL_WEIGHT = 0.7   // Gyro-x: frame roll
 export const STABILITY_YAW_WEIGHT = 0.3    // Gyro-z: handlebar stability
-export const STABILITY_SURGE_WEIGHT = 0.0  // Accel-x: disabled (incompatible units with gyro rad/s)
+export const STABILITY_SURGE_WEIGHT = 0.0  // Accel-x: disabled (incompatible units with gyro deg/s)
 
 // ============================================
 // STABILITY CEILING NORMALIZATION
@@ -89,7 +89,7 @@ export const STABILITY_SURGE_WEIGHT = 0.0  // Accel-x: disabled (incompatible un
  * Maximum expected weighted RMS at cadence frequency for stability normalization
  * stability = max(0, 1 - weightedRms / MAX_STABILITY_RMS)
  *
- * Units: mixed (gyro rad/s, accel m/s²) weighted sum
+ * Units: mixed (gyro deg/s, accel m/s²) weighted sum
  * Calibrate from real data. Start at 5.0, tune with tuning modal.
  */
 export const MAX_STABILITY_RMS = 20.0
@@ -175,6 +175,13 @@ export const DEBUG_WINDOW_SECONDS = 5
  */
 export const DEFAULT_SAMPLE_RATE_HZ = 25
 
+/**
+ * Output sample rate for analysis results (Hz)
+ * STFT windows are at ~2 Hz, so anything above that is interpolation.
+ * 5 Hz gives smooth charts without bloating JSONB storage.
+ */
+export const OUTPUT_SAMPLE_RATE_HZ = 5
+
 // ============================================
 // GRADE SMOOTHING
 // ============================================
@@ -230,13 +237,13 @@ export const ROLL_BPF_LOW_HZ = 0.3
 export const ROLL_BPF_HIGH_HZ = 4.0
 
 /**
- * RMS threshold for band-pass filtered gyro_x roll rate (rad/s)
+ * RMS threshold for band-pass filtered gyro_x roll rate (deg/s)
  * Standing produces periodic roll oscillation above this threshold
  *
  * Tuning guide:
- * - 0.1 rad/s: Very sensitive
- * - 0.3 rad/s: Balanced (default)
- * - 0.5 rad/s: Conservative
+ * - 5 deg/s: Very sensitive
+ * - 10 deg/s: Balanced (default)
+ * - 15 deg/s: Conservative
  */
 export const ROLL_RMS_STANDING_THRESHOLD = 10
 

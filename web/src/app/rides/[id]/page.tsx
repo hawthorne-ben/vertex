@@ -2,8 +2,8 @@ import { Suspense } from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { notFound, redirect } from 'next/navigation'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
-import { AddVtxDataButton } from '@/components/add-vtx-data-button'
 import { RideVisualizationsClient } from '@/components/ride-visualizations-client'
+import { RideImuManager } from '@/components/ride-imu-manager'
 import { formatDurationFromSeconds } from '@/lib/utils/formatting'
 
 export default async function RideDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -164,30 +164,18 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
         />
       </Suspense>
 
-      {/* Add VTX Data Button (if no recordings yet) */}
-      {vtxRecordings.length === 0 && (
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle>Vertex IMU Data</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-muted-foreground mb-4">No IMU data associated with this ride yet.</p>
-            <AddVtxDataButton rideId={id} />
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Add More VTX Data Button (if recordings exist) */}
-      {vtxRecordings.length > 0 && (
-        <Card className="mt-6">
-          <CardHeader>
-            <CardTitle>Add More IMU Data</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <AddVtxDataButton rideId={id} />
-          </CardContent>
-        </Card>
-      )}
+      {/* IMU Data Management */}
+      <RideImuManager
+        rideId={id}
+        vtxRecordings={vtxRecordings.map((rec: any) => ({
+          id: rec.id,
+          filename: rec.filename,
+          start_time: rec.start_time,
+          end_time: rec.end_time,
+          duration_ms: rec.duration_ms,
+          file_size_bytes: rec.file_size_bytes,
+        }))}
+      />
     </div>
   )
 }

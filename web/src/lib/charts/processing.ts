@@ -172,7 +172,7 @@ export function processIMUChartData(
         { label: 'Y', stroke: 'hsl(145, 50%, 54%)', width: 2, spanGaps: false, points: { show: false } },
         { label: 'Z', stroke: 'hsl(205, 60%, 71%)', width: 2, spanGaps: false, points: { show: false } }
       ]
-      yAxisLabel = 'rad/s'
+      yAxisLabel = 'deg/s'
       break
   }
 
