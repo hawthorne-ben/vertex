@@ -161,6 +161,7 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
             start_time: rec.start_time,
             end_time: rec.end_time
           }))}
+          vtxTotalSizeBytes={vtxRecordings.reduce((sum: number, rec: any) => sum + (rec.file_size_bytes || 0), 0)}
         />
       </Suspense>
 

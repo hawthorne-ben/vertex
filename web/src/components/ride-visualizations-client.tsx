@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
 import { useSearchParams, usePathname } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import { TimeSlider } from './time-slider'
@@ -179,6 +179,7 @@ interface RideVisualizationsClientProps {
   fitRecordingId: string | null
   hasGpsData: boolean
   vtxRecordings: VTXRecording[]
+  vtxTotalSizeBytes?: number  // Total VTX file size for analysis time estimate
 }
 
 export function RideVisualizationsClient({
@@ -188,7 +189,8 @@ export function RideVisualizationsClient({
   rideEndTime,
   fitRecordingId,
   hasGpsData,
-  vtxRecordings
+  vtxRecordings,
+  vtxTotalSizeBytes = 0
 }: RideVisualizationsClientProps) {
   const searchParams = useSearchParams()
   const pathname = usePathname()
@@ -340,6 +342,7 @@ export function RideVisualizationsClient({
   const {
     samples: efficiencySamples,
     loading: efficiencyLoading,
+    polling: efficiencyPolling,
     error: efficiencyError,
   } = useDerivedMetric({
     rideId,
@@ -353,6 +356,7 @@ export function RideVisualizationsClient({
   const {
     samples: positionSamplesRaw,
     loading: positionLoading,
+    polling: positionPolling,
     error: positionError,
   } = useDerivedMetric({
     rideId,
@@ -366,6 +370,7 @@ export function RideVisualizationsClient({
   const {
     samples: roughnessSamples,
     loading: roughnessLoading,
+    polling: roughnessPolling,
     error: roughnessError,
   } = useDerivedMetric({
     rideId,
@@ -384,6 +389,43 @@ export function RideVisualizationsClient({
     cadence: number | null
     value: number | null
   }>
+
+  // Track analysis completion — when any metric transitions from loading to loaded,
+  // increment key so RideComparisonCards refetches summaries
+  const [analysisRefreshKey, setAnalysisRefreshKey] = useState(0)
+  const prevAnalyticsLoading = useRef(false)
+
+  const anyAnalyticsPolling = efficiencyPolling || positionPolling || roughnessPolling
+  const anyAnalyticsLoaded = efficiencySamples.length > 0 || positionSamples.length > 0 || roughnessSamples.length > 0
+
+  useEffect(() => {
+    // When polling transitions from true → false with data, bump refresh key
+    if (prevAnalyticsLoading.current && !anyAnalyticsPolling && anyAnalyticsLoaded) {
+      setAnalysisRefreshKey(k => k + 1)
+    }
+    prevAnalyticsLoading.current = anyAnalyticsPolling
+  }, [anyAnalyticsPolling, anyAnalyticsLoaded])
+
+  // Estimate analysis time from VTX file size
+  // ~2.5 min for 22MB (800K samples at 100Hz) based on observed performance
+  const estimatedAnalysisSeconds = vtxTotalSizeBytes > 0
+    ? Math.max(10, Math.round((vtxTotalSizeBytes / (22 * 1024 * 1024)) * 150))
+    : null
+
+  // Check if IMU data has orientation fields (only meaningful once data is loaded)
+  const hasOrientationData = !imuLoading && imuSamples.length > 0
+    ? imuSamples.some(s => s.roll != null && s.pitch != null)
+    : null // unknown until loaded
+
+  // Filter out orientation tab when we know the data doesn't have it
+  const visibleMapTabs = useMemo(() =>
+    MAP_TAB_CONFIG.filter(tab => tab.id !== 'orientation' || hasOrientationData !== false),
+    [hasOrientationData]
+  )
+  const visibleChartTabs = useMemo(() =>
+    CHART_TAB_CONFIG.filter(tab => tab.id !== 'orientation' || hasOrientationData !== false),
+    [hasOrientationData]
+  )
 
   // Calculate IMU time ranges for GPS color coding
   const imuTimeRanges = useMemo(() => {
@@ -453,12 +495,34 @@ export function RideVisualizationsClient({
     (chartTab === 'roughness' && roughnessError) ||
     null
 
+  // Show analysis progress banner only when polling for inngest job results
+  const showAnalysisBanner = hasAnalyticsData && anyAnalyticsPolling
+
   return (
     <>
+      {/* Analysis Progress Banner */}
+      {showAnalysisBanner && (
+        <div className="mb-4 p-3 rounded-lg border border-border bg-muted/50 flex items-center gap-3">
+          <div className="relative shrink-0">
+            <div className="w-5 h-5 border-2 border-muted-foreground/20 rounded-full" />
+            <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin absolute top-0" />
+          </div>
+          <div className="text-sm text-secondary">
+            <span className="font-medium text-primary">Analyzing ride data</span>
+            {estimatedAnalysisSeconds && (
+              <span> — typically takes {estimatedAnalysisSeconds < 60
+                ? `~${estimatedAnalysisSeconds}s`
+                : `~${Math.round(estimatedAnalysisSeconds / 60)} min`
+              }</span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Map tabs */}
       <div className="mb-4">
         <div className="flex items-center gap-1">
-          {MAP_TAB_CONFIG.map(tab => {
+          {visibleMapTabs.map(tab => {
             const isStats = tab.id === 'stats'
             const disabled = getTabDisabled(tab.id)
             const isActive = mapTab === tab.id
@@ -594,7 +658,7 @@ export function RideVisualizationsClient({
       {/* Chart tab bar */}
       <div className="mb-4">
         <div className="flex items-center gap-1 border-b border-border">
-          {CHART_TAB_CONFIG.map(tab => {
+          {visibleChartTabs.map(tab => {
             const isStats = tab.id === 'stats'
             const disabled = getTabDisabled(tab.id)
             const isActive = chartTab === tab.id
@@ -687,7 +751,7 @@ export function RideVisualizationsClient({
       </div>
 
       {/* Per-Ride Comparison vs Rolling Averages */}
-      <RideComparisonCards rideId={rideId} />
+      <RideComparisonCards rideId={rideId} refreshKey={analysisRefreshKey} />
 
       {/* FIT Performance Charts */}
       {fitRecordingId && (

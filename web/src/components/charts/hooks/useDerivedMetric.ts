@@ -22,6 +22,7 @@ export interface UseDerivedMetricOptions {
 export interface UseDerivedMetricResult {
   samples: DerivedMetricSample[]
   loading: boolean
+  polling: boolean  // True only when waiting for inngest job (not normal fetches)
   error: string | null
   metadata: PedalingEfficiencyMetadata | RidingPositionMetadata | SurfaceRoughnessMetadata | null
 }
@@ -84,6 +85,7 @@ export function useDerivedMetric({
 }: UseDerivedMetricOptions): UseDerivedMetricResult {
   const [samples, setSamples] = useState<DerivedMetricSample[]>([])
   const [loading, setLoading] = useState(false)
+  const [polling, setPolling] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [metadata, setMetadata] = useState<any | null>(null)
   const { authFetch } = useAuthFetch()
@@ -219,6 +221,7 @@ export function useDerivedMetric({
         setSamples(transformed)
         setMetadata(metricMetadata)
         setLoading(false)
+        setPolling(false)
 
         // Stop polling if we got results
         if (pollingIntervalRef.current) {
@@ -231,6 +234,7 @@ export function useDerivedMetric({
           setSamples([])
           setMetadata(null)
           setLoading(true)
+          setPolling(true)
 
           // Start polling every 3 seconds if not already polling
           if (!pollingIntervalRef.current) {
@@ -250,6 +254,7 @@ export function useDerivedMetric({
           pollingIntervalRef.current = null
         }
         setLoading(false)
+        setPolling(false)
       }
     }
 
@@ -264,5 +269,5 @@ export function useDerivedMetric({
     }
   }, [rideId, metric, timeRange, fitRecordingId, resolution, enabled, authFetch])
 
-  return { samples, loading, error, metadata }
+  return { samples, loading, polling, error, metadata }
 }

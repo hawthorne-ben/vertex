@@ -73,8 +73,10 @@ export async function POST(
         .in('recording_id', vtxRecordingIds)
     }
 
-    // 4. Delete merged VTX file from storage
-    if (ride.merged_vtx_path) {
+    // 4. Delete merged VTX file from storage — but only if it's a dedicated
+    // merged file (lives under rides/), NOT if it references an original recording
+    // (single-file rides reuse the recording's storage_path as merged_vtx_path)
+    if (ride.merged_vtx_path && ride.merged_vtx_path.startsWith('rides/')) {
       await supabaseAdmin.storage
         .from('recordings')
         .remove([ride.merged_vtx_path])

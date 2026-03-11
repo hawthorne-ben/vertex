@@ -1,10 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect, notFound } from 'next/navigation'
 import { headers } from 'next/headers'
-import { IMUSensorChart } from '@/components/charts/IMUSensorChart'
 import { DataDetailHeader } from '@/components/data-detail-header'
 import { Loader2 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
+import { RecordingChartClient } from '@/components/recording-chart-client'
 
 export default async function DataDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -111,12 +111,10 @@ export default async function DataDetailPage({ params }: { params: Promise<{ id:
       {recording.status === 'ready' && samples ? (
         <Card>
           <CardContent className="pt-6">
-            <IMUSensorChart
-              recordings={[{
-                id: id,
-                start_time: recording.start_time,
-                end_time: recording.end_time
-              }]}
+            <RecordingChartClient
+              recordingId={id}
+              startTime={recording.start_time}
+              endTime={recording.end_time}
               initialSamples={samples}
               originalCount={originalSampleCount}
             />

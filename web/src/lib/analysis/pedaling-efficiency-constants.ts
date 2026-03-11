@@ -16,7 +16,7 @@
  * Version string for cache invalidation
  * Bump this when changing any constants or algorithm logic
  */
-export const ALGORITHM_VERSION = '6.1.0'  // Output at 5 Hz (was input rate), fixes 100 Hz timeout
+export const ALGORITHM_VERSION = '6.2.0'  // Tuned: BPF low 0.3, stability ceiling 15, standing threshold 1.0
 
 // ============================================
 // WINDOWED RMS CONFIGURATION
@@ -46,7 +46,7 @@ export const STFT_HOP_SECONDS = 0.5
  * 0.3 Hz: catches very slow cadences (18 RPM), rejects sustained lean
  * 10.0 Hz: captures harmonics up to ~5th order, well below Nyquist (12.5 Hz)
  */
-export const STABILITY_BPF_LOW_HZ = 0.5
+export const STABILITY_BPF_LOW_HZ = 0.3
 export const STABILITY_BPF_HIGH_HZ = 10.0
 
 // ============================================
@@ -92,7 +92,7 @@ export const STABILITY_SURGE_WEIGHT = 0.0  // Accel-x: disabled (incompatible un
  * Units: mixed (gyro deg/s, accel m/s²) weighted sum
  * Calibrate from real data. Start at 5.0, tune with tuning modal.
  */
-export const MAX_STABILITY_RMS = 20.0
+export const MAX_STABILITY_RMS = 15.0
 
 /**
  * Maximum expected weighted RMS per watt for power-normalized stability
@@ -212,7 +212,7 @@ export const MAX_GRADE_PERCENT = 30
  * - 2.2 m/s²: Balanced (default) - filters out most seated rocking
  * - 2.5 m/s²: Conservative, only very aggressive standing
  */
-export const Y_AXIS_STANDING_THRESHOLD = 2.2
+export const Y_AXIS_STANDING_THRESHOLD = 1.0
 
 /**
  * Window size for position calculation in seconds

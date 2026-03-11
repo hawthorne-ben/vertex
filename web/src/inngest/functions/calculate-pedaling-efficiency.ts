@@ -1,7 +1,7 @@
 import { inngest } from '@/inngest/client'
 import { createClient } from '@supabase/supabase-js'
 import { calculatePedalingEfficiency } from '@/lib/analysis/pedaling-efficiency'
-import { ALGORITHM_VERSION } from '@/lib/analysis/pedaling-efficiency-constants'
+import * as C from '@/lib/analysis/pedaling-efficiency-constants'
 import { fileCache } from '@/lib/cache/file-cache'
 import { VTXDecoder } from '@vertex-pkg/vtx-parser'
 import FitParser from 'fit-file-parser'
@@ -50,11 +50,11 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
 
       const allUpToDate =
         efficiencyAnalysis?.status === 'completed' &&
-        efficiencyAnalysis?.algorithm_version === ALGORITHM_VERSION &&
+        efficiencyAnalysis?.algorithm_version === C.ALGORITHM_VERSION &&
         positionAnalysis?.status === 'completed' &&
-        positionAnalysis?.algorithm_version === ALGORITHM_VERSION &&
+        positionAnalysis?.algorithm_version === C.ALGORITHM_VERSION &&
         roughnessAnalysis?.status === 'completed' &&
-        roughnessAnalysis?.algorithm_version === ALGORITHM_VERSION
+        roughnessAnalysis?.algorithm_version === C.ALGORITHM_VERSION
 
       if (allUpToDate) {
         return {
@@ -71,14 +71,14 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
       const result = await step.run('compute-and-store-analyses', async () => {
         // Create or update both analysis records with 'processing' status
         const sharedParameters = {
-          hpfCutoff: 0.5,
-          windowSize: 3,
-          yAxisThreshold: 2.2,
-          rollBpfLow: 0.3,
-          rollBpfHigh: 4.0,
-          rollRmsThreshold: 10,
-          gyroWeight: 0.7,
-          accelWeight: 0.3,
+          hpfCutoff: C.ROUGHNESS_HPF_CUTOFF_HZ,
+          windowSize: C.STFT_WINDOW_SECONDS,
+          yAxisThreshold: C.Y_AXIS_STANDING_THRESHOLD,
+          rollBpfLow: C.ROLL_BPF_LOW_HZ,
+          rollBpfHigh: C.ROLL_BPF_HIGH_HZ,
+          rollRmsThreshold: C.ROLL_RMS_STANDING_THRESHOLD,
+          gyroWeight: C.POSITION_GYRO_WEIGHT,
+          accelWeight: C.POSITION_ACCEL_WEIGHT,
         }
 
         const { data: efficiencyAnalysis, error: efficiencyError } = await supabase
@@ -89,7 +89,7 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
               analysis_type: 'pedaling_efficiency',
               status: 'processing',
               started_at: new Date().toISOString(),
-              algorithm_version: ALGORITHM_VERSION,
+              algorithm_version: C.ALGORITHM_VERSION,
               parameters: sharedParameters,
               metadata: {},
             },
@@ -109,7 +109,7 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
               analysis_type: 'riding_position',
               status: 'processing',
               started_at: new Date().toISOString(),
-              algorithm_version: ALGORITHM_VERSION,
+              algorithm_version: C.ALGORITHM_VERSION,
               parameters: sharedParameters,
               metadata: {},
             },
@@ -129,7 +129,7 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
               analysis_type: 'surface_roughness',
               status: 'processing',
               started_at: new Date().toISOString(),
-              algorithm_version: ALGORITHM_VERSION,
+              algorithm_version: C.ALGORITHM_VERSION,
               parameters: sharedParameters,
               metadata: {},
             },
@@ -282,14 +282,7 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
           vtxSamples,
           fitSamples,
           options: {
-            hpfCutoff: 0.5,
-            windowSize: 3,
-            yAxisThreshold: 2.2,
-            rollBpfLow: 0.3,
-            rollBpfHigh: 4.0,
-            rollRmsThreshold: 10,
-            gyroWeight: 0.7,
-            accelWeight: 0.3,
+            ...sharedParameters,
             includeDebug: false, // Don't store debug stats
           },
         })
@@ -433,9 +426,9 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
           rough_surface_percent: result.roughSurfacePercent ?? null,
 
           // Algorithm versions
-          efficiency_version: ALGORITHM_VERSION,
-          position_version: ALGORITHM_VERSION,
-          roughness_version: ALGORITHM_VERSION,
+          efficiency_version: C.ALGORITHM_VERSION,
+          position_version: C.ALGORITHM_VERSION,
+          roughness_version: C.ALGORITHM_VERSION,
           computed_at: new Date().toISOString(),
         }
 

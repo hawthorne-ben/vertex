@@ -110,14 +110,22 @@ export function IMUSensorChart({
     }
   }
 
-  const hasOrientationData = samples.some(s => s.roll !== null && s.pitch !== null)
+  const hasOrientationData = samples.some(s => s.roll != null && s.pitch != null)
+  const hasAccelData = samples.some(s => s.accel_x != null)
+  const hasGyroData = samples.some(s => s.gyro_x != null)
 
-  // Auto-switch to accel if orientation data is not available (only in uncontrolled mode)
+  // Auto-switch if current data type is not available (only in uncontrolled mode)
   useEffect(() => {
-    if (!isControlled && !loading && samples.length > 0 && !hasOrientationData && dataType === 'orientation') {
-      setInternalDataType('accel')
+    if (!isControlled && !loading && samples.length > 0) {
+      if (dataType === 'orientation' && !hasOrientationData) {
+        setInternalDataType(hasAccelData ? 'accel' : 'gyro')
+      } else if (dataType === 'accel' && !hasAccelData) {
+        setInternalDataType(hasGyroData ? 'gyro' : 'orientation')
+      } else if (dataType === 'gyro' && !hasGyroData) {
+        setInternalDataType(hasAccelData ? 'accel' : 'orientation')
+      }
     }
-  }, [isControlled, loading, samples.length, hasOrientationData, dataType])
+  }, [isControlled, loading, samples.length, hasOrientationData, hasAccelData, hasGyroData, dataType])
 
   return (
     <div className={`space-y-4 ${className}`}>
@@ -135,8 +143,12 @@ export function IMUSensorChart({
               {hasOrientationData && (
                 <option value="orientation">Orientation (BNO055)</option>
               )}
-              <option value="accel">Accelerometer</option>
-              <option value="gyro">Gyroscope</option>
+              {hasAccelData && (
+                <option value="accel">Accelerometer</option>
+              )}
+              {hasGyroData && (
+                <option value="gyro">Gyroscope</option>
+              )}
             </select>
           </div>
 

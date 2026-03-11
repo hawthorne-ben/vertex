@@ -740,8 +740,12 @@ export function RideMap({
     if (colorBy === 'elevation' && point.altitude !== null && point.altitude !== undefined) {
       // Elevation gradient relative to track
       const altitudes = gpsTrack.map(p => p.altitude).filter(a => a !== null) as number[]
-      const minAlt = Math.min(...altitudes)
-      const maxAlt = Math.max(...altitudes)
+      let minAlt = Infinity
+      let maxAlt = -Infinity
+      for (let i = 0; i < altitudes.length; i++) {
+        if (altitudes[i] < minAlt) minAlt = altitudes[i]
+        if (altitudes[i] > maxAlt) maxAlt = altitudes[i]
+      }
       const range = maxAlt - minAlt
       if (range > 0) {
         const ratio = (point.altitude - minAlt) / range

@@ -145,15 +145,16 @@ export function useIMUData({
           // Fetch all recordings in parallel
           const fetchPromises = recordingsToFetch.map(async (recording) => {
             const params = new URLSearchParams()
+            params.set('downsample', 'lttb')
+            params.set('resolution', '2000')
             if (timeRange) {
               params.set('start', timeRange.start)
               params.set('end', timeRange.end)
-              params.set('resolution', 'high')
             }
 
             const endpoint = `/api/recordings/${recording.id}/samples`
 
-            const url = params.toString() ? `${endpoint}?${params}` : endpoint
+            const url = `${endpoint}?${params}`
 
             const response = await authFetch(url)
 
@@ -189,7 +190,9 @@ export function useIMUData({
           // Merge results
           let totalOriginalCount = 0
           for (const result of results) {
-            allSamples.push(...result.samples)
+            for (const sample of result.samples) {
+              allSamples.push(sample)
+            }
             totalOriginalCount += result.totalSamples
           }
 

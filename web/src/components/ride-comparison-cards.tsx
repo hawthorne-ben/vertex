@@ -73,7 +73,7 @@ function ComparisonMetric({
   )
 }
 
-export function RideComparisonCards({ rideId }: { rideId: string }) {
+export function RideComparisonCards({ rideId, refreshKey = 0 }: { rideId: string; refreshKey?: number }) {
   const [data, setData] = useState<RideComparisons | null>(null)
 
   useEffect(() => {
@@ -138,7 +138,7 @@ export function RideComparisonCards({ rideId }: { rideId: string }) {
 
     load()
     return () => { cancelled = true }
-  }, [rideId])
+  }, [rideId, refreshKey])
 
   if (!data) return null
 

@@ -234,12 +234,18 @@ export function calculateIMUStats(
   }
 
   const values = getValues()
-  return Object.entries(values).map(([axis, vals]) => ({
-    axis,
-    min: Math.min(...vals),
-    max: Math.max(...vals),
-    mean: vals.reduce((a: number, b: number) => a + b, 0) / vals.length
-  }))
+  return Object.entries(values).map(([axis, vals]) => {
+    let min = Infinity
+    let max = -Infinity
+    let sum = 0
+    for (let i = 0; i < vals.length; i++) {
+      const v = vals[i]
+      if (v < min) min = v
+      if (v > max) max = v
+      sum += v
+    }
+    return { axis, min, max, mean: sum / vals.length }
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -289,8 +295,20 @@ export function buildEfficiencyChartConfig(
     return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
   }
 
+  // Filter to zoom range to avoid passing huge out-of-range arrays to uPlot
+  const filtered = zoomRange
+    ? samples.filter(s => {
+        const t = new Date(s.timestamp).getTime()
+        return t >= new Date(zoomRange.start).getTime() && t <= new Date(zoomRange.end).getTime()
+      })
+    : samples
+
+  if (filtered.length === 0) {
+    return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
+  }
+
   const GAP_THRESHOLD_MS = 10000
-  const samplesWithGaps = insertGaps(samples, GAP_THRESHOLD_MS)
+  const samplesWithGaps = insertGaps(filtered, GAP_THRESHOLD_MS)
   const { timestamps, samples: final } = samplesToUPlotData(samplesWithGaps)
 
   const data: uPlot.AlignedData = [timestamps, final.map(s => s?.value ?? null)]
@@ -321,12 +339,19 @@ export function buildEfficiencyChartConfig(
     }
   }
 
-  const validValues = samples.map(s => s.value).filter((v): v is number => v !== null)
+  const validValues = filtered.map(s => s.value).filter((v): v is number => v !== null)
+  let statsMax = -Infinity
+  let statsSum = 0
+  for (let i = 0; i < validValues.length; i++) {
+    const v = validValues[i]
+    if (v > statsMax) statsMax = v
+    statsSum += v
+  }
   const stats: ChartStat[] = validValues.length > 0 ? [{
     label: 'Stability',
     color: 'hsl(145, 70%, 50%)',
-    avg: validValues.reduce((a, b) => a + b, 0) / validValues.length,
-    max: Math.max(...validValues),
+    avg: statsSum / validValues.length,
+    max: statsMax,
     unit: '%',
   }] : []
 
@@ -347,8 +372,20 @@ export function buildPositionChartConfig(
     return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
   }
 
+  // Filter to zoom range to avoid passing huge out-of-range arrays to uPlot
+  const filtered = zoomRange
+    ? samples.filter(s => {
+        const t = new Date(s.timestamp).getTime()
+        return t >= new Date(zoomRange.start).getTime() && t <= new Date(zoomRange.end).getTime()
+      })
+    : samples
+
+  if (filtered.length === 0) {
+    return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
+  }
+
   const GAP_THRESHOLD_MS = 10000
-  const samplesWithGaps = insertGaps(samples, GAP_THRESHOLD_MS)
+  const samplesWithGaps = insertGaps(filtered, GAP_THRESHOLD_MS)
   const { timestamps, samples: final } = samplesToUPlotData(samplesWithGaps)
 
   // Split into two series: seated (value=0) and standing (value=1)
@@ -412,7 +449,7 @@ export function buildPositionChartConfig(
     }
   ]
 
-  const validValues = samples.map(s => s.value).filter((v): v is number => v !== null)
+  const validValues = filtered.map(s => s.value).filter((v): v is number => v !== null)
   const standingCount = validValues.filter(v => v >= 0.5).length
   const seatedCount = validValues.length - standingCount
   const standingPct = validValues.length > 0 ? (standingCount / validValues.length) * 100 : 0
@@ -451,8 +488,20 @@ export function buildRoughnessChartConfig(
     return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
   }
 
+  // Filter to zoom range to avoid passing huge out-of-range arrays to uPlot
+  const filtered = zoomRange
+    ? samples.filter(s => {
+        const t = new Date(s.timestamp).getTime()
+        return t >= new Date(zoomRange.start).getTime() && t <= new Date(zoomRange.end).getTime()
+      })
+    : samples
+
+  if (filtered.length === 0) {
+    return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
+  }
+
   const GAP_THRESHOLD_MS = 10000
-  const samplesWithGaps = insertGaps(samples, GAP_THRESHOLD_MS)
+  const samplesWithGaps = insertGaps(filtered, GAP_THRESHOLD_MS)
   const { timestamps, samples: final } = samplesToUPlotData(samplesWithGaps)
 
   const data: uPlot.AlignedData = [timestamps, final.map(s => s?.value ?? null)]
@@ -483,12 +532,19 @@ export function buildRoughnessChartConfig(
     }
   }
 
-  const validValues = samples.map(s => s.value).filter((v): v is number => v !== null)
+  const validValues = filtered.map(s => s.value).filter((v): v is number => v !== null)
+  let statsMax = -Infinity
+  let statsSum = 0
+  for (let i = 0; i < validValues.length; i++) {
+    const v = validValues[i]
+    if (v > statsMax) statsMax = v
+    statsSum += v
+  }
   const stats: ChartStat[] = validValues.length > 0 ? [{
     label: 'Roughness',
     color: 'hsl(25, 95%, 53%)',
-    avg: validValues.reduce((a, b) => a + b, 0) / validValues.length,
-    max: Math.max(...validValues),
+    avg: statsSum / validValues.length,
+    max: statsMax,
     unit: '%',
   }] : []
 
@@ -540,6 +596,7 @@ export function buildFitMetricChartConfig(
     y: {
       auto: true,
       range: (u, dataMin, dataMax) => {
+        if (!isFinite(dataMin) || !isFinite(dataMax)) return [0, 100]
         const padding = (dataMax - dataMin) * 0.1
         return [Math.max(0, dataMin - padding), dataMax + padding]
       }
@@ -547,11 +604,18 @@ export function buildFitMetricChartConfig(
   }
 
   const validValues = rawValues.filter((v): v is number => v !== null)
+  let fitMax = -Infinity
+  let fitSum = 0
+  for (let i = 0; i < validValues.length; i++) {
+    const v = validValues[i]
+    if (v > fitMax) fitMax = v
+    fitSum += v
+  }
   const stats: ChartStat[] = validValues.length > 0 ? [{
     label: config.label,
     color: config.color,
-    avg: validValues.reduce((a, b) => a + b, 0) / validValues.length,
-    max: Math.max(...validValues),
+    avg: fitSum / validValues.length,
+    max: fitMax,
     unit: config.unit,
   }] : []
 

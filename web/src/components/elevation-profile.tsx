@@ -31,8 +31,18 @@ export function ElevationProfile({
   const chartConfig = useMemo(() => {
     if (samples.length === 0 || !samples.some(s => s.altitude !== null && s.altitude !== undefined)) return null
 
-    const timestamps = samples.map(s => new Date(s.timestamp).getTime() / 1000)
-    const altitudeFeet = samples.map(s => s.altitude ? s.altitude * 3.28084 : null) // meters to feet
+    // Filter to zoom range to avoid passing huge out-of-range arrays to uPlot
+    const filtered = zoomRange
+      ? samples.filter(s => {
+          const t = new Date(s.timestamp).getTime()
+          return t >= new Date(zoomRange.start).getTime() && t <= new Date(zoomRange.end).getTime()
+        })
+      : samples
+
+    if (filtered.length === 0 || !filtered.some(s => s.altitude !== null && s.altitude !== undefined)) return null
+
+    const timestamps = filtered.map(s => new Date(s.timestamp).getTime() / 1000)
+    const altitudeFeet = filtered.map(s => s.altitude ? s.altitude * 3.28084 : null) // meters to feet
 
     const isDark = document.documentElement.classList.contains('dark')
     const gridColor = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'
@@ -90,6 +100,7 @@ export function ElevationProfile({
       elevation: {
         auto: true,
         range: (u, dataMin, dataMax) => {
+          if (!isFinite(dataMin) || !isFinite(dataMax)) return [0, 100]
           const padding = (dataMax - dataMin) * 0.1
           return [dataMin - padding, dataMax + padding]
         }
@@ -124,11 +135,18 @@ export function ElevationProfile({
 
     // Compute stats
     const validAltitudes = altitudeFeet.filter((v): v is number => v !== null)
+    let elevMax = -Infinity
+    let elevSum = 0
+    for (let i = 0; i < validAltitudes.length; i++) {
+      const v = validAltitudes[i]
+      if (v > elevMax) elevMax = v
+      elevSum += v
+    }
     const stats: ChartStat[] = validAltitudes.length > 0 ? [{
       label: 'Elevation',
       color: '#3b82f6',
-      avg: validAltitudes.reduce((a, b) => a + b, 0) / validAltitudes.length,
-      max: Math.max(...validAltitudes),
+      avg: elevSum / validAltitudes.length,
+      max: elevMax,
       unit: 'ft',
     }] : []
 

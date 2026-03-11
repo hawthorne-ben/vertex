@@ -217,12 +217,12 @@ export async function POST(request: NextRequest) {
       } catch (inngestError) {
         console.warn(`⚠️ Failed to trigger Inngest FIT parsing:`, inngestError)
 
-        // Update status to indicate manual processing needed
+        // Mark as failed so the frontend polling picks it up immediately
         await supabase
           .from('recordings')
           .update({
-            status: 'uploaded',
-            error_message: 'Inngest not available - manual processing required'
+            status: 'failed',
+            error_message: 'Failed to start file processing. Please try uploading again.'
           })
           .eq('id', recordingRecord.id)
       }

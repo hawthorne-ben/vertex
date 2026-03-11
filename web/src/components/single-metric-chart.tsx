@@ -100,6 +100,7 @@ export function SingleMetricChart({
       y: {
         auto: true,
         range: (u, dataMin, dataMax) => {
+          if (!isFinite(dataMin) || !isFinite(dataMax)) return [0, 100]
           const padding = (dataMax - dataMin) * 0.1
           return [Math.max(0, dataMin - padding), dataMax + padding]
         }
@@ -108,11 +109,18 @@ export function SingleMetricChart({
 
     // Compute stats from raw values
     const validValues = rawValues.filter((v): v is number => v !== null)
+    let statsMax = -Infinity
+    let statsSum = 0
+    for (let i = 0; i < validValues.length; i++) {
+      const v = validValues[i]
+      if (v > statsMax) statsMax = v
+      statsSum += v
+    }
     const stats: ChartStat[] = validValues.length > 0 ? [{
       label,
       color,
-      avg: validValues.reduce((a, b) => a + b, 0) / validValues.length,
-      max: Math.max(...validValues),
+      avg: statsSum / validValues.length,
+      max: statsMax,
       unit,
     }] : []
 

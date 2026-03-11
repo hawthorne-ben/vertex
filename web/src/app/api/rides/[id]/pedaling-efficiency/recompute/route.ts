@@ -23,22 +23,7 @@ export const maxDuration = 60 // Allow up to 60 seconds for large rides
  *     windowSize?: number      // Efficiency window seconds (default: 3)
  *     yAxisThreshold?: number  // Standing detection threshold (default: 2.2)
  *   },
- *   saveToDatabase?: boolean  // If true, overwrites existing analyses
- * }
- *
- * Response:
- * {
- *   success: true,
- *   message: string,
- *   efficiency: {
- *     metadata: PedalingEfficiencyMetadata,
- *     sampleCount: number
- *   },
- *   position: {
- *     metadata: RidingPositionMetadata,
- *     sampleCount: number
- *   },
- *   parameters: object
+ *   saveToDatabase?: boolean  // If true, overwrites existing analyses + ride summary
  * }
  */
 export async function POST(
@@ -68,7 +53,7 @@ export async function POST(
     // Verify ride ownership
     const { data: ride, error: rideError } = await supabase
       .from('rides')
-      .select('id, user_id, name')
+      .select('id, user_id, name, start_time, duration_seconds, distance_meters, elevation_gain_meters')
       .eq('id', rideId)
       .eq('user_id', user.id)
       .single()
@@ -134,7 +119,7 @@ export async function POST(
       .download(fitRecording.recording.storage_path)
 
     if (fitDownloadError || !fitBlob) {
-      throw new Error(`Failed to download FIT file: ${fitDownloadError?.message}`)
+      throw new Error(`Failed to download FIT file: ${JSON.stringify(fitDownloadError)}`)
     }
 
     const fitBuffer = Buffer.from(await fitBlob.arrayBuffer())
@@ -165,7 +150,7 @@ export async function POST(
       .download(vtxRecording.recording.storage_path)
 
     if (vtxDownloadError || !vtxBlob) {
-      throw new Error(`Failed to download VTX file: ${vtxDownloadError?.message}`)
+      throw new Error(`Failed to download VTX file: ${JSON.stringify(vtxDownloadError)}`)
     }
 
     const vtxArrayBuffer = await vtxBlob.arrayBuffer()
@@ -283,6 +268,67 @@ export async function POST(
       }
 
       console.log(`[DEV] Saved all three analyses to database`)
+
+      // Upsert ride_summaries (same as inngest job)
+      const { data: fitRec } = await supabase
+        .from('recordings')
+        .select('analysis_results')
+        .eq('id', fitRecording.recording.id)
+        .maybeSingle()
+
+      const fitStats = fitRec?.analysis_results as any
+
+      const summaryRow = {
+        ride_id: rideId,
+        user_id: user.id,
+        ride_started_at: ride.start_time,
+        duration_seconds: ride.duration_seconds,
+        distance_meters: ride.distance_meters,
+        elevation_gain_meters: ride.elevation_gain_meters,
+
+        // FIT-derived
+        avg_speed_ms: fitStats?.avg_speed_ms ?? null,
+        avg_heart_rate: fitStats?.avg_heart_rate ?? null,
+        avg_power_watts: fitStats?.avg_power_watts ?? null,
+        avg_cadence: fitStats?.avg_cadence ?? null,
+        max_heart_rate: fitStats?.max_heart_rate ?? null,
+        max_power_watts: fitStats?.max_power_watts ?? null,
+        max_cadence: fitStats?.max_cadence ?? null,
+
+        // IMU-derived: Stability
+        avg_stability_percent: result.efficiency.metadata.avgStabilityPercent ?? null,
+        stable_pedaling_percent: result.efficiency.metadata.stablePercent ?? null,
+        unstable_pedaling_percent: result.efficiency.metadata.unstablePercent ?? null,
+        pedaling_percent: result.efficiency.metadata.pedalingPercent ?? null,
+
+        // IMU-derived: Position
+        standing_percent: result.position.metadata.standingPercent ?? null,
+        seated_percent: result.position.metadata.seatedPercent ?? null,
+        avg_cadence_standing: result.position.metadata.avgCadenceStanding ?? null,
+        avg_cadence_seated: result.position.metadata.avgCadenceSeated ?? null,
+
+        // IMU-derived: Roughness
+        avg_roughness: result.roughness.metadata.avgRoughness ?? null,
+        max_roughness: result.roughness.metadata.maxRoughness ?? null,
+        smooth_surface_percent: result.roughness.metadata.smoothSurfacePercent ?? null,
+        rough_surface_percent: result.roughness.metadata.roughSurfacePercent ?? null,
+
+        // Algorithm versions
+        efficiency_version: ALGORITHM_VERSION,
+        position_version: ALGORITHM_VERSION,
+        roughness_version: ALGORITHM_VERSION,
+        computed_at: now,
+      }
+
+      const { error: summaryError } = await supabase
+        .from('ride_summaries')
+        .upsert(summaryRow, { onConflict: 'ride_id' })
+
+      if (summaryError) {
+        console.error(`[DEV] Failed to upsert ride summary:`, summaryError.message)
+      } else {
+        console.log(`[DEV] Upserted ride summary`)
+      }
     }
 
     return NextResponse.json({
