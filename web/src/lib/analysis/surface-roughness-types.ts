@@ -6,9 +6,9 @@
 
 export interface SurfaceRoughnessSample {
   timestamp: string
-  roughness: number       // 0-1 normalized score
-  roughnessRms: number    // Raw RMS value in m/s²
-  speed: number | null    // From FIT, km/h
+  roughness: number | null  // 0-1 normalized score (null when not moving)
+  roughnessRms: number      // Raw RMS value in m/s²
+  speed: number | null      // From FIT, m/s
 }
 
 export interface SurfaceRoughnessMetadata {

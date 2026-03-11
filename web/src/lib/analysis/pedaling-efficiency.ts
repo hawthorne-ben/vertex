@@ -82,6 +82,12 @@ export interface PedalingEfficiencyInput {
     maxStabilityRms?: number
     maxStabilityRmsPerWatt?: number
     powerNormalize?: boolean
+    // Surface roughness
+    roughnessBaseCeiling?: number
+    roughnessReferenceSpeedMs?: number
+    roughnessSpeedExponent?: number
+    roughnessSmoothThreshold?: number
+    roughnessRoughThreshold?: number
   }
 }
 
@@ -266,7 +272,7 @@ export function calculatePedalingEfficiency(
     surgeRms: number | null
     grade: number | null
     // Roughness
-    roughness: number
+    roughness: number | null
     roughnessRms: number
     speed: number | null
   }
@@ -329,13 +335,17 @@ export function calculatePedalingEfficiency(
       weightedRms = result.weightedRms
     }
 
-    // Roughness (always active)
-    const accelXWindow = windowData.map(s => s.hpfAccelX)
-    const accelZWindow = windowData.map(s => s.hpfAccelZ)
-    const roughnessResult = calculateRoughness(accelXWindow, accelZWindow)
-
     // Speed: use center sample's speed
     const speed = centerSample.speed
+
+    // Roughness (only when moving, speed-normalized ceiling)
+    const accelXWindow = windowData.map(s => s.hpfAccelX)
+    const accelZWindow = windowData.map(s => s.hpfAccelZ)
+    const roughnessResult = calculateRoughness(accelXWindow, accelZWindow, speed, {
+      baseCeiling: options.roughnessBaseCeiling,
+      referenceSpeedMs: options.roughnessReferenceSpeedMs,
+      speedExponent: options.roughnessSpeedExponent,
+    })
 
     stftResults.push({
       centerIdx,
@@ -463,7 +473,10 @@ export function calculatePedalingEfficiency(
     outputRate
   )
 
-  const roughnessMetadata = calculateRoughnessMetadata(roughnessSamples, outputRate)
+  const roughnessMetadata = calculateRoughnessMetadata(roughnessSamples, outputRate, {
+    smoothThreshold: options.roughnessSmoothThreshold,
+    roughThreshold: options.roughnessRoughThreshold,
+  })
 
   return {
     efficiency: { samples: efficiencySamples, metadata: efficiencyMetadata },
@@ -487,7 +500,7 @@ interface InterpolatedResult {
   rollRms: number | null
   yawRms: number | null
   surgeRms: number | null
-  roughness: number
+  roughness: number | null
   roughnessRms: number
 }
 
@@ -510,7 +523,7 @@ function interpolateStftResult(
       rollRms: null,
       yawRms: null,
       surgeRms: null,
-      roughness: 0,
+      roughness: null,
       roughnessRms: 0,
     }
   }
@@ -543,6 +556,16 @@ function interpolateStftResult(
   // Linear interpolation factor
   const t = (sampleIdx - left.centerIdx) / (right.centerIdx - left.centerIdx)
 
+  // Roughness interpolation: only if both sides have values (both moving)
+  let roughness: number | null = null
+  if (left.roughness !== null && right.roughness !== null) {
+    roughness = lerp(left.roughness, right.roughness, t)
+  } else {
+    // Nearest-neighbor at moving/stopped boundary
+    roughness = (t < 0.5 ? left : right).roughness
+  }
+  const roughnessRms = lerp(left.roughnessRms, right.roughnessRms, t)
+
   // For stability: interpolate only if both sides are pedaling
   // If one side is not pedaling, use nearest-neighbor
   if (left.stability !== null && right.stability !== null) {
@@ -557,8 +580,8 @@ function interpolateStftResult(
       rollRms: lerp(left.rollRms!, right.rollRms!, t),
       yawRms: lerp(left.yawRms!, right.yawRms!, t),
       surgeRms: lerp(left.surgeRms!, right.surgeRms!, t),
-      roughness: lerp(left.roughness, right.roughness, t),
-      roughnessRms: lerp(left.roughnessRms, right.roughnessRms, t),
+      roughness,
+      roughnessRms,
     }
   }
 
@@ -566,8 +589,8 @@ function interpolateStftResult(
   const nearest = t < 0.5 ? left : right
   return {
     ...nearest,
-    roughness: lerp(left.roughness, right.roughness, t),
-    roughnessRms: lerp(left.roughnessRms, right.roughnessRms, t),
+    roughness,
+    roughnessRms,
   }
 }
 

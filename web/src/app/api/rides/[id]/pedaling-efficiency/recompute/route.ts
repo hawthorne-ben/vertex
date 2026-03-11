@@ -136,6 +136,7 @@ export async function POST(
           altitude: record.altitude ?? null,
           cadence: record.cadence ?? null,
           power: record.power ?? null,
+          speed: record.speed ? record.speed / 3.6 : null,  // km/h → m/s
         }))
 
         resolve(samples)
@@ -190,6 +191,7 @@ export async function POST(
     console.log(`[DEV] Avg stability: ${result.efficiency.metadata.avgStabilityPercent?.toFixed(1)}%`)
     console.log(`[DEV] Position: ${result.position.samples.length} samples`)
     console.log(`[DEV] Standing: ${result.position.metadata.standingPercent?.toFixed(1)}%, Seated: ${result.position.metadata.seatedPercent?.toFixed(1)}%`)
+    console.log(`[DEV] Roughness: ${result.roughness.samples.length} samples, avg ${result.roughness.metadata.avgRoughness?.toFixed(1)}%, smooth ${result.roughness.metadata.smoothSurfacePercent?.toFixed(1)}%, rough ${result.roughness.metadata.roughSurfacePercent?.toFixed(1)}%`)
 
     // Save to database if requested
     if (saveToDatabase) {

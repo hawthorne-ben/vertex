@@ -16,7 +16,7 @@
  * Version string for cache invalidation
  * Bump this when changing any constants or algorithm logic
  */
-export const ALGORITHM_VERSION = '6.2.0'  // Tuned: BPF low 0.3, stability ceiling 15, standing threshold 1.0
+export const ALGORITHM_VERSION = '6.4.0'  // Speed² roughness ceiling scaling
 
 // ============================================
 // WINDOWED RMS CONFIGURATION
@@ -118,20 +118,35 @@ export const POWER_NORMALIZE_STABILITY = false
 export const ROUGHNESS_HPF_CUTOFF_HZ = 0.5
 
 /**
- * Maximum expected RMS for normalization (m/s²)
- * roughness = min(1.0, rms / MAX_ROUGHNESS_RMS)
+ * Speed² roughness ceiling configuration
  *
- * Calibrate from real data:
- * - Smooth tarmac: ~0.5-1.0 m/s² RMS
- * - Rough chip-seal: ~2.0-3.0 m/s² RMS
- * - Gravel: ~4.0-5.0 m/s² RMS
+ * Vibration energy scales with speed², so ceiling = baseCeiling * (speed / refSpeed)².
+ * Same surface at any speed produces the same normalized roughness score.
+ *
+ * Reference speed: ~17 mph (7.5 m/s), midpoint of typical riding range.
+ * At 5 mph (0.44x ref): ceiling = 15 * 0.19 = 2.9 (very sensitive)
+ * At 30 mph (1.79x ref): ceiling = 15 * 3.2 = 48 (very forgiving)
  */
-export const MAX_ROUGHNESS_RMS = 5.0
+export const ROUGHNESS_BASE_CEILING = 50.0         // RMS ceiling at reference speed
+export const ROUGHNESS_REFERENCE_SPEED_MS = 6.0    // ~13 mph
+export const ROUGHNESS_SPEED_EXPONENT = 1.0        // Power law: 0.5=sqrt, 1.0=linear, 2.0=energy
 
 /**
  * Rolling window for roughness RMS calculation in seconds
  */
 export const ROUGHNESS_WINDOW_SECONDS = 3
+
+/**
+ * Roughness threshold for "smooth surface" classification
+ * Samples below this count toward smoothSurfacePercent
+ */
+export const ROUGHNESS_SMOOTH_THRESHOLD = 0.3
+
+/**
+ * Roughness threshold for "rough surface" classification
+ * Samples above this count toward roughSurfacePercent
+ */
+export const ROUGHNESS_ROUGH_THRESHOLD = 0.7
 
 // ============================================
 // TIME SYNCHRONIZATION

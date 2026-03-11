@@ -79,6 +79,9 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
           rollRmsThreshold: C.ROLL_RMS_STANDING_THRESHOLD,
           gyroWeight: C.POSITION_GYRO_WEIGHT,
           accelWeight: C.POSITION_ACCEL_WEIGHT,
+          roughnessBaseCeiling: C.ROUGHNESS_BASE_CEILING,
+          roughnessReferenceSpeedMs: C.ROUGHNESS_REFERENCE_SPEED_MS,
+          roughnessSpeedExponent: C.ROUGHNESS_SPEED_EXPONENT,
         }
 
         const { data: efficiencyAnalysis, error: efficiencyError } = await supabase
@@ -248,6 +251,7 @@ export const calculatePedalingEfficiencyJob = inngest.createFunction(
             altitude: r.enhanced_altitude ?? r.altitude ?? null,
             cadence: r.cadence ?? null,
             power: r.power ?? null,
+            speed: r.speed ? r.speed / 3.6 : null,  // km/h → m/s
           }))
           .filter((s: any) => s.timestamp)
 

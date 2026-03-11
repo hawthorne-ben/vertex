@@ -28,6 +28,11 @@ interface TuningParameters {
   powerNormalize: boolean
   // Surface roughness
   hpfCutoff: number
+  roughnessBaseCeiling: number
+  roughnessReferenceSpeedMs: number
+  roughnessSpeedExponent: number
+  roughnessSmoothThreshold: number
+  roughnessRoughThreshold: number
   // Riding position detection
   yAxisThreshold: number
   rollBpfLow: number
@@ -84,6 +89,11 @@ const DEFAULT_PARAMS: TuningParameters = {
   maxStabilityRmsPerWatt: CONSTANTS.MAX_STABILITY_RMS_PER_WATT,
   powerNormalize: CONSTANTS.POWER_NORMALIZE_STABILITY,
   hpfCutoff: CONSTANTS.ROUGHNESS_HPF_CUTOFF_HZ,
+  roughnessBaseCeiling: CONSTANTS.ROUGHNESS_BASE_CEILING,
+  roughnessReferenceSpeedMs: CONSTANTS.ROUGHNESS_REFERENCE_SPEED_MS,
+  roughnessSpeedExponent: CONSTANTS.ROUGHNESS_SPEED_EXPONENT,
+  roughnessSmoothThreshold: CONSTANTS.ROUGHNESS_SMOOTH_THRESHOLD,
+  roughnessRoughThreshold: CONSTANTS.ROUGHNESS_ROUGH_THRESHOLD,
   yAxisThreshold: CONSTANTS.Y_AXIS_STANDING_THRESHOLD,
   rollBpfLow: CONSTANTS.ROLL_BPF_LOW_HZ,
   rollBpfHigh: CONSTANTS.ROLL_BPF_HIGH_HZ,
@@ -131,6 +141,11 @@ export function EfficiencyTuningModal({
             maxStabilityRmsPerWatt: parameters.maxStabilityRmsPerWatt,
             powerNormalize: parameters.powerNormalize,
             hpfCutoff: parameters.hpfCutoff,
+            roughnessBaseCeiling: parameters.roughnessBaseCeiling,
+            roughnessReferenceSpeedMs: parameters.roughnessReferenceSpeedMs,
+            roughnessSpeedExponent: parameters.roughnessSpeedExponent,
+            roughnessSmoothThreshold: parameters.roughnessSmoothThreshold,
+            roughnessRoughThreshold: parameters.roughnessRoughThreshold,
             yAxisThreshold: parameters.yAxisThreshold,
             rollBpfLow: parameters.rollBpfLow,
             rollBpfHigh: parameters.rollBpfHigh,
@@ -298,7 +313,7 @@ export function EfficiencyTuningModal({
 
           {/* Surface Roughness */}
           <div className="space-y-4">
-            <h3 className="text-sm font-medium text-primary">Surface Roughness</h3>
+            <h3 className="text-sm font-medium text-primary">Surface Roughness (Speed-Normalized)</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <FormField
                 label="HPF Cutoff (Hz)"
@@ -306,6 +321,46 @@ export function EfficiencyTuningModal({
                 onChange={(v) => setParameters({ ...parameters, hpfCutoff: v })}
                 hint="Removes gravity from accel. Lower = more aggressive. Default: 0.5 Hz"
               />
+              <FormField
+                label="Base Ceiling (m/s²)"
+                value={parameters.roughnessBaseCeiling}
+                onChange={(v) => setParameters({ ...parameters, roughnessBaseCeiling: v })}
+                hint="RMS ceiling at reference speed. Default: 15.0"
+              />
+              <FormField
+                label="Reference Speed (m/s)"
+                value={parameters.roughnessReferenceSpeedMs}
+                onChange={(v) => setParameters({ ...parameters, roughnessReferenceSpeedMs: v })}
+                hint={`Speed where ceiling = base. ${(parameters.roughnessReferenceSpeedMs / 0.44704).toFixed(0)} mph. Default: 7.5 (~17 mph)`}
+              />
+              <FormField
+                label="Speed Exponent"
+                value={parameters.roughnessSpeedExponent}
+                onChange={(v) => setParameters({ ...parameters, roughnessSpeedExponent: v })}
+                hint="0.5 = sqrt, 1.0 = linear, 2.0 = energy. Default: 1.0"
+              />
+              <FormField
+                label="Smooth Threshold"
+                value={parameters.roughnessSmoothThreshold}
+                onChange={(v) => setParameters({ ...parameters, roughnessSmoothThreshold: v })}
+                hint="Below this = smooth surface (0-1 scale). Default: 0.3"
+              />
+              <FormField
+                label="Rough Threshold"
+                value={parameters.roughnessRoughThreshold}
+                onChange={(v) => setParameters({ ...parameters, roughnessRoughThreshold: v })}
+                hint="Above this = rough surface (0-1 scale). Default: 0.7"
+              />
+              <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg md:col-span-2">
+                <p className="text-xs text-blue-700 dark:text-blue-400">
+                  <strong>Speed-Scaled Roughness:</strong> ceiling = {parameters.roughnessBaseCeiling} × (speed / {parameters.roughnessReferenceSpeedMs})^{parameters.roughnessSpeedExponent}.
+                  At {(parameters.roughnessReferenceSpeedMs / 0.44704).toFixed(0)} mph: ceiling = {parameters.roughnessBaseCeiling.toFixed(1)}.
+                  At 5 mph: ceiling = {(parameters.roughnessBaseCeiling * Math.pow(2.24 / parameters.roughnessReferenceSpeedMs, parameters.roughnessSpeedExponent)).toFixed(1)}.
+                  At 30 mph: ceiling = {(parameters.roughnessBaseCeiling * Math.pow(13.41 / parameters.roughnessReferenceSpeedMs, parameters.roughnessSpeedExponent)).toFixed(1)}.
+                  Stopped → no roughness score.
+                  Smooth &lt; {parameters.roughnessSmoothThreshold}, Rough &gt; {parameters.roughnessRoughThreshold}.
+                </p>
+              </div>
             </div>
           </div>
 
