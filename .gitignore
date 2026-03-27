@@ -99,6 +99,7 @@ firmware/**/credentials.h
 # Recording data files
 *.zip
 *.vtx
+*.fit
 
 # Hardware assets (STL, etc.)
 assets/
