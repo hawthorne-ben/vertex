@@ -208,7 +208,7 @@ export function calculatePedalingEfficiency(
 
   const processedSamples: ProcessedSample[] = []
 
-  // Track last known FIT values (FIT is 1 Hz, VTX is 25+ Hz)
+  // Track last known FIT values (FIT is 1 Hz, VTX is 104 Hz)
   let lastKnownCadence: number | null = null
   let lastKnownSpeed: number | null = null
   let lastKnownPower: number | null = null
@@ -217,21 +217,25 @@ export function calculatePedalingEfficiency(
   let gradeBaseline: number | null = null
 
   synced.forEach((point, idx) => {
-    if (!point.vtx) return
+    // Update carried-forward FIT values from ANY point with FIT data
+    // (including FIT-only points where vtx is null)
+    if (point.fit) {
+      const fitCadence = (point.fit as any)?.cadence
+      if (fitCadence !== undefined && fitCadence !== null) {
+        lastKnownCadence = fitCadence
+      }
+      const fitSpeed = (point.fit as any)?.speed
+      if (fitSpeed !== undefined && fitSpeed !== null) {
+        lastKnownSpeed = fitSpeed
+      }
+      const fitPower = (point.fit as any)?.power
+      if (fitPower !== undefined && fitPower !== null) {
+        lastKnownPower = fitPower
+      }
+    }
 
-    // Update carried-forward FIT values
-    const fitCadence = (point.fit as any)?.cadence
-    if (fitCadence !== undefined && fitCadence !== null) {
-      lastKnownCadence = fitCadence
-    }
-    const fitSpeed = (point.fit as any)?.speed
-    if (fitSpeed !== undefined && fitSpeed !== null) {
-      lastKnownSpeed = fitSpeed
-    }
-    const fitPower = (point.fit as any)?.power
-    if (fitPower !== undefined && fitPower !== null) {
-      lastKnownPower = fitPower
-    }
+    // Skip points without VTX data (can't compute IMU metrics)
+    if (!point.vtx) return
 
     const cadence = point.fit ? ((point.fit as any)?.cadence ?? null) : lastKnownCadence
     const speed = point.fit ? ((point.fit as any)?.speed ?? null) : lastKnownSpeed
@@ -616,7 +620,7 @@ interface InterpolatedResult {
 }
 
 /**
- * Linearly interpolate window results (at ~2 Hz) to a specific sample index (25 Hz)
+ * Linearly interpolate window results (at ~2 Hz) to a specific sample index (104 Hz)
  */
 function interpolateWindowResult(
   windowResults: Array<{ centerIdx: number } & InterpolatedResult>,

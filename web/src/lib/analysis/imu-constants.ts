@@ -30,7 +30,7 @@ export const WINDOW_SECONDS = 3
 
 /**
  * Window hop size in seconds (advance rate)
- * 0.5s → 2 Hz output rate, linearly interpolated to 25 Hz for output
+ * 0.5s → 2 Hz output rate, linearly interpolated to 104 Hz for output
  */
 export const WINDOW_HOP_SECONDS = 0.5
 
@@ -186,7 +186,7 @@ export const DEBUG_WINDOW_SECONDS = 5
 
 /**
  * Default sample rate if detection fails (Hz)
- * Most VTX files are 25 Hz, FIT files are 1 Hz
+ * VTX files are 104 Hz (v2), FIT files are 1 Hz
  */
 export const DEFAULT_SAMPLE_RATE_HZ = 25
 

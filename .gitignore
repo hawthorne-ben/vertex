@@ -96,5 +96,9 @@ firmware/**/credentials.h
 *.tmp
 .aider*
 
+# Recording data files
+*.zip
+*.vtx
+
 # Hardware assets (STL, etc.)
 assets/
