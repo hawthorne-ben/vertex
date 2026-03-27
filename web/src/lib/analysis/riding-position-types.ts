@@ -9,7 +9,12 @@ export interface RidingPositionSample {
   position: 'standing' | 'seated' | null  // null when not pedaling
   rockingMagnitude: number  // Y-axis oscillation amplitude
   rollRms?: number  // Gyro-derived roll rate RMS (deg/s)
+  yawRms?: number   // Gyro-derived yaw rate RMS (deg/s)
   cadence: number | null  // RPM from FIT sensor
+  // Debug diagnostics (populated for debug endpoint, omitted in production DB storage)
+  accelScore?: number       // rockingMagnitude / yAxisThreshold (0-1 normalized)
+  gyroScore?: number        // rollWeight * (rollRms/rollThreshold) + yawWeight * (yawRms/yawThreshold)
+  combinedScore?: number    // weighted fusion score (>=1.0 = standing)
 }
 
 export interface RidingPositionMetadata {

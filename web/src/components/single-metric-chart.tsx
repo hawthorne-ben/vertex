@@ -71,16 +71,6 @@ export function SingleMetricChart({
 
     const axes: uPlot.Axis[] = [
       {
-        space: 50,
-        grid: { show: true, stroke: gridColor },
-        stroke: textColor,
-        ticks: { show: true, stroke: gridColor },
-        values: (u, vals) => vals.map(v => {
-          const date = new Date(v * 1000)
-          return `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}`
-        })
-      },
-      {
         scale: 'y',
         side: 3,
         grid: { show: true, stroke: gridColor },

@@ -224,6 +224,14 @@ const DeviceDetailV2Screen: React.FC = () => {
 
   const handleStartRecording = async () => {
     try {
+      // Always sync clock before recording to ensure accurate timestamps
+      try {
+        await BleService.syncClockV2();
+        if (isMountedRef.current) setClockSynced(true);
+      } catch {
+        // Non-fatal — proceed with recording even if sync fails
+        console.warn('[V2] Pre-record clock sync failed');
+      }
       await BleService.startRecordingV2();
       showToast({ message: 'Recording started', variant: 'success', duration: 2000 });
       const s = await BleService.getStatusV2();
@@ -596,12 +604,13 @@ const DeviceDetailV2Screen: React.FC = () => {
             </View>
           ) : (
             <View style={{ gap: 12 }}>
-              <Button
-                variant="primary"
+              <TouchableOpacity
+                style={[styles.recordButton, { backgroundColor: theme.colors.primary, opacity: status?.state === 'uploading' ? 0.5 : 1 }]}
                 onPress={handleStartRecording}
                 disabled={status?.state === 'uploading'}>
-                Start Recording
-              </Button>
+                <Text style={styles.recordButtonText}>Start Recording</Text>
+                <Clock size={14} color={clockSynced ? '#22c55e' : '#f59e0b'} />
+              </TouchableOpacity>
               <Button
                 variant="secondary"
                 onPress={handleStartSync}
@@ -612,46 +621,24 @@ const DeviceDetailV2Screen: React.FC = () => {
           )}
         </View>}
 
-        {/* Quick Actions + Inclinometer — side by side, only when connected */}
-        {isConnected && !showWifiModal && !isSyncing && (
-          <View style={styles.controlsRow}>
-            <View style={styles.controlsButtons}>
-              <TouchableOpacity
-                style={[styles.quickAction, { borderColor: theme.colors.border }]}
-                onPress={handleSyncClock}>
-                <Clock size={16} color={clockSynced ? theme.colors.success : theme.colors.warning} />
-                <Text style={[styles.quickActionText, { color: theme.colors.textSecondary }]}>
-                  {clockSynced ? 'Clock Synced' : 'Sync Clock'}
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.quickAction, { borderColor: theme.colors.border }]}
-                onPress={() => setShowWifiModal(true)}>
-                <Wifi size={16} color={theme.colors.textSecondary} />
-                <Text style={[styles.quickActionText, { color: theme.colors.textSecondary }]}>
-                  WiFi Setup
-                </Text>
-              </TouchableOpacity>
-            </View>
-            {status?.accel && (
-              <View style={styles.controlsInclinometer}>
-                <Inclinometer
-                  accelX={status.accel.x}
-                  accelY={status.accel.y}
-                  accelZ={status.accel.z}
-                  imuOk={status.imuOk}
-                  size={100}
-                  colors={{
-                    ring: theme.colors.border,
-                    dot: status.imuOk ? theme.colors.primary : theme.colors.error,
-                    crosshair: theme.colors.textTertiary,
-                    error: theme.colors.error,
-                    text: theme.colors.textPrimary,
-                    textSecondary: theme.colors.textTertiary,
-                  }}
-                />
-              </View>
-            )}
+        {/* Inclinometer — only when connected and has accel data */}
+        {isConnected && !showWifiModal && !isSyncing && status?.accel && (
+          <View style={styles.inclinometerRow}>
+            <Inclinometer
+              accelX={status.accel.x}
+              accelY={status.accel.y}
+              accelZ={status.accel.z}
+              imuOk={status.imuOk}
+              size={100}
+              colors={{
+                ring: theme.colors.border,
+                dot: status.imuOk ? theme.colors.primary : theme.colors.error,
+                crosshair: theme.colors.textTertiary,
+                error: theme.colors.error,
+                text: theme.colors.textPrimary,
+                textSecondary: theme.colors.textTertiary,
+              }}
+            />
           </View>
         )}
 
@@ -687,6 +674,28 @@ const DeviceDetailV2Screen: React.FC = () => {
               </Card>
             )}
           </>
+        )}
+
+        {/* Quick Actions — inline row below files */}
+        {isConnected && !showWifiModal && !isSyncing && (
+          <View style={styles.quickActionsRow}>
+            <TouchableOpacity
+              style={[styles.quickAction, { borderColor: theme.colors.border, flex: 1 }]}
+              onPress={handleSyncClock}>
+              <Clock size={16} color={clockSynced ? theme.colors.success : theme.colors.warning} />
+              <Text style={[styles.quickActionText, { color: theme.colors.textSecondary }]}>
+                {clockSynced ? 'Clock Synced' : 'Sync Clock'}
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.quickAction, { borderColor: theme.colors.border, flex: 1 }]}
+              onPress={() => setShowWifiModal(true)}>
+              <Wifi size={16} color={theme.colors.textSecondary} />
+              <Text style={[styles.quickActionText, { color: theme.colors.textSecondary }]}>
+                WiFi Setup
+              </Text>
+            </TouchableOpacity>
+          </View>
         )}
 
         {/* Secondary Actions */}
@@ -806,20 +815,28 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontFamily: staticTheme.typography.mono,
   },
-  controlsRow: {
-    flexDirection: 'row',
-    gap: 16,
+  inclinometerRow: {
+    alignItems: 'center',
     marginBottom: 24,
   },
-  controlsButtons: {
-    flex: 1,
+  quickActionsRow: {
+    flexDirection: 'row',
     gap: 8,
-    justifyContent: 'center',
+    marginTop: 16,
+    marginBottom: 8,
   },
-  controlsInclinometer: {
-    flex: 1,
+  recordButton: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 12,
+  },
+  recordButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
   quickAction: {
     flexDirection: 'row',

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuth } from '@/lib/api/auth'
-import { calculatePedalingEfficiency } from '@/lib/analysis/pedaling-efficiency'
+import { calculatePedalingEfficiency } from '@/lib/analysis/ride-imu-analysis'
 
 export const dynamic = 'force-dynamic'
 
@@ -124,7 +124,7 @@ export async function GET(
     const fitSamplesUrl = new URL(`${request.url.split('/pedaling-efficiency')[0]}/samples`, request.url)
     fitSamplesUrl.searchParams.set('start', startTime)
     fitSamplesUrl.searchParams.set('end', endTime)
-    fitSamplesUrl.searchParams.set('fields', 'grade,altitude,cadence')
+    fitSamplesUrl.searchParams.set('fields', 'grade,altitude,cadence,speed,power')
 
     const fitResponse = await fetch(fitSamplesUrl, {
       headers: { 'Authorization': request.headers.get('authorization')! }
@@ -140,7 +140,7 @@ export async function GET(
     const vtxSamplesUrl = new URL(`${request.url.split('/pedaling-efficiency')[0]}/vtx-samples`, request.url)
     vtxSamplesUrl.searchParams.set('start', startTime)
     vtxSamplesUrl.searchParams.set('end', endTime)
-    vtxSamplesUrl.searchParams.set('fields', 'accel')
+    vtxSamplesUrl.searchParams.set('fields', 'accel,gyro')
     vtxSamplesUrl.searchParams.set('downsample', 'none')
 
     const vtxResponse = await fetch(vtxSamplesUrl, {
@@ -160,13 +160,21 @@ export async function GET(
       )
     }
 
-    // Transform VTX samples
+    // Transform VTX samples (include gyro for position detection)
     const allVtxSamples = vtxSamples.map((s: any) => ({
       timestamp: s.timestamp,
       accel_x: s.accel?.x ?? 0,
       accel_y: s.accel?.y ?? 0,
-      accel_z: s.accel?.z ?? 0
+      accel_z: s.accel?.z ?? 0,
+      gyro_x: s.gyro?.x ?? undefined,
+      gyro_z: s.gyro?.z ?? undefined,
     }))
+
+    // Parse optional tuning parameters from query string
+    const getFloat = (key: string) => {
+      const v = searchParams.get(key)
+      return v ? parseFloat(v) : undefined
+    }
 
     // Run analysis with debug enabled
     const result = calculatePedalingEfficiency({
@@ -175,12 +183,43 @@ export async function GET(
         timestamp: s.timestamp,
         grade: s.grade,
         altitude: s.altitude,
-        cadence: s.cadence ?? null
+        cadence: s.cadence ?? null,
+        speed: s.speed ?? null,
+        power: s.power ?? null,
       })),
       options: {
         windowSize,
         hpfCutoff,
-        includeDebug: true
+        includeDebug: true,
+        // Position detection
+        positionWindowSeconds: getFloat('position_window_seconds'),
+        yAxisThreshold: getFloat('y_axis_threshold'),
+        rollBpfLow: getFloat('roll_bpf_low'),
+        rollBpfHigh: getFloat('roll_bpf_high'),
+        rollRmsThreshold: getFloat('roll_rms_threshold'),
+        yawBpfLow: getFloat('yaw_bpf_low'),
+        yawBpfHigh: getFloat('yaw_bpf_high'),
+        yawRmsThreshold: getFloat('yaw_rms_threshold'),
+        gyroWeight: getFloat('gyro_weight'),
+        accelWeight: getFloat('accel_weight'),
+        positionRollWeight: getFloat('position_roll_weight'),
+        positionYawWeight: getFloat('position_yaw_weight'),
+        // Stability
+        stabilityBpfLow: getFloat('stability_bpf_low'),
+        stabilityBpfHigh: getFloat('stability_bpf_high'),
+        stabilityRollWeight: getFloat('stability_roll_weight'),
+        stabilityYawWeight: getFloat('stability_yaw_weight'),
+        stabilitySurgeWeight: getFloat('stability_surge_weight'),
+        maxStabilityRms: getFloat('max_stability_rms'),
+        // Braking
+        brakingLpfHz: getFloat('braking_lpf_hz'),
+        brakingGradeWindowSeconds: getFloat('braking_grade_window_seconds'),
+        brakingThresholdMs2: getFloat('braking_threshold_ms2'),
+        brakingMaxMs2: getFloat('braking_max_ms2'),
+        // Roughness
+        roughnessBaseCeiling: getFloat('roughness_base_ceiling'),
+        roughnessReferenceSpeedMs: getFloat('roughness_reference_speed_ms'),
+        roughnessSpeedExponent: getFloat('roughness_speed_exponent'),
       }
     })
 
@@ -197,10 +236,11 @@ export async function GET(
         sampleCount: result.efficiency.samples.length,
         sampleRate: result.efficiency.metadata.sampleRate
       },
-      samples: result.efficiency.samples,  // Full efficiency sample data
+      samples: result.efficiency.samples,
       metadata: result.efficiency.metadata,
       position: {
-        samples: result.position.samples,
+        samples: result.position.samples,       // 1 Hz downsampled (majority vote)
+        rawSamples: result.position.rawSamples,  // 5 Hz with accelScore/gyroScore/combinedScore
         metadata: result.position.metadata
       },
       rawInputs: {

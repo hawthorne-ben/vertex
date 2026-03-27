@@ -80,67 +80,9 @@ const hasGpsGap = (point1: GPSPoint, point2: GPSPoint): boolean => {
   return timeDiff > 10000
 }
 
-// Helper: Map stability value (0-100%) to gradient matching the chart
-// Green (70%+) → Yellow/Orange (40-69%) → Red (0-39%)
-const getStabilityColor = (stability: number): string => {
-  if (stability >= 70) {
-    return '#22c55e' // Green - hsl(145, 70%, 50%)
-  } else if (stability >= 65) {
-    return '#4ade80' // Light green
-  } else if (stability >= 60) {
-    return '#84cc16' // Lime
-  } else if (stability >= 55) {
-    return '#eab308' // Yellow
-  } else if (stability >= 50) {
-    return '#f59e0b' // Amber
-  } else if (stability >= 45) {
-    return '#f97316' // Orange
-  } else if (stability >= 40) {
-    return '#fb923c' // Light orange
-  } else if (stability >= 35) {
-    return '#ef4444' // Red
-  } else {
-    return '#dc2626' // Dark red
-  }
-}
-
-// Helper: Map roughness value (0-100%) to gradient
-// Inverted from stability: low roughness (smooth) = green, high roughness (rough) = red
-const getRoughnessColor = (roughness: number): string => {
-  if (roughness <= 10) {
-    return '#22c55e' // Green - very smooth
-  } else if (roughness <= 20) {
-    return '#4ade80' // Light green
-  } else if (roughness <= 30) {
-    return '#84cc16' // Lime
-  } else if (roughness <= 40) {
-    return '#eab308' // Yellow
-  } else if (roughness <= 50) {
-    return '#f59e0b' // Amber
-  } else if (roughness <= 60) {
-    return '#f97316' // Orange
-  } else if (roughness <= 70) {
-    return '#fb923c' // Light orange
-  } else if (roughness <= 85) {
-    return '#ef4444' // Red
-  } else {
-    return '#dc2626' // Dark red - very rough
-  }
-}
-
-// Helper: Map riding position to color
-// Green = Seated, Red = Standing
-const getPositionColor = (position: 'standing' | 'seated' | null): string | null => {
-  if (position === 'seated') {
-    return '#22c55e' // Green - hsl(145, 70%, 50%)
-  } else if (position === 'standing') {
-    return '#ef4444' // Red - Tailwind red-500
-  }
-  return null // No pedaling
-}
 
 // Helper: Build stability lookup map (O(1) lookups instead of O(n) linear search)
-const buildStabilityMap = (samples: EfficiencySample[]): Map<number, number> => {
+const buildStabilityMap = (samples: Array<{ timestamp: string; value: number | null }>): Map<number, number> => {
   const map = new Map<number, number>()
 
   for (const sample of samples) {
@@ -180,46 +122,6 @@ const getStabilityFromMap = (
   return null
 }
 
-// Helper: Build position lookup map (O(1) lookups)
-const buildPositionMap = (samples: PositionSample[]): Map<number, 'standing' | 'seated' | null> => {
-  const map = new Map<number, 'standing' | 'seated' | null>()
-
-  for (const sample of samples) {
-    const timestamp = new Date(sample.timestamp).getTime()
-    // Only store non-null positions (filter out "not pedaling" samples)
-    if (sample.position !== null) {
-      const bucket = Math.round(timestamp / 1000) * 1000
-      map.set(bucket, sample.position)
-    }
-  }
-
-  return map
-}
-
-// Helper: Find position using pre-built map
-const getPositionFromMap = (
-  targetTime: number,
-  positionMap: Map<number, 'standing' | 'seated' | null>,
-  maxWindowMs: number = 1000
-): 'standing' | 'seated' | null => {
-  // Try exact second match first
-  const targetBucket = Math.round(targetTime / 1000) * 1000
-  if (positionMap.has(targetBucket)) {
-    return positionMap.get(targetBucket)!
-  }
-
-  // Try adjacent seconds
-  for (let offset = 1000; offset <= maxWindowMs; offset += 1000) {
-    if (positionMap.has(targetBucket + offset)) {
-      return positionMap.get(targetBucket + offset)!
-    }
-    if (positionMap.has(targetBucket - offset)) {
-      return positionMap.get(targetBucket - offset)!
-    }
-  }
-
-  return null
-}
 
 // Helper: Build overlay segments from GPS track and color lookup function
 // This unified function handles both efficiency and position overlays
@@ -300,21 +202,10 @@ interface IMUTimeRange {
   end: number // Unix timestamp in ms
 }
 
-interface EfficiencySample {
-  timestamp: string
-  value: number
-}
-
-interface PositionSample {
-  timestamp: string
-  position: 'standing' | 'seated' | null
-  rockingMagnitude: number
-  cadence: number | null
-}
-
-interface RoughnessSample {
-  timestamp: string
-  value: number
+/** Generic analytics overlay: samples with a numeric value + a color function */
+export interface AnalyticsOverlay {
+  samples: Array<{ timestamp: string; value: number | null }>
+  getColor: (value: number) => string | null
 }
 
 export interface FitStatsSample {
@@ -394,9 +285,7 @@ interface RideMapProps {
   className?: string
   imuTimeRanges?: IMUTimeRange[] // Time ranges where IMU data exists
   imuColor?: string // Color for IMU coverage overlay (default: green)
-  efficiencySamples?: EfficiencySample[] // Pedaling efficiency samples for heatmap overlay
-  positionSamples?: PositionSample[] // Riding position samples for heatmap overlay
-  roughnessSamples?: RoughnessSample[] // Surface roughness samples for heatmap overlay
+  analyticsOverlay?: AnalyticsOverlay // Generic analytics overlay (stability, roughness, braking, position, etc.)
   fitStatsSamples?: FitStatsSample[] // FIT stats samples for metric overlay
   fitStatsMetric?: FitStatsMetric // Which FIT metric to overlay
   onZoomChange?: (zoom: number) => void
@@ -437,9 +326,7 @@ const RoutePolylines = memo(function RoutePolylines({
   imuTimeRanges,
   defaultColor,
   imuColor,
-  efficiencySamples,
-  positionSamples,
-  roughnessSamples,
+  analyticsOverlay,
   fitStatsSamples,
   fitStatsMetric
 }: {
@@ -447,9 +334,7 @@ const RoutePolylines = memo(function RoutePolylines({
   imuTimeRanges: IMUTimeRange[]
   defaultColor: string
   imuColor: string
-  efficiencySamples?: EfficiencySample[]
-  positionSamples?: PositionSample[]
-  roughnessSamples?: RoughnessSample[]
+  analyticsOverlay?: AnalyticsOverlay
   fitStatsSamples?: FitStatsSample[]
   fitStatsMetric?: FitStatsMetric
 }) {
@@ -480,63 +365,19 @@ const RoutePolylines = memo(function RoutePolylines({
       baseSegs.push({ positions: currentBase, color: defaultColor })
     }
 
-    // Mode 1: Efficiency overlay - show full route + colored efficiency segments
-    if (efficiencySamples && efficiencySamples.length > 0) {
-      // Build stability lookup map once (O(n) instead of O(n²))
-      const stabilityMap = buildStabilityMap(efficiencySamples)
-
-      // Use shared overlay builder
-      const { segments: overlays, matchedCount, totalCount } = buildOverlaySegments(
-        gpsTrack,
-        (point) => {
-          const pointTime = new Date(point.timestamp!).getTime()
-          const stability = getStabilityFromMap(pointTime, stabilityMap, 1000)
-          return stability !== null ? getStabilityColor(stability) : null
-        },
-        'StabilityOverlay'
-      )
-
-      return {
-        baseSegments: baseSegs,
-        overlaySegments: overlays
-      }
-    }
-
-    // Mode 2: Position overlay - show full route + colored position segments (green=seated, orange=standing)
-    if (positionSamples && positionSamples.length > 0) {
-      // Build position lookup map once (O(n) instead of O(n²))
-      const positionMap = buildPositionMap(positionSamples)
-
-      // Use shared overlay builder
-      const { segments: overlays, matchedCount, totalCount } = buildOverlaySegments(
-        gpsTrack,
-        (point) => {
-          const pointTime = new Date(point.timestamp!).getTime()
-          const position = getPositionFromMap(pointTime, positionMap, 1000)
-          return position ? getPositionColor(position) : null
-        },
-        'PositionOverlay'
-      )
-
-      return {
-        baseSegments: baseSegs,
-        overlaySegments: overlays
-      }
-    }
-
-    // Mode 3: Roughness overlay - green (smooth) → red (rough)
-    if (roughnessSamples && roughnessSamples.length > 0) {
-      // Reuse same { timestamp, value } map structure
-      const roughnessMap = buildStabilityMap(roughnessSamples)
+    // Analytics overlay — generic for any metric (stability, roughness, braking, position, etc.)
+    if (analyticsOverlay && analyticsOverlay.samples.length > 0) {
+      const valueMap = buildStabilityMap(analyticsOverlay.samples as Array<{ timestamp: string; value: number }>)
+      const colorFn = analyticsOverlay.getColor
 
       const { segments: overlays } = buildOverlaySegments(
         gpsTrack,
         (point) => {
           const pointTime = new Date(point.timestamp!).getTime()
-          const roughness = getStabilityFromMap(pointTime, roughnessMap, 1000)
-          return roughness !== null ? getRoughnessColor(roughness) : null
+          const value = getStabilityFromMap(pointTime, valueMap, 1000)
+          return value !== null ? colorFn(value) : null
         },
-        'RoughnessOverlay'
+        'AnalyticsOverlay'
       )
 
       return {
@@ -545,7 +386,7 @@ const RoutePolylines = memo(function RoutePolylines({
       }
     }
 
-    // Mode 4: FIT stats overlay - percentile-based green→red gradient
+    // FIT stats overlay - percentile-based green→red gradient
     if (fitStatsSamples && fitStatsSamples.length > 0 && fitStatsMetric) {
       const statsMap = buildFitStatsMap(fitStatsSamples, fitStatsMetric)
       const allValues = Array.from(statsMap.values())
@@ -613,7 +454,7 @@ const RoutePolylines = memo(function RoutePolylines({
       baseSegments: baseSegs,
       overlaySegments: []
     }
-  }, [gpsTrack, imuTimeRanges, efficiencySamples, positionSamples, roughnessSamples, fitStatsSamples, fitStatsMetric, defaultColor, imuColor])
+  }, [gpsTrack, imuTimeRanges, analyticsOverlay, fitStatsSamples, fitStatsMetric, defaultColor, imuColor])
 
   return (
     <>
@@ -654,9 +495,7 @@ export function RideMap({
   className = '',
   imuTimeRanges = [],
   imuColor: imuColorProp,
-  efficiencySamples,
-  positionSamples,
-  roughnessSamples,
+  analyticsOverlay,
   fitStatsSamples,
   fitStatsMetric,
   onZoomChange
@@ -794,9 +633,7 @@ export function RideMap({
           imuTimeRanges={imuTimeRanges}
           defaultColor={defaultRouteColor}
           imuColor={imuRouteColor}
-          efficiencySamples={efficiencySamples}
-          positionSamples={positionSamples}
-          roughnessSamples={roughnessSamples}
+          analyticsOverlay={analyticsOverlay}
           fitStatsSamples={fitStatsSamples}
           fitStatsMetric={fitStatsMetric}
         />

@@ -40,6 +40,7 @@ export async function POST(request: NextRequest) {
     const timestamp = Date.now()
     const storagePath = `${userId}/${timestamp}_${filename}`
 
+    // Supabase signed upload URLs expire after 2 hours (server default, not configurable via JS SDK)
     const { data, error } = await supabase.storage
       .from('recordings')
       .createSignedUploadUrl(storagePath, { upsert: true })

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { X, Settings, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react'
 import { useAuthFetch } from '@/hooks/useAuthFetch'
 import { apiCache } from '@/lib/cache/api-cache'
-import * as CONSTANTS from '@/lib/analysis/pedaling-efficiency-constants'
+import * as CONSTANTS from '@/lib/analysis/imu-constants'
 
 interface EfficiencyTuningModalProps {
   isOpen: boolean
@@ -33,13 +33,24 @@ interface TuningParameters {
   roughnessSpeedExponent: number
   roughnessSmoothThreshold: number
   roughnessRoughThreshold: number
+  // Braking detection
+  brakingLpfHz: number
+  brakingGradeWindowSeconds: number
+  brakingThresholdMs2: number
+  brakingMaxMs2: number
   // Riding position detection
+  positionWindowSeconds: number
   yAxisThreshold: number
   rollBpfLow: number
   rollBpfHigh: number
   rollRmsThreshold: number
+  yawBpfLow: number
+  yawBpfHigh: number
+  yawRmsThreshold: number
   gyroWeight: number
   accelWeight: number
+  positionRollWeight: number
+  positionYawWeight: number
 }
 
 interface RecomputeResult {
@@ -73,6 +84,16 @@ interface RecomputeResult {
     }
     sampleCount: number
   }
+  braking: {
+    metadata: {
+      totalBrakingEvents: number
+      totalBrakingSeconds: number
+      avgBrakingIntensity: number
+      maxBrakingIntensity: number
+      brakingPercent: number
+    }
+    sampleCount: number
+  }
   computeTime: number
 }
 
@@ -84,7 +105,7 @@ const DEFAULT_PARAMS: TuningParameters = {
   stabilitySurgeWeight: CONSTANTS.STABILITY_SURGE_WEIGHT,
   stableThreshold: CONSTANTS.STABLE_THRESHOLD,
   unstableThreshold: CONSTANTS.UNSTABLE_THRESHOLD,
-  windowSize: CONSTANTS.STFT_WINDOW_SECONDS,
+  windowSize: CONSTANTS.WINDOW_SECONDS,
   maxStabilityRms: CONSTANTS.MAX_STABILITY_RMS,
   maxStabilityRmsPerWatt: CONSTANTS.MAX_STABILITY_RMS_PER_WATT,
   powerNormalize: CONSTANTS.POWER_NORMALIZE_STABILITY,
@@ -94,12 +115,22 @@ const DEFAULT_PARAMS: TuningParameters = {
   roughnessSpeedExponent: CONSTANTS.ROUGHNESS_SPEED_EXPONENT,
   roughnessSmoothThreshold: CONSTANTS.ROUGHNESS_SMOOTH_THRESHOLD,
   roughnessRoughThreshold: CONSTANTS.ROUGHNESS_ROUGH_THRESHOLD,
+  brakingLpfHz: CONSTANTS.BRAKING_LPF_HZ,
+  brakingGradeWindowSeconds: CONSTANTS.BRAKING_GRADE_WINDOW_SECONDS,
+  brakingThresholdMs2: CONSTANTS.BRAKING_THRESHOLD_MS2,
+  brakingMaxMs2: CONSTANTS.BRAKING_MAX_MS2,
+  positionWindowSeconds: CONSTANTS.POSITION_WINDOW_SECONDS,
   yAxisThreshold: CONSTANTS.Y_AXIS_STANDING_THRESHOLD,
   rollBpfLow: CONSTANTS.ROLL_BPF_LOW_HZ,
   rollBpfHigh: CONSTANTS.ROLL_BPF_HIGH_HZ,
   rollRmsThreshold: CONSTANTS.ROLL_RMS_STANDING_THRESHOLD,
+  yawBpfLow: CONSTANTS.YAW_BPF_LOW_HZ,
+  yawBpfHigh: CONSTANTS.YAW_BPF_HIGH_HZ,
+  yawRmsThreshold: CONSTANTS.YAW_RMS_STANDING_THRESHOLD,
   gyroWeight: CONSTANTS.POSITION_GYRO_WEIGHT,
   accelWeight: CONSTANTS.POSITION_ACCEL_WEIGHT,
+  positionRollWeight: CONSTANTS.POSITION_ROLL_WEIGHT,
+  positionYawWeight: CONSTANTS.POSITION_YAW_WEIGHT,
 }
 
 export function EfficiencyTuningModal({
@@ -146,12 +177,22 @@ export function EfficiencyTuningModal({
             roughnessSpeedExponent: parameters.roughnessSpeedExponent,
             roughnessSmoothThreshold: parameters.roughnessSmoothThreshold,
             roughnessRoughThreshold: parameters.roughnessRoughThreshold,
+            brakingLpfHz: parameters.brakingLpfHz,
+            brakingGradeWindowSeconds: parameters.brakingGradeWindowSeconds,
+            brakingThresholdMs2: parameters.brakingThresholdMs2,
+            brakingMaxMs2: parameters.brakingMaxMs2,
+            positionWindowSeconds: parameters.positionWindowSeconds,
             yAxisThreshold: parameters.yAxisThreshold,
             rollBpfLow: parameters.rollBpfLow,
             rollBpfHigh: parameters.rollBpfHigh,
             rollRmsThreshold: parameters.rollRmsThreshold,
+            yawBpfLow: parameters.yawBpfLow,
+            yawBpfHigh: parameters.yawBpfHigh,
+            yawRmsThreshold: parameters.yawRmsThreshold,
             gyroWeight: parameters.gyroWeight,
             accelWeight: parameters.accelWeight,
+            positionRollWeight: parameters.positionRollWeight,
+            positionYawWeight: parameters.positionYawWeight,
           },
           saveToDatabase,
         }),
@@ -365,8 +406,51 @@ export function EfficiencyTuningModal({
           </div>
 
           <div className="space-y-4">
+            <h3 className="text-sm font-medium text-primary">Braking Detection</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField
+                label="Noise LPF (Hz)"
+                value={parameters.brakingLpfHz}
+                onChange={(v) => setParameters({ ...parameters, brakingLpfHz: v })}
+                hint="Smooths accel before pitch calc. Lower = smoother. Default: 2.0"
+              />
+              <FormField
+                label="Grade Window (s)"
+                value={parameters.brakingGradeWindowSeconds}
+                onChange={(v) => setParameters({ ...parameters, brakingGradeWindowSeconds: v })}
+                hint="Rolling avg for grade baseline. Longer = more stable. Default: 10"
+              />
+              <FormField
+                label="Threshold (m/s²)"
+                value={parameters.brakingThresholdMs2}
+                onChange={(v) => setParameters({ ...parameters, brakingThresholdMs2: v })}
+                hint="Min deceleration to register as braking. Default: 0.8"
+              />
+              <FormField
+                label="Max Deceleration (m/s²)"
+                value={parameters.brakingMaxMs2}
+                onChange={(v) => setParameters({ ...parameters, brakingMaxMs2: v })}
+                hint="Ceiling for 0-100 scaling. ~0.6g = pitch-over limit. Default: 6.0"
+              />
+              <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg md:col-span-2">
+                <p className="text-xs text-blue-700 dark:text-blue-400">
+                  <strong>Braking Detection:</strong> LPF accel → pitch → long rolling avg = grade baseline →
+                  deviation from baseline = braking. Peak deceleration per 3s window, scaled 0-100.
+                  Grade changes slowly (10s+), braking is fast (&lt;5s) — separated by frequency.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="space-y-4">
             <h3 className="text-sm font-medium text-primary">Riding Position Detection</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <FormField
+                label="Position Window (seconds)"
+                value={parameters.positionWindowSeconds}
+                onChange={(v) => setParameters({ ...parameters, positionWindowSeconds: v })}
+                hint="Sliding window for position detection. Shorter = more responsive. Default: 3s"
+              />
               <FormField
                 label="Y-Axis Standing Threshold (m/s²)"
                 value={parameters.yAxisThreshold}
@@ -389,13 +473,31 @@ export function EfficiencyTuningModal({
                 label="Roll RMS Threshold (deg/s)"
                 value={parameters.rollRmsThreshold}
                 onChange={(v) => setParameters({ ...parameters, rollRmsThreshold: v })}
-                hint="Gyro roll rate RMS threshold for standing. 2.5 = default"
+                hint="Gyro roll rate RMS threshold for standing. 6 = default"
+              />
+              <FormField
+                label="Yaw BPF Low Hz"
+                value={parameters.yawBpfLow}
+                onChange={(v) => setParameters({ ...parameters, yawBpfLow: v })}
+                hint="High-pass cutoff for gyro yaw (gyro-z). Same band as roll by default"
+              />
+              <FormField
+                label="Yaw BPF High Hz"
+                value={parameters.yawBpfHigh}
+                onChange={(v) => setParameters({ ...parameters, yawBpfHigh: v })}
+                hint="Low-pass cutoff for gyro yaw. Rejects road vibration above cadence"
+              />
+              <FormField
+                label="Yaw RMS Threshold (deg/s)"
+                value={parameters.yawRmsThreshold}
+                onChange={(v) => setParameters({ ...parameters, yawRmsThreshold: v })}
+                hint="Gyro yaw rate RMS threshold for standing. 6 = default"
               />
               <FormField
                 label="Gyro Weight"
                 value={parameters.gyroWeight}
                 onChange={(v) => setParameters({ ...parameters, gyroWeight: v })}
-                hint="Weight for gyro roll signal (0 = disabled, 1 = gyro only)"
+                hint="Weight for combined gyro signal (0 = disabled, 1 = gyro only)"
               />
               <FormField
                 label="Accel Weight"
@@ -403,11 +505,23 @@ export function EfficiencyTuningModal({
                 onChange={(v) => setParameters({ ...parameters, accelWeight: v })}
                 hint="Weight for accel Y-axis signal (0 = disabled, 1 = accel only)"
               />
+              <FormField
+                label="Roll Weight (within gyro)"
+                value={parameters.positionRollWeight}
+                onChange={(v) => setParameters({ ...parameters, positionRollWeight: v })}
+                hint="Roll's share of gyro score. Roll + Yaw should = 1.0"
+              />
+              <FormField
+                label="Yaw Weight (within gyro)"
+                value={parameters.positionYawWeight}
+                onChange={(v) => setParameters({ ...parameters, positionYawWeight: v })}
+                hint="Yaw's share of gyro score. Roll + Yaw should = 1.0"
+              />
               <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg md:col-span-2">
                 <p className="text-xs text-blue-700 dark:text-blue-400">
-                  <strong>Weighted Fusion:</strong> Each signal is normalized to 0–1 against its threshold,
-                  then combined: score = accelWeight × (yStdDev/yThreshold) + gyroWeight × (rollRms/rollThreshold).
-                  Standing if score ≥ 1.0. Set gyroWeight=0 for accel-only (v3 behavior).
+                  <strong>Weighted Fusion:</strong> gyroScore = rollWeight × (rollRms/rollThreshold) + yawWeight × (yawRms/yawThreshold).
+                  Combined: score = accelWeight × (yStdDev/yThreshold) + gyroWeight × gyroScore.
+                  Standing if score ≥ 1.0. Set gyroWeight=0 for accel-only.
                 </p>
               </div>
             </div>
@@ -420,7 +534,7 @@ export function EfficiencyTuningModal({
               <InfoField label="Cadence Source" value="FIT sensor (cadence > 0 = pedaling)" />
               <InfoField label="Algorithm Version" value={CONSTANTS.ALGORITHM_VERSION} />
               <InfoField label="Method" value="Time-domain RMS of BPF'd signal" />
-              <InfoField label="Output Rate" value={`${(1 / CONSTANTS.STFT_HOP_SECONDS).toFixed(0)} Hz (interpolated to 25 Hz)`} />
+              <InfoField label="Output Rate" value={`${(1 / CONSTANTS.WINDOW_HOP_SECONDS).toFixed(0)} Hz (interpolated to 25 Hz)`} />
             </div>
           </div>
 
@@ -466,6 +580,18 @@ export function EfficiencyTuningModal({
                       <div>Smooth Surface: <span className="text-primary font-medium">{result.roughness.metadata.smoothSurfacePercent.toFixed(1)}%</span></div>
                       <div>Rough Surface: <span className="text-primary font-medium">{result.roughness.metadata.roughSurfacePercent.toFixed(1)}%</span></div>
                       <div className="col-span-2">Sample Count: <span className="text-primary font-medium">{result.roughness.sampleCount.toLocaleString()}</span></div>
+                    </div>
+                  </div>
+
+                  {/* Braking Results */}
+                  <div className="pt-3 border-t border-green-500/20">
+                    <p className="font-medium text-primary mb-2">Braking Detection</p>
+                    <div className="grid grid-cols-2 gap-2 text-secondary">
+                      <div>Braking Events: <span className="text-primary font-medium">{result.braking.metadata.totalBrakingEvents}</span></div>
+                      <div>Time Braking: <span className="text-primary font-medium">{result.braking.metadata.brakingPercent.toFixed(1)}%</span></div>
+                      <div>Avg Intensity: <span className="text-primary font-medium">{result.braking.metadata.avgBrakingIntensity.toFixed(0)}/100</span></div>
+                      <div>Max Intensity: <span className="text-primary font-medium">{result.braking.metadata.maxBrakingIntensity.toFixed(0)}/100</span></div>
+                      <div className="col-span-2">Sample Count: <span className="text-primary font-medium">{result.braking.sampleCount.toLocaleString()}</span></div>
                     </div>
                   </div>
 

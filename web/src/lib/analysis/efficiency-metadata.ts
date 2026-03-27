@@ -9,7 +9,7 @@
  * existing API consumers and database schema.
  */
 
-import * as CONSTANTS from './pedaling-efficiency-constants'
+import * as CONSTANTS from './imu-constants'
 
 // ============================================
 // TYPE DEFINITIONS

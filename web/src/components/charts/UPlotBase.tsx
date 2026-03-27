@@ -287,12 +287,18 @@ export function UPlotBase({
       plugins.push(zoomPlugin)
     }
 
+    // Always use the themed x-axis (first entry in defaultAxes).
+    // Custom axes provide only y-axes; we prepend the themed x-axis.
+    const resolvedAxes = axes
+      ? [defaultAxes[0], ...axes]
+      : defaultAxes
+
     const opts: uPlot.Options = {
       width: chartRef.current.clientWidth,
       height,
       series,
       scales: scales,
-      axes: axes || defaultAxes,
+      axes: resolvedAxes,
       legend: { show: false },
       cursor: {
         drag: { x: !!onZoom, y: false },

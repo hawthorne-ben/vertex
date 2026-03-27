@@ -10,7 +10,7 @@
  * No speed (stopped) → null roughness (like stability with no cadence).
  */
 
-import * as C from './pedaling-efficiency-constants'
+import * as C from './imu-constants'
 import type { SurfaceRoughnessSample, SurfaceRoughnessMetadata } from './surface-roughness-types'
 
 export interface RoughnessSpeedConfig {

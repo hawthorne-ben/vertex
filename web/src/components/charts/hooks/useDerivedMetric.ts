@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useAuthFetch } from '@/hooks/useAuthFetch'
 import { apiCache } from '@/lib/cache/api-cache'
 
-export type DerivedMetricType = 'pedalingEfficiency' | 'ridingPosition' | 'surfaceRoughness'
+export type DerivedMetricType = 'pedalingEfficiency' | 'ridingPosition' | 'surfaceRoughness' | 'braking'
 
 export interface DerivedMetricSample {
   timestamp: string
@@ -24,7 +24,7 @@ export interface UseDerivedMetricResult {
   loading: boolean
   polling: boolean  // True only when waiting for inngest job (not normal fetches)
   error: string | null
-  metadata: PedalingEfficiencyMetadata | RidingPositionMetadata | SurfaceRoughnessMetadata | null
+  metadata: PedalingEfficiencyMetadata | RidingPositionMetadata | SurfaceRoughnessMetadata | BrakingMetadata | null
 }
 
 // API Response types
@@ -56,6 +56,17 @@ interface SurfaceRoughnessMetadata {
   maxRoughness: number
   smoothSurfacePercent: number
   roughSurfacePercent: number
+  totalSamples: number
+  sampleRate: number | null
+}
+
+interface BrakingMetadata {
+  totalBrakingEvents: number
+  totalBrakingSeconds: number
+  avgBrakingIntensity: number
+  maxBrakingIntensity: number
+  maxBrakingDecelerationMs2: number
+  brakingPercent: number
   totalSamples: number
   sampleRate: number | null
 }
@@ -167,6 +178,23 @@ export function useDerivedMetric({
             url = `/api/rides/${rideId}/surface-roughness${roughParams.toString() ? `?${roughParams}` : ''}`
             break
 
+          case 'braking':
+            if (!fitRecordingId) {
+              throw new Error('Braking analysis requires GPS data from FIT file')
+            }
+
+            const brakingParams = new URLSearchParams()
+            if (timeRange) {
+              brakingParams.set('start', timeRange.start)
+              brakingParams.set('end', timeRange.end)
+            }
+            if (resolution !== undefined) {
+              brakingParams.set('resolution', resolution.toString())
+            }
+
+            url = `/api/rides/${rideId}/braking${brakingParams.toString() ? `?${brakingParams}` : ''}`
+            break
+
           default:
             throw new Error(`Unknown metric: ${metric}`)
         }
@@ -209,6 +237,8 @@ export function useDerivedMetric({
             value = s.position === 'standing' ? 1 : s.position === 'seated' ? 0 : null
           } else if (metric === 'surfaceRoughness') {
             value = s.roughness !== null && s.roughness !== undefined ? s.roughness * 100 : null
+          } else if (metric === 'braking') {
+            value = s.brakingIntensity ?? null
           }
 
           return {

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuth } from '@/lib/api/auth'
-import { calculatePedalingEfficiency } from '@/lib/analysis/pedaling-efficiency'
-import { ALGORITHM_VERSION } from '@/lib/analysis/pedaling-efficiency-constants'
+import { calculatePedalingEfficiency } from '@/lib/analysis/ride-imu-analysis'
+import { ALGORITHM_VERSION } from '@/lib/analysis/imu-constants'
 import { VTXDecoder } from '@vertex-pkg/vtx-parser'
 import FitParser from 'fit-file-parser'
 
@@ -192,6 +192,7 @@ export async function POST(
     console.log(`[DEV] Position: ${result.position.samples.length} samples`)
     console.log(`[DEV] Standing: ${result.position.metadata.standingPercent?.toFixed(1)}%, Seated: ${result.position.metadata.seatedPercent?.toFixed(1)}%`)
     console.log(`[DEV] Roughness: ${result.roughness.samples.length} samples, avg ${result.roughness.metadata.avgRoughness?.toFixed(1)}%, smooth ${result.roughness.metadata.smoothSurfacePercent?.toFixed(1)}%, rough ${result.roughness.metadata.roughSurfacePercent?.toFixed(1)}%`)
+    console.log(`[DEV] Braking: ${result.braking.samples.length} samples, ${result.braking.metadata.totalBrakingEvents} events, ${result.braking.metadata.brakingPercent?.toFixed(1)}% time, max intensity ${result.braking.metadata.maxBrakingIntensity?.toFixed(0)}`)
 
     // Save to database if requested
     if (saveToDatabase) {
@@ -269,7 +270,31 @@ export async function POST(
         throw new Error(`Failed to save roughness analysis: ${roughnessError.message}`)
       }
 
-      console.log(`[DEV] Saved all three analyses to database`)
+      // Save braking analysis
+      const { error: brakingError } = await supabase
+        .from('ride_analysis')
+        .upsert(
+          {
+            ride_id: rideId,
+            analysis_type: 'braking',
+            status: 'completed',
+            algorithm_version: ALGORITHM_VERSION,
+            parameters,
+            samples: result.braking.samples,
+            metadata: result.braking.metadata,
+            started_at: now,
+            completed_at: now,
+          },
+          {
+            onConflict: 'ride_id,analysis_type',
+          }
+        )
+
+      if (brakingError) {
+        throw new Error(`Failed to save braking analysis: ${brakingError.message}`)
+      }
+
+      console.log(`[DEV] Saved all four analyses to database`)
 
       // Upsert ride_summaries (same as inngest job)
       const { data: fitRec } = await supabase
@@ -315,10 +340,17 @@ export async function POST(
         smooth_surface_percent: result.roughness.metadata.smoothSurfacePercent ?? null,
         rough_surface_percent: result.roughness.metadata.roughSurfacePercent ?? null,
 
+        // IMU-derived: Braking
+        total_braking_events: result.braking.metadata.totalBrakingEvents ?? null,
+        braking_percent: result.braking.metadata.brakingPercent ?? null,
+        avg_braking_intensity: result.braking.metadata.avgBrakingIntensity ?? null,
+        max_braking_intensity: result.braking.metadata.maxBrakingIntensity ?? null,
+
         // Algorithm versions
         efficiency_version: ALGORITHM_VERSION,
         position_version: ALGORITHM_VERSION,
         roughness_version: ALGORITHM_VERSION,
+        braking_version: ALGORITHM_VERSION,
         computed_at: now,
       }
 
@@ -349,6 +381,10 @@ export async function POST(
       roughness: {
         metadata: result.roughness.metadata,
         sampleCount: result.roughness.samples.length,
+      },
+      braking: {
+        metadata: result.braking.metadata,
+        sampleCount: result.braking.samples.length,
       },
       parameters: {
         ...parameters,

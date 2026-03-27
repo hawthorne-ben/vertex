@@ -3,7 +3,7 @@
 import { useMemo, useState, useEffect, useRef } from 'react'
 import dynamic from 'next/dynamic'
 import { findClosestByTime } from '@/lib/sync/fit-vtx-sync'
-import type { FitStatsSample, FitStatsMetric } from './ride-map'
+import type { FitStatsSample, FitStatsMetric, AnalyticsOverlay } from './ride-map'
 
 // Dynamically import map to avoid SSR issues with Leaflet
 const RideMap = dynamic(
@@ -24,39 +24,18 @@ interface Sample {
   speed_ms?: number | null
 }
 
-interface EfficiencySample {
-  timestamp: string
-  value: number
-}
-
-interface PositionSample {
-  timestamp: string
-  position: 'standing' | 'seated' | null
-  rockingMagnitude: number
-  cadence: number | null
-}
-
-interface RoughnessSample {
-  timestamp: string
-  value: number
-}
-
 interface RideMapClientProps {
   rideId: string
   fitRecordingId: string | null
-  highlightTime?: number | null // Unix timestamp in seconds to highlight
-  imuTimeRanges?: IMUTimeRange[] // Time ranges where IMU data exists
-  imuColor?: string // Color for IMU coverage overlay
+  highlightTime?: number | null
+  imuTimeRanges?: IMUTimeRange[]
+  imuColor?: string
   samples: Sample[]
   loading: boolean
   error: string | null
-  mapMode?: 'route' | 'vtx' | 'efficiency' | 'pedalingEfficiency' | 'ridingPosition' | 'surfaceRoughness' | 'fitStats'
-  efficiencySamples?: EfficiencySample[] // Pedaling efficiency data for heatmap
-  efficiencyLoading?: boolean // Loading state for efficiency data
-  positionSamples?: PositionSample[] // Riding position data for heatmap
-  positionLoading?: boolean // Loading state for position data
-  roughnessSamples?: RoughnessSample[] // Surface roughness data for heatmap
-  roughnessLoading?: boolean // Loading state for roughness data
+  mapMode?: string
+  analyticsOverlay?: AnalyticsOverlay
+  analyticsLoading?: boolean
   fitStatsSamples?: FitStatsSample[]
   fitStatsMetric?: FitStatsMetric
   onZoomChange?: (zoom: number) => void
@@ -71,12 +50,8 @@ export function RideMapClient({
   loading,
   error,
   mapMode = 'vtx',
-  efficiencySamples = [],
-  efficiencyLoading = false,
-  positionSamples = [],
-  positionLoading = false,
-  roughnessSamples = [],
-  roughnessLoading = false,
+  analyticsOverlay,
+  analyticsLoading = false,
   fitStatsSamples,
   fitStatsMetric,
   imuColor,
@@ -93,31 +68,24 @@ export function RideMapClient({
         altitude: s.altitude,
         speed: s.speed_ms,
         timestamp: s.timestamp,
-        // Pre-calculate converted values for popup efficiency
         speedMph: s.speed_ms ? s.speed_ms * 2.23694 : undefined,
         altitudeFt: s.altitude ? s.altitude * 3.28084 : undefined,
       }))
   }, [samples])
 
-  // Convert highlightTime to GPS track index (using shared sync library)
+  // Convert highlightTime to GPS track index
   const highlightIndex = useMemo(() => {
     if (highlightTime === null || highlightTime === undefined || gpsTrack.length === 0) {
       return null
     }
-
     const result = findClosestByTime(gpsTrack, highlightTime)
     return result?.index ?? null
   }, [highlightTime, gpsTrack])
 
-  // Overlay data is still loading (GPS track already available, route mode has no overlay)
-  const isOverlayLoading = !loading && gpsTrack.length > 0 && mapMode !== 'route' && (
-    ((mapMode === 'efficiency' || mapMode === 'pedalingEfficiency') && efficiencyLoading) ||
-    (mapMode === 'ridingPosition' && positionLoading) ||
-    (mapMode === 'surfaceRoughness' && roughnessLoading)
-  )
+  // Overlay data is still loading
+  const isOverlayLoading = !loading && gpsTrack.length > 0 && mapMode !== 'route' && analyticsLoading
 
   // Tab-switch blur transition — snap on instantly, fade out over 200ms
-  // Defer data swap until overlay is opaque so the map doesn't flash new data first
   const [showTransition, setShowTransition] = useState(false)
   const prevOverlayKey = useRef(`${mapMode}:${imuColor}`)
   const [deferredMode, setDeferredMode] = useState(mapMode)
@@ -128,7 +96,6 @@ export function RideMapClient({
     if (prevOverlayKey.current !== key) {
       prevOverlayKey.current = key
       setShowTransition(true)
-      // Swap underlying data after one frame (overlay is already opaque)
       requestAnimationFrame(() => {
         setDeferredMode(mapMode)
         setDeferredImuColor(imuColor)
@@ -140,7 +107,6 @@ export function RideMapClient({
 
   const showOverlay = isOverlayLoading || showTransition
 
-  // Initial GPS data still loading — nothing to show yet
   if (loading) {
     return (
       <div className="h-[400px] bg-muted rounded-lg map-shadow flex items-center justify-center">
@@ -171,9 +137,7 @@ export function RideMapClient({
         className="w-full"
         imuTimeRanges={deferredMode === 'vtx' ? imuTimeRanges : []}
         imuColor={deferredMode === 'route' ? undefined : deferredImuColor}
-        efficiencySamples={!isOverlayLoading && (deferredMode === 'efficiency' || deferredMode === 'pedalingEfficiency') ? efficiencySamples : undefined}
-        positionSamples={!isOverlayLoading && deferredMode === 'ridingPosition' ? positionSamples : undefined}
-        roughnessSamples={!isOverlayLoading && deferredMode === 'surfaceRoughness' ? roughnessSamples : undefined}
+        analyticsOverlay={!isOverlayLoading && analyticsOverlay && analyticsOverlay.samples.length > 0 ? analyticsOverlay : undefined}
         fitStatsSamples={deferredMode === 'fitStats' ? fitStatsSamples : undefined}
         fitStatsMetric={deferredMode === 'fitStats' ? fitStatsMetric : undefined}
         onZoomChange={onZoomChange}

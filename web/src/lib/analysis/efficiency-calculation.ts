@@ -14,7 +14,7 @@
  * stability = max(0, 1 - weightedRms / MAX_STABILITY_RMS)
  */
 
-import * as C from './pedaling-efficiency-constants'
+import * as C from './imu-constants'
 
 /**
  * Per-axis RMS result

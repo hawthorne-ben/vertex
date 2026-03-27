@@ -436,7 +436,6 @@ export function buildPositionChartConfig(
   }
 
   const axes: uPlot.Axis[] = [
-    { space: 80 },
     {
       side: 3,
       size: 70,
@@ -549,6 +548,141 @@ export function buildRoughnessChartConfig(
   }] : []
 
   return { data, series, scales, stats }
+}
+
+/**
+ * Build chart config for braking analysis.
+ * Two series: Estimated Grade (%) and Braking Intensity (0-100).
+ */
+export function buildBrakingChartConfig(
+  samples: Array<{ timestamp: string; value: number | null; estimatedGradePercent?: number; brakingDecelerationMs2?: number }>,
+  zoomRange?: { start: string; end: string } | null
+): ChartConfig {
+  if (samples.length === 0) {
+    return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
+  }
+
+  // Filter to zoom range
+  const filtered = zoomRange
+    ? samples.filter(s => {
+        const t = new Date(s.timestamp).getTime()
+        return t >= new Date(zoomRange.start).getTime() && t <= new Date(zoomRange.end).getTime()
+      })
+    : samples
+
+  if (filtered.length === 0) {
+    return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
+  }
+
+  const GAP_THRESHOLD_MS = 10000
+  const samplesWithGaps = insertGaps(filtered, GAP_THRESHOLD_MS)
+  const { timestamps, samples: final } = samplesToUPlotData(samplesWithGaps)
+
+  const data: uPlot.AlignedData = [
+    timestamps,
+    final.map(s => s?.estimatedGradePercent ?? null),
+    final.map(s => s?.brakingDecelerationMs2 ?? null),
+  ]
+
+  const series: uPlot.Series[] = [
+    {},
+    {
+      label: 'Grade',
+      stroke: 'hsl(220, 60%, 55%)',
+      width: 1.5,
+      scale: 'grade',
+      spanGaps: false,
+      points: { show: false },
+    },
+    {
+      label: 'Braking Force',
+      stroke: 'hsl(0, 84%, 60%)',
+      fill: 'hsla(0, 84%, 60%, 0.12)',
+      width: 2,
+      scale: 'braking',
+      spanGaps: false,
+      points: { show: false },
+    },
+  ]
+
+  const scales: Record<string, uPlot.Scale> = {
+    x: {
+      ...(zoomRange ? {
+        range: [new Date(zoomRange.start).getTime() / 1000, new Date(zoomRange.end).getTime() / 1000]
+      } : {})
+    },
+    grade: {
+      auto: true,
+      range: (u, dataMin, dataMax) => {
+        const padding = (dataMax - dataMin) * 0.15
+        return [dataMin - padding, dataMax + padding]
+      },
+    },
+    braking: {
+      auto: true,
+      range: (u, dataMin, dataMax) => {
+        return [0, Math.max(dataMax * 1.1, 1)]
+      },
+    },
+  }
+
+  const axes: uPlot.Axis[] = [
+    {
+      scale: 'grade',
+      side: 3,
+      size: 60,
+      values: (u, vals) => vals.map(v => `${v.toFixed(0)}%`),
+      stroke: 'hsl(220, 60%, 55%)',
+      grid: { show: true },
+    },
+    {
+      scale: 'braking',
+      side: 1,
+      size: 60,
+      values: (u, vals) => vals.map(v => `${v.toFixed(1)}`),
+      stroke: 'hsl(0, 84%, 60%)',
+      grid: { show: false },
+    },
+  ]
+
+  // Compute stats
+  const gradeValues = filtered.map(s => s.estimatedGradePercent).filter((v): v is number => v != null)
+  const brakingValues = filtered.map(s => s.brakingDecelerationMs2).filter((v): v is number => v != null && v > 0)
+
+  let gradeMax = -Infinity, gradeMin = Infinity, gradeSum = 0
+  for (const v of gradeValues) {
+    if (v > gradeMax) gradeMax = v
+    if (v < gradeMin) gradeMin = v
+    gradeSum += v
+  }
+
+  let brakingMax = -Infinity, brakingSum = 0
+  for (const v of brakingValues) {
+    if (v > brakingMax) brakingMax = v
+    brakingSum += v
+  }
+
+  const stats: ChartStat[] = []
+  if (gradeValues.length > 0) {
+    stats.push({
+      label: 'Grade',
+      color: 'hsl(220, 60%, 55%)',
+      avg: gradeSum / gradeValues.length,
+      max: gradeMax,
+      unit: '%',
+    })
+  }
+  if (brakingValues.length > 0) {
+    stats.push({
+      label: 'Braking',
+      color: 'hsl(0, 84%, 60%)',
+      avg: brakingSum / brakingValues.length,
+      max: brakingMax,
+      unit: ' m/s²',
+    })
+  }
+
+  return { data, series, scales, axes, stats }
 }
 
 /**
