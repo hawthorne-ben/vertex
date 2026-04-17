@@ -133,7 +133,8 @@ export async function POST(
         const samples = records.map((record: any) => ({
           timestamp: record.timestamp,
           grade: record.grade ?? null,
-          altitude: record.altitude ?? null,
+          altitude: record.enhanced_altitude ?? record.altitude ?? null,
+          distance: record.distance ?? null,
           cadence: record.cadence ?? null,
           power: record.power ?? null,
           speed: record.speed ? record.speed / 3.6 : null,  // km/h → m/s
@@ -168,6 +169,7 @@ export async function POST(
         accel_y: record.accelY,
         accel_z: record.accelZ,
         gyro_x: record.gyroX,
+        gyro_y: record.gyroY,
         gyro_z: record.gyroZ,
       })
     }

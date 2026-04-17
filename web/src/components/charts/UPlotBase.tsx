@@ -56,37 +56,28 @@ export function UPlotBase({
     time: string
     values: Array<{ label: string; color: string; value: string }>
   } | null>(null)
-  const [hiddenSeries, setHiddenSeries] = useState<Set<number>>(new Set())
+  // Track hidden series by LABEL, not index. Chart builders sometimes collapse
+  // to a single empty series during transient empty data (zoom/scrub edges) and
+  // then re-expand. Indexing by label means visibility persists across those
+  // collapses regardless of how the series array changes shape.
+  const [hiddenSeriesLabels, setHiddenSeriesLabels] = useState<Set<string>>(new Set())
 
-  // Keep ref in sync with prop
-  useEffect(() => {
-    highlightTimeRef.current = highlightTime ?? null
-  }, [highlightTime])
+  // Mirror prop into ref during render so the draw plugin always sees the
+  // latest value (matches the seriesRef/dataRef pattern below).
+  highlightTimeRef.current = highlightTime ?? null
 
-  // Reset hidden series when series config changes (labels identify the series)
-  const seriesKey = series.map(s => typeof s.label === 'string' ? s.label : '').join(',')
-  useEffect(() => {
-    setHiddenSeries(new Set())
-    // Re-show all series in the uPlot instance
-    if (uplotRef.current) {
-      for (let i = 1; i < uplotRef.current.series.length; i++) {
-        uplotRef.current.setSeries(i, { show: true })
-      }
-    }
-  }, [seriesKey])
-
-  // Toggle series visibility
-  const toggleSeries = useCallback((seriesIndex: number) => {
-    setHiddenSeries(prev => {
+  // Toggle series visibility by label
+  const toggleSeriesByLabel = useCallback((label: string, seriesIndex: number) => {
+    setHiddenSeriesLabels(prev => {
       const next = new Set(prev)
-      if (next.has(seriesIndex)) {
-        next.delete(seriesIndex)
+      if (next.has(label)) {
+        next.delete(label)
       } else {
-        next.add(seriesIndex)
+        next.add(label)
       }
       // Update uPlot series visibility
       if (uplotRef.current) {
-        const show = !next.has(seriesIndex)
+        const show = !next.has(label)
         uplotRef.current.setSeries(seriesIndex, { show })
       }
       return next
@@ -230,7 +221,14 @@ export function UPlotBase({
     if (!chartRef.current) return
     if (!data || data.length === 0 || !data[0] || data[0].length === 0) return
 
-    // Check if series configuration changed
+    // Check if series configuration changed.
+    // We only consider it a "real" change if the new series array is non-trivial
+    // (more than just the time placeholder). A collapse to series=[{}] during
+    // transient empty data is NOT a meaningful change — it's just the chart
+    // builder's empty-state placeholder. Ignoring it lets us preserve the
+    // existing chart instance and visibility state through zoom/scrub.
+    if (series.length <= 1) return
+
     let seriesChanged = !uplotRef.current
 
     if (uplotRef.current) {
@@ -308,6 +306,16 @@ export function UPlotBase({
 
     // Create new chart
     uplotRef.current = new uPlot(opts, data, chartRef.current)
+
+    // Re-apply any persisted hidden labels to the freshly-created chart so a
+    // legitimate chart-type swap (e.g. accel → gyro) starts clean while a
+    // recreate driven by something else preserves the user's visibility choices.
+    for (let i = 1; i < uplotRef.current.series.length; i++) {
+      const label = uplotRef.current.series[i].label
+      if (typeof label === 'string' && hiddenSeriesLabels.has(label)) {
+        uplotRef.current.setSeries(i, { show: false })
+      }
+    }
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series, axes, scales, height, onZoom])
@@ -397,13 +405,12 @@ export function UPlotBase({
     return () => el.removeEventListener('mouseleave', handleLeave)
   }, [])
 
-  if (!data || data.length === 0 || !data[0] || data[0].length === 0) {
-    return (
-      <div className={`h-[${height}px] bg-muted rounded-lg flex items-center justify-center ${className}`}>
-        <p className="text-muted-foreground">No data available</p>
-      </div>
-    )
-  }
+  // Note: we intentionally do NOT early-return on empty data. Returning a
+  // different JSX tree would unmount the chart container, orphan the uPlot
+  // instance, and reset legend state (hiddenSeries) on every transient empty
+  // frame during zoom/scrub. Instead we always render the chart container and
+  // overlay an empty-state message when there's nothing to plot.
+  const hasData = !!(data && data.length > 0 && data[0] && data[0].length > 0)
 
   return (
     <div className={className}>
@@ -412,7 +419,15 @@ export function UPlotBase({
           {title} {unit && <span className="text-sm text-muted-foreground">({unit})</span>}
         </h3>
       )}
-      <div ref={chartRef} className="w-full relative">
+      <div ref={chartRef} className="w-full relative" style={{ minHeight: height }}>
+        {!hasData && (
+          <div
+            className="absolute inset-0 bg-muted rounded-lg flex items-center justify-center pointer-events-none"
+            style={{ height }}
+          >
+            <p className="text-muted-foreground">No data available</p>
+          </div>
+        )}
         {/* Cursor tooltip */}
         {tooltipData && (
           <div
@@ -440,17 +455,24 @@ export function UPlotBase({
         )}
       </div>
 
-      {/* Static stats bar — click to toggle series visibility */}
+      {/* Static stats bar — click to toggle series visibility.
+          We resolve the uPlot series index by LABEL each render, because the
+          stats array can be shorter than the series array (e.g. braking chart
+          conditionally omits stats whose values are absent in the visible
+          window). Indexing by stat position would point at the wrong series. */}
       {stats && stats.length > 0 && (
         <div className="flex flex-wrap justify-around gap-y-1 mt-2 text-sm text-muted-foreground">
-          {stats.map((s, i) => {
-            const seriesIdx = i + 1 // series[0] is time axis
-            const isHidden = hiddenSeries.has(seriesIdx)
+          {stats.map((s) => {
+            // Find the series whose label matches this stat. series[0] is the
+            // time axis placeholder; data series start at index 1.
+            const seriesIdx = series.findIndex(srs => srs.label === s.label)
+            if (seriesIdx < 1) return null  // No matching series — skip rendering
+            const isHidden = hiddenSeriesLabels.has(s.label)
             return (
               <button
-                key={i}
+                key={s.label}
                 type="button"
-                onClick={() => stats.length > 1 && toggleSeries(seriesIdx)}
+                onClick={() => stats.length > 1 && toggleSeriesByLabel(s.label, seriesIdx)}
                 className={`flex items-center gap-1.5 transition-opacity ${
                   stats.length > 1 ? 'cursor-pointer hover:opacity-80' : ''
                 } ${isHidden ? 'opacity-40' : ''}`}

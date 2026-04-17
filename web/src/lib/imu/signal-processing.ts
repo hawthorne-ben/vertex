@@ -181,6 +181,83 @@ export class Butterworth2ndOrder {
 }
 
 /**
+ * Zero-phase forward-backward Butterworth filter (filtfilt).
+ * Runs a 2nd-order Butterworth forward then backward over a pre-collected array,
+ * cancelling phase lag entirely. Only usable for offline/post-processing.
+ *
+ * Equivalent to scipy.signal.filtfilt with a 2nd-order Butterworth.
+ */
+export function filtfilt(
+  data: number[],
+  cutoffFreq: number,
+  sampleRate: number,
+): number[] {
+  if (data.length === 0) return []
+
+  const forward = new Butterworth2ndOrder(cutoffFreq, sampleRate)
+  const backward = new Butterworth2ndOrder(cutoffFreq, sampleRate)
+
+  // Forward pass — seed filter state with first sample to reduce transient
+  forward.reset()
+  forward['x1'] = data[0]
+  forward['x2'] = data[0]
+  forward['y1'] = data[0]
+  forward['y2'] = data[0]
+
+  const fwd = new Array<number>(data.length)
+  for (let i = 0; i < data.length; i++) {
+    fwd[i] = forward.update(data[i])
+  }
+
+  // Backward pass over forward-filtered result
+  backward.reset()
+  backward['x1'] = fwd[fwd.length - 1]
+  backward['x2'] = fwd[fwd.length - 1]
+  backward['y1'] = fwd[fwd.length - 1]
+  backward['y2'] = fwd[fwd.length - 1]
+
+  const result = new Array<number>(data.length)
+  for (let i = data.length - 1; i >= 0; i--) {
+    result[i] = backward.update(fwd[i])
+  }
+
+  return result
+}
+
+/**
+ * Zero-phase forward-backward EMA filter.
+ * Like filtfilt but using the simpler EMA low-pass. Useful for slow-varying
+ * signals like grade baseline where Butterworth sharpness isn't needed.
+ */
+export function filtfiltEma(
+  data: number[],
+  cutoffFreq: number,
+  sampleRate: number,
+): number[] {
+  if (data.length === 0) return []
+
+  const dt = 1.0 / sampleRate
+  const RC = 1.0 / (2.0 * Math.PI * cutoffFreq)
+  const alpha = dt / (RC + dt)
+
+  // Forward pass
+  const fwd = new Array<number>(data.length)
+  fwd[0] = data[0]
+  for (let i = 1; i < data.length; i++) {
+    fwd[i] = alpha * data[i] + (1 - alpha) * fwd[i - 1]
+  }
+
+  // Backward pass
+  const result = new Array<number>(data.length)
+  result[data.length - 1] = fwd[data.length - 1]
+  for (let i = data.length - 2; i >= 0; i--) {
+    result[i] = alpha * fwd[i] + (1 - alpha) * result[i + 1]
+  }
+
+  return result
+}
+
+/**
  * 3-axis Butterworth filter for vector data
  */
 export class VectorButterworthFilter {

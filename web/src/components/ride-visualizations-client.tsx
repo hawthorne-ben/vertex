@@ -640,7 +640,11 @@ export function RideVisualizationsClient({
                 <p className="text-destructive">{chartError}</p>
               </div>
             )}
-            {!chartError && chartConfig && chartConfig.data[0].length > 0 && (
+            {/* Always render UPlotBase when we have a config, even if data is
+                transiently empty during zoom/scrub. UPlotBase handles empty-data
+                state internally as an overlay so the chart container stays
+                mounted and legend visibility state survives transitions. */}
+            {!chartError && chartConfig && (
               <UPlotBase
                 data={chartConfig.data}
                 series={chartConfig.series}
@@ -651,7 +655,7 @@ export function RideVisualizationsClient({
                 stats={chartConfig.stats}
               />
             )}
-            {!chartLoading && !chartError && (!chartConfig || chartConfig.data[0].length === 0) && (
+            {!chartLoading && !chartError && !chartConfig && (
               <div className="h-[400px] flex items-center justify-center">
                 <p className="text-muted-foreground">No data available</p>
               </div>

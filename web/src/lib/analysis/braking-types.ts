@@ -10,6 +10,7 @@ export interface BrakingSample {
   brakingIntensity: number        // 0-100 scale
   brakingDecelerationMs2: number  // peak deceleration in window (m/s²)
   estimatedGradePercent: number   // IMU-derived grade from pitch baseline
+  fitGradePercent: number | null  // FIT grade (independent reference, lags by ~5-10s)
 }
 
 export interface BrakingMetadata {

@@ -21,6 +21,7 @@ interface FitSample {
   cadence: number | null
   temperature: number | null
   grade: number | null
+  distance: number | null
 }
 
 /**
@@ -190,6 +191,7 @@ export async function GET(
     const needsCadence = !requestedFields || requestedFields.includes('cadence')
     const needsTemp = !requestedFields || requestedFields.includes('temperature')
     const needsGrade = !requestedFields || requestedFields.includes('grade')
+    const needsDistance = !requestedFields || requestedFields.includes('distance')
 
     // Convert records to standardized format (only extract requested fields)
     const samples: FitSample[] = records.map((record: any, index: number, allRecords: any[]) => {
@@ -238,7 +240,8 @@ export async function GET(
         heart_rate: needsHR ? (record.heart_rate || null) : null,
         cadence: needsCadence ? (record.cadence || null) : null,
         temperature: needsTemp ? (record.temperature || null) : null,
-        grade: needsGrade ? (record.grade || null) : null,
+        grade: needsGrade ? (record.grade ?? null) : null,
+        distance: needsDistance ? (record.distance ?? null) : null,
       }
     }).filter((s: FitSample) => s.timestamp !== null)
 

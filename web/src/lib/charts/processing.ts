@@ -38,56 +38,42 @@ export interface ChartConfig {
 }
 
 /**
- * Detect gaps in time series data
- * Inserts null values where gaps exceed threshold
+ * Filter samples by zoom range, insert gaps, and convert to uPlot timestamps
+ * — all in a single pass with one Date parse per sample. Returns parallel
+ * arrays: filtered samples (with nulls for gap markers) and uPlot timestamps
+ * in seconds.
  */
-export function insertGaps<T extends { timestamp: string }>(
+export function filterAndGapSamples<T extends { timestamp: string }>(
   samples: T[],
-  gapThresholdMs: number = 10000
-): (T | null)[] {
-  if (samples.length === 0) return []
+  zoomRange?: { start: string; end: string } | null,
+  gapThresholdMs: number = 10000,
+): { timestamps: number[]; samples: (T | null)[] } {
+  if (samples.length === 0) return { timestamps: [], samples: [] }
 
-  const result: (T | null)[] = []
+  const startMs = zoomRange ? new Date(zoomRange.start).getTime() : -Infinity
+  const endMs = zoomRange ? new Date(zoomRange.end).getTime() : Infinity
+
+  const out: (T | null)[] = []
+  const timestamps: number[] = []
+  let lastKeptMs = -Infinity
 
   for (let i = 0; i < samples.length; i++) {
-    result.push(samples[i])
+    const ms = new Date(samples[i].timestamp).getTime()
+    if (ms < startMs || ms > endMs) continue
 
-    if (i < samples.length - 1) {
-      const currentTime = new Date(samples[i].timestamp).getTime()
-      const nextTime = new Date(samples[i + 1].timestamp).getTime()
-      const gap = nextTime - currentTime
-
-      if (gap > gapThresholdMs) {
-        result.push(null)
-      }
-    }
-  }
-
-  return result
-}
-
-/**
- * Convert samples with gaps to uPlot format
- * Handles null values by inserting tiny timestamp offsets
- */
-export function samplesToUPlotData<T extends { timestamp: string }>(
-  samplesWithGaps: (T | null)[]
-): { timestamps: number[]; samples: (T | null)[] } {
-  const timestamps: number[] = []
-  const samples: (T | null)[] = []
-
-  for (const sample of samplesWithGaps) {
-    if (sample) {
-      timestamps.push(new Date(sample.timestamp).getTime() / 1000)
-      samples.push(sample)
-    } else if (timestamps.length > 0) {
-      // Insert tiny timestamp gap to maintain alignment
+    // Insert gap marker if there's a jump from the previous kept sample.
+    // The tiny +0.001 keeps uPlot's x-axis monotonic across the null break.
+    if (lastKeptMs !== -Infinity && ms - lastKeptMs > gapThresholdMs) {
+      out.push(null)
       timestamps.push(timestamps[timestamps.length - 1] + 0.001)
-      samples.push(null)
     }
+
+    out.push(samples[i])
+    timestamps.push(ms / 1000)
+    lastKeptMs = ms
   }
 
-  return { timestamps, samples }
+  return { timestamps, samples: out }
 }
 
 /**
@@ -108,18 +94,15 @@ export function processIMUChartData(
     }
   }
 
-  // Calculate gap threshold
+  // Calculate gap threshold from sample density (parse first/last only)
   const firstTime = new Date(samples[0].timestamp).getTime()
   const lastTime = new Date(samples[samples.length - 1].timestamp).getTime()
   const totalDuration = lastTime - firstTime
   const expectedSpacing = totalDuration / samples.length
   const GAP_THRESHOLD_MS = Math.max(5000, expectedSpacing * 10)
 
-  // Insert gaps
-  const samplesWithGaps = insertGaps(samples, GAP_THRESHOLD_MS)
-
-  // Convert to uPlot format
-  const { timestamps, samples: finalSamples } = samplesToUPlotData(samplesWithGaps)
+  // Single-pass filter (no-op if zoomRange is null) + gap detection + uPlot conversion
+  const { timestamps, samples: finalSamples } = filterAndGapSamples(samples, zoomRange, GAP_THRESHOLD_MS)
 
   // Build data arrays based on type
   let data: uPlot.AlignedData
@@ -295,21 +278,11 @@ export function buildEfficiencyChartConfig(
     return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
   }
 
-  // Filter to zoom range to avoid passing huge out-of-range arrays to uPlot
-  const filtered = zoomRange
-    ? samples.filter(s => {
-        const t = new Date(s.timestamp).getTime()
-        return t >= new Date(zoomRange.start).getTime() && t <= new Date(zoomRange.end).getTime()
-      })
-    : samples
-
-  if (filtered.length === 0) {
+  // Single-pass filter + gap detection + uPlot conversion
+  const { timestamps, samples: final } = filterAndGapSamples(samples, zoomRange)
+  if (timestamps.length === 0) {
     return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
   }
-
-  const GAP_THRESHOLD_MS = 10000
-  const samplesWithGaps = insertGaps(filtered, GAP_THRESHOLD_MS)
-  const { timestamps, samples: final } = samplesToUPlotData(samplesWithGaps)
 
   const data: uPlot.AlignedData = [timestamps, final.map(s => s?.value ?? null)]
 
@@ -339,18 +312,23 @@ export function buildEfficiencyChartConfig(
     }
   }
 
-  const validValues = filtered.map(s => s.value).filter((v): v is number => v !== null)
+  // Stats: aggregate non-null values from the filtered/gapped samples
   let statsMax = -Infinity
   let statsSum = 0
-  for (let i = 0; i < validValues.length; i++) {
-    const v = validValues[i]
+  let statsCount = 0
+  for (let i = 0; i < final.length; i++) {
+    const s = final[i]
+    if (s == null) continue
+    const v = s.value
+    if (v == null) continue
     if (v > statsMax) statsMax = v
     statsSum += v
+    statsCount++
   }
-  const stats: ChartStat[] = validValues.length > 0 ? [{
+  const stats: ChartStat[] = statsCount > 0 ? [{
     label: 'Stability',
     color: 'hsl(145, 70%, 50%)',
-    avg: statsSum / validValues.length,
+    avg: statsSum / statsCount,
     max: statsMax,
     unit: '%',
   }] : []
@@ -372,21 +350,10 @@ export function buildPositionChartConfig(
     return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
   }
 
-  // Filter to zoom range to avoid passing huge out-of-range arrays to uPlot
-  const filtered = zoomRange
-    ? samples.filter(s => {
-        const t = new Date(s.timestamp).getTime()
-        return t >= new Date(zoomRange.start).getTime() && t <= new Date(zoomRange.end).getTime()
-      })
-    : samples
-
-  if (filtered.length === 0) {
+  const { timestamps, samples: final } = filterAndGapSamples(samples, zoomRange)
+  if (timestamps.length === 0) {
     return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
   }
-
-  const GAP_THRESHOLD_MS = 10000
-  const samplesWithGaps = insertGaps(filtered, GAP_THRESHOLD_MS)
-  const { timestamps, samples: final } = samplesToUPlotData(samplesWithGaps)
 
   // Split into two series: seated (value=0) and standing (value=1)
   const seatedValues = final.map(s => {
@@ -448,11 +415,18 @@ export function buildPositionChartConfig(
     }
   ]
 
-  const validValues = filtered.map(s => s.value).filter((v): v is number => v !== null)
-  const standingCount = validValues.filter(v => v >= 0.5).length
-  const seatedCount = validValues.length - standingCount
-  const standingPct = validValues.length > 0 ? (standingCount / validValues.length) * 100 : 0
-  const seatedPct = validValues.length > 0 ? (seatedCount / validValues.length) * 100 : 0
+  // Aggregate position counts from filtered/gapped samples in one pass
+  let standingCount = 0
+  let totalCount = 0
+  for (let i = 0; i < final.length; i++) {
+    const s = final[i]
+    if (s == null || s.value == null) continue
+    if (s.value >= 0.5) standingCount++
+    totalCount++
+  }
+  const seatedCount = totalCount - standingCount
+  const standingPct = totalCount > 0 ? (standingCount / totalCount) * 100 : 0
+  const seatedPct = totalCount > 0 ? (seatedCount / totalCount) * 100 : 0
 
   const stats: ChartStat[] = [
     {
@@ -487,21 +461,10 @@ export function buildRoughnessChartConfig(
     return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
   }
 
-  // Filter to zoom range to avoid passing huge out-of-range arrays to uPlot
-  const filtered = zoomRange
-    ? samples.filter(s => {
-        const t = new Date(s.timestamp).getTime()
-        return t >= new Date(zoomRange.start).getTime() && t <= new Date(zoomRange.end).getTime()
-      })
-    : samples
-
-  if (filtered.length === 0) {
+  const { timestamps, samples: final } = filterAndGapSamples(samples, zoomRange)
+  if (timestamps.length === 0) {
     return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
   }
-
-  const GAP_THRESHOLD_MS = 10000
-  const samplesWithGaps = insertGaps(filtered, GAP_THRESHOLD_MS)
-  const { timestamps, samples: final } = samplesToUPlotData(samplesWithGaps)
 
   const data: uPlot.AlignedData = [timestamps, final.map(s => s?.value ?? null)]
 
@@ -531,18 +494,22 @@ export function buildRoughnessChartConfig(
     }
   }
 
-  const validValues = filtered.map(s => s.value).filter((v): v is number => v !== null)
   let statsMax = -Infinity
   let statsSum = 0
-  for (let i = 0; i < validValues.length; i++) {
-    const v = validValues[i]
+  let statsCount = 0
+  for (let i = 0; i < final.length; i++) {
+    const s = final[i]
+    if (s == null) continue
+    const v = s.value
+    if (v == null) continue
     if (v > statsMax) statsMax = v
     statsSum += v
+    statsCount++
   }
-  const stats: ChartStat[] = validValues.length > 0 ? [{
+  const stats: ChartStat[] = statsCount > 0 ? [{
     label: 'Roughness',
     color: 'hsl(25, 95%, 53%)',
-    avg: statsSum / validValues.length,
+    avg: statsSum / statsCount,
     max: statsMax,
     unit: '%',
   }] : []
@@ -555,43 +522,42 @@ export function buildRoughnessChartConfig(
  * Two series: Estimated Grade (%) and Braking Intensity (0-100).
  */
 export function buildBrakingChartConfig(
-  samples: Array<{ timestamp: string; value: number | null; estimatedGradePercent?: number; brakingDecelerationMs2?: number }>,
+  samples: Array<{ timestamp: string; value: number | null; estimatedGradePercent?: number; brakingDecelerationMs2?: number; fitGradePercent?: number | null }>,
   zoomRange?: { start: string; end: string } | null
 ): ChartConfig {
   if (samples.length === 0) {
     return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
   }
 
-  // Filter to zoom range
-  const filtered = zoomRange
-    ? samples.filter(s => {
-        const t = new Date(s.timestamp).getTime()
-        return t >= new Date(zoomRange.start).getTime() && t <= new Date(zoomRange.end).getTime()
-      })
-    : samples
-
-  if (filtered.length === 0) {
+  const { timestamps, samples: final } = filterAndGapSamples(samples, zoomRange)
+  if (timestamps.length === 0) {
     return { data: [[], []] as uPlot.AlignedData, series: [{}], scales: { x: {}, y: {} }, stats: [] }
   }
-
-  const GAP_THRESHOLD_MS = 10000
-  const samplesWithGaps = insertGaps(filtered, GAP_THRESHOLD_MS)
-  const { timestamps, samples: final } = samplesToUPlotData(samplesWithGaps)
 
   const data: uPlot.AlignedData = [
     timestamps,
     final.map(s => s?.estimatedGradePercent ?? null),
+    final.map(s => s?.fitGradePercent ?? null),
     final.map(s => s?.brakingDecelerationMs2 ?? null),
   ]
 
   const series: uPlot.Series[] = [
     {},
     {
-      label: 'Grade',
+      label: 'Grade (IMU)',
       stroke: 'hsl(220, 60%, 55%)',
       width: 1.5,
       scale: 'grade',
       spanGaps: false,
+      points: { show: false },
+    },
+    {
+      label: 'Grade (FIT)',
+      stroke: 'hsl(180, 60%, 45%)',
+      width: 1.5,
+      scale: 'grade',
+      dash: [6, 4],
+      spanGaps: true,
       points: { show: false },
     },
     {
@@ -645,38 +611,58 @@ export function buildBrakingChartConfig(
     },
   ]
 
-  // Compute stats
-  const gradeValues = filtered.map(s => s.estimatedGradePercent).filter((v): v is number => v != null)
-  const brakingValues = filtered.map(s => s.brakingDecelerationMs2).filter((v): v is number => v != null && v > 0)
-
-  let gradeMax = -Infinity, gradeMin = Infinity, gradeSum = 0
-  for (const v of gradeValues) {
-    if (v > gradeMax) gradeMax = v
-    if (v < gradeMin) gradeMin = v
-    gradeSum += v
-  }
-
-  let brakingMax = -Infinity, brakingSum = 0
-  for (const v of brakingValues) {
-    if (v > brakingMax) brakingMax = v
-    brakingSum += v
+  // Compute all braking-chart stats in a single pass over the filtered samples.
+  let gradeMax = -Infinity, gradeSum = 0, gradeCount = 0
+  let fitGradeMax = -Infinity, fitGradeSum = 0, fitGradeCount = 0
+  let brakingMax = -Infinity, brakingSum = 0, brakingCount = 0
+  for (let i = 0; i < final.length; i++) {
+    const s = final[i]
+    if (s == null) continue
+    if (s.estimatedGradePercent != null) {
+      const v = s.estimatedGradePercent
+      if (v > gradeMax) gradeMax = v
+      gradeSum += v
+      gradeCount++
+    }
+    if (s.fitGradePercent != null) {
+      const v = s.fitGradePercent
+      if (v > fitGradeMax) fitGradeMax = v
+      fitGradeSum += v
+      fitGradeCount++
+    }
+    if (s.brakingDecelerationMs2 != null && s.brakingDecelerationMs2 > 0) {
+      const v = s.brakingDecelerationMs2
+      if (v > brakingMax) brakingMax = v
+      brakingSum += v
+      brakingCount++
+    }
   }
 
   const stats: ChartStat[] = []
-  if (gradeValues.length > 0) {
+  if (gradeCount > 0) {
     stats.push({
-      label: 'Grade',
+      label: 'Grade (IMU)',
       color: 'hsl(220, 60%, 55%)',
-      avg: gradeSum / gradeValues.length,
+      avg: gradeSum / gradeCount,
       max: gradeMax,
       unit: '%',
     })
   }
-  if (brakingValues.length > 0) {
+  if (fitGradeCount > 0) {
     stats.push({
-      label: 'Braking',
+      label: 'Grade (FIT)',
+      color: 'hsl(180, 60%, 45%)',
+      avg: fitGradeSum / fitGradeCount,
+      max: fitGradeMax,
+      unit: '%',
+    })
+  }
+  if (brakingCount > 0) {
+    stats.push({
+      // Must match the series label so UPlotBase can resolve series index by label
+      label: 'Braking Force',
       color: 'hsl(0, 84%, 60%)',
-      avg: brakingSum / brakingValues.length,
+      avg: brakingSum / brakingCount,
       max: brakingMax,
       unit: ' m/s²',
     })

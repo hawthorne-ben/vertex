@@ -16,7 +16,7 @@
  * Version string for cache invalidation
  * Bump this when changing any constants or algorithm logic
  */
-export const ALGORITHM_VERSION = '7.1.0'  // Yaw in position detection, threshold tuning
+export const ALGORITHM_VERSION = '8.3.0'  // Longitudinal accel compensation + per-ride pitch offset calibration
 
 // ============================================
 // WINDOWED RMS CONFIGURATION
@@ -319,18 +319,33 @@ export const POSITION_YAW_WEIGHT = 0.5
 // ============================================
 
 /**
- * LPF cutoff for smoothing raw accel before pitch calculation (Hz)
- * Removes road vibration and pedaling forces, preserves sustained tilt.
- * At 104 Hz, 2 Hz cutoff gives ~50-sample smoothing.
+ * Zero-phase Butterworth LPF cutoff for accel before pitch calculation (Hz)
+ * Applied as forward-backward (filtfilt) so no phase lag.
+ * 5 Hz preserves the full braking envelope (human actions 0.5-4 Hz)
+ * while rejecting road chatter and knobby tire vibration (>15 Hz).
  */
-export const BRAKING_LPF_HZ = 1.0
+export const BRAKING_LPF_HZ = 5.0
 
 /**
- * Grade baseline rolling average window in seconds
- * Grade changes over 10-30s; braking is sub-5s transient.
- * Longer = more stable grade estimate, but slower to adapt to grade changes.
+ * Grade baseline EMA cutoff frequency (Hz)
+ * Applied as forward-backward EMA for zero-lag grade tracking.
+ * 0.1 Hz ≈ 10-second equivalent window — captures grade changes
+ * without lagging on steep transitions.
  */
-export const BRAKING_GRADE_WINDOW_SECONDS = 15
+export const BRAKING_GRADE_LPF_HZ = 0.1
+
+/**
+ * FIT speed smoothing cutoff (Hz) for dv/dt computation.
+ * Applied as forward-backward EMA over FIT speed before differentiation.
+ * 0.3 Hz ≈ 3-second equivalent window — smooths GPS noise without
+ * blurring real acceleration events.
+ *
+ * Used to compensate longitudinal inertial bleed onto accel_x. When the
+ * rider accelerates, the accelerometer can't distinguish forward inertia
+ * from a nose-up tilt — both bleed gravity onto accel_x. We subtract the
+ * FIT-derived pitch-equivalent acceleration before computing grade.
+ */
+export const BRAKING_SPEED_LPF_HZ = 0.3
 
 /**
  * Minimum deceleration to register as braking (m/s²)
@@ -343,3 +358,65 @@ export const BRAKING_THRESHOLD_MS2 = 3.0
  * ~0.8g is near pitch-over limit for most bikes.
  */
 export const BRAKING_MAX_MS2 = 8.0
+
+/**
+ * Braking-specific window size in seconds.
+ * Shorter than stability/roughness window to capture brief brake checks.
+ * 0.75s captures events as short as 400ms without over-fragmenting.
+ */
+export const BRAKING_WINDOW_SECONDS = 0.75
+
+/**
+ * Braking window hop size in seconds.
+ * 0.2s → 5 Hz braking resolution, matching output rate.
+ */
+export const BRAKING_WINDOW_HOP_SECONDS = 0.2
+
+/**
+ * Gyro-Y (pitch rate) correlation — minimum pitch rate (deg/s) that
+ * indicates sustained forward rotation consistent with braking.
+ * Below this, pitch rate is ambiguous (could be terrain oscillation).
+ */
+export const BRAKING_GYRO_PITCH_RATE_MIN = 3.0
+
+/**
+ * Gyro-Y correlation boost factor.
+ * When gyro pitch rate is sustained and correlates with accel deceleration,
+ * effective deceleration is scaled by (1 + boost).
+ * When gyro shows oscillatory pattern (bump), scaled by (1 - penalty).
+ */
+export const BRAKING_GYRO_CORRELATION_BOOST = 0.3
+
+/**
+ * Gyro-Y anti-correlation penalty factor.
+ * Applied when gyro pitch rate oscillates (sign changes), suggesting
+ * bump-induced pitch rather than braking.
+ */
+export const BRAKING_GYRO_OSCILLATION_PENALTY = 0.4
+
+/**
+ * Gyro-Y integration window for terrain transition detection (seconds).
+ * Wider than the brake correlation window so we can see the full crest/dip
+ * rotation event around the suspected braking peak.
+ */
+export const BRAKING_GYRO_INTEGRAL_WINDOW_SECONDS = 2.0
+
+/**
+ * Net rotation threshold (degrees) over the integration window.
+ *
+ * A brake stab oscillates around an angular position — pitch dives forward
+ * then returns when brakes release — so the integral of gyro_y is ~0.
+ *
+ * A terrain transition (crest, dip, grade change) is a true rotation —
+ * the bike ends up at a new pitch — so the integral is non-trivial.
+ *
+ * 5° over 2 seconds = a moderate crest/dip; bigger = penalize.
+ */
+export const BRAKING_GYRO_INTEGRAL_THRESHOLD_DEG = 5.0
+
+/**
+ * Penalty factor when gyro_y integral exceeds threshold.
+ * 0.0 = full suppression (treat as terrain, not braking).
+ * Aggressive because terrain transitions are confidently NOT braking.
+ */
+export const BRAKING_TERRAIN_TRANSITION_PENALTY = 0.0

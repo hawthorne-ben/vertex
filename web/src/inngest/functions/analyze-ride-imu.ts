@@ -272,8 +272,9 @@ export const analyzeRideImuJob = inngest.createFunction(
         const fitSamples = fitData.records
           .map((r: any) => ({
             timestamp: r.timestamp ? new Date(r.timestamp).toISOString() : null,
-            grade: r.grade || null,
+            grade: r.grade ?? null,
             altitude: r.enhanced_altitude ?? r.altitude ?? null,
+            distance: r.distance ?? null,  // meters, monotonic
             cadence: r.cadence ?? null,
             power: r.power ?? null,
             speed: r.speed ? r.speed / 3.6 : null,  // km/h → m/s
@@ -298,6 +299,7 @@ export const analyzeRideImuJob = inngest.createFunction(
             accel_y: record.accelY,
             accel_z: record.accelZ,
             gyro_x: record.gyroX,
+            gyro_y: record.gyroY,
             gyro_z: record.gyroZ,
           })
         }

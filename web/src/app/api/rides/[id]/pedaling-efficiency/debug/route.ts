@@ -124,7 +124,7 @@ export async function GET(
     const fitSamplesUrl = new URL(`${request.url.split('/pedaling-efficiency')[0]}/samples`, request.url)
     fitSamplesUrl.searchParams.set('start', startTime)
     fitSamplesUrl.searchParams.set('end', endTime)
-    fitSamplesUrl.searchParams.set('fields', 'grade,altitude,cadence,speed,power')
+    fitSamplesUrl.searchParams.set('fields', 'grade,altitude,distance,cadence,speed,power')
 
     const fitResponse = await fetch(fitSamplesUrl, {
       headers: { 'Authorization': request.headers.get('authorization')! }
@@ -160,13 +160,14 @@ export async function GET(
       )
     }
 
-    // Transform VTX samples (include gyro for position detection)
+    // Transform VTX samples (include all gyro axes for position + braking detection)
     const allVtxSamples = vtxSamples.map((s: any) => ({
       timestamp: s.timestamp,
       accel_x: s.accel?.x ?? 0,
       accel_y: s.accel?.y ?? 0,
       accel_z: s.accel?.z ?? 0,
       gyro_x: s.gyro?.x ?? undefined,
+      gyro_y: s.gyro?.y ?? undefined,
       gyro_z: s.gyro?.z ?? undefined,
     }))
 
@@ -183,6 +184,7 @@ export async function GET(
         timestamp: s.timestamp,
         grade: s.grade,
         altitude: s.altitude,
+        distance: s.distance ?? null,
         cadence: s.cadence ?? null,
         speed: s.speed ?? null,
         power: s.power ?? null,
@@ -213,7 +215,7 @@ export async function GET(
         maxStabilityRms: getFloat('max_stability_rms'),
         // Braking
         brakingLpfHz: getFloat('braking_lpf_hz'),
-        brakingGradeWindowSeconds: getFloat('braking_grade_window_seconds'),
+        brakingGradeLpfHz: getFloat('braking_grade_lpf_hz'),
         brakingThresholdMs2: getFloat('braking_threshold_ms2'),
         brakingMaxMs2: getFloat('braking_max_ms2'),
         // Roughness

@@ -148,46 +148,70 @@ export function calculateStdDev(values: number[]): number {
 }
 
 /**
- * Smooth grade data with moving average
+ * Smooth grade data with moving average, computed from FIT data.
  *
- * Handles both direct grade field and altitude-derived grade.
- * Grade data is noisy from GPS, so we apply generous smoothing.
+ * Prefers FIT-provided grade when present. When grade is missing (most consumer
+ * head units don't write it), computes grade from rise-over-run using the FIT
+ * altitude and distance fields over a fixed horizontal baseline. The result is
+ * then smoothed with a moving average to suppress GPS/barometric noise.
+ *
+ * Operates at FIT cadence (~1 Hz) and returns a parallel array aligned with the
+ * input fitSamples. Callers should do nearest-neighbor lookup by timestamp to
+ * align with VTX-cadence outputs.
+ *
+ * @param fitSamples    Per-record FIT data with grade, altitude, distance
+ * @param windowSeconds Smoothing window in seconds (≈ samples since FIT is ~1 Hz)
  */
 export function smoothGrades(
-  grades: (number | null)[],
-  fitSamples: Array<{ altitude?: number | null }>,
+  fitSamples: Array<{ grade?: number | null; altitude?: number | null; distance?: number | null }>,
   windowSeconds: number = C.GRADE_SMOOTH_WINDOW_SECONDS
 ): (number | null)[] {
-  // If we have direct grade values, smooth them
-  const hasDirectGrade = grades.some(g => g !== null && g !== undefined)
+  if (fitSamples.length === 0) return []
+
+  // Prefer FIT-provided grade if a meaningful number of points have it
+  const directGradeCount = fitSamples.reduce(
+    (n, s) => n + (s.grade !== null && s.grade !== undefined ? 1 : 0),
+    0
+  )
+  const hasDirectGrade = directGradeCount > fitSamples.length * 0.5
 
   if (hasDirectGrade) {
-    return movingAverage(grades, windowSeconds * 2)  // Rough estimate: 2 samples/sec for FIT
+    const grades = fitSamples.map(s => s.grade ?? null)
+    return movingAverage(grades, windowSeconds)
   }
 
-  // Otherwise, calculate from altitude
-  const altitudes = fitSamples.map(s => s.altitude ?? null)
-  const calculatedGrades: (number | null)[] = [null]  // First point has no grade
+  // Compute grade from altitude/distance using a fixed horizontal baseline.
+  // 30m smooths out GPS/barometric noise far better than per-sample finite
+  // differences (which produce huge spikes from sub-meter altitude jitter).
+  const MIN_GRADE_DISTANCE_M = 30
+  const calculatedGrades: (number | null)[] = new Array(fitSamples.length).fill(null)
 
-  for (let i = 1; i < altitudes.length; i++) {
-    const alt1 = altitudes[i - 1]
-    const alt2 = altitudes[i]
+  for (let i = 0; i < fitSamples.length; i++) {
+    const altCurr = fitSamples[i].altitude
+    const distCurr = fitSamples[i].distance
+    if (altCurr == null || distCurr == null) continue
 
-    if (alt1 === null || alt2 === null) {
-      calculatedGrades.push(null)
-      continue
+    // Walk backward to find a point at least MIN_GRADE_DISTANCE_M behind
+    let j = i - 1
+    while (j >= 0) {
+      const distPrev = fitSamples[j].distance
+      if (distPrev != null && distCurr - distPrev >= MIN_GRADE_DISTANCE_M) break
+      j--
     }
+    if (j < 0) continue  // Not enough history yet
 
-    const dAlt = alt2 - alt1
-    const dDist = 1
-    const grade = (dAlt / dDist) * 100
+    const altPrev = fitSamples[j].altitude
+    const distPrev = fitSamples[j].distance
+    if (altPrev == null || distPrev == null) continue
 
-    calculatedGrades.push(
-      Math.max(-C.MAX_GRADE_PERCENT, Math.min(C.MAX_GRADE_PERCENT, grade))
-    )
+    const dDist = distCurr - distPrev
+    if (dDist <= 0) continue  // Stopped or anomalous
+
+    const grade = ((altCurr - altPrev) / dDist) * 100
+    calculatedGrades[i] = Math.max(-C.MAX_GRADE_PERCENT, Math.min(C.MAX_GRADE_PERCENT, grade))
   }
 
-  return movingAverage(calculatedGrades, windowSeconds * 2)
+  return movingAverage(calculatedGrades, windowSeconds)
 }
 
 /**

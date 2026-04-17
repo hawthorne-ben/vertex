@@ -177,15 +177,11 @@ export function IMUSensorChart({
           </div>
         )}
 
-        {/* No data state */}
-        {!loading && !error && samples.length === 0 && (
-          <div className="h-[400px] bg-muted/50 rounded-lg flex items-center justify-center">
-            <p className="text-muted-foreground">No data available for selected range</p>
-          </div>
-        )}
-
-        {/* Chart - render when we have data */}
-        {!error && samples.length > 0 && (
+        {/* Always render UPlotBase when there's no error, even if samples are
+            transiently empty during zoom/scrub. UPlotBase handles empty-data
+            state internally as an overlay so legend visibility survives data
+            transitions. */}
+        {!error && (
           <UPlotBase
             data={chartData.data}
             series={chartData.series}

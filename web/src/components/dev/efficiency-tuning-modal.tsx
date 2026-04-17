@@ -35,7 +35,7 @@ interface TuningParameters {
   roughnessRoughThreshold: number
   // Braking detection
   brakingLpfHz: number
-  brakingGradeWindowSeconds: number
+  brakingGradeLpfHz: number
   brakingThresholdMs2: number
   brakingMaxMs2: number
   // Riding position detection
@@ -116,7 +116,7 @@ const DEFAULT_PARAMS: TuningParameters = {
   roughnessSmoothThreshold: CONSTANTS.ROUGHNESS_SMOOTH_THRESHOLD,
   roughnessRoughThreshold: CONSTANTS.ROUGHNESS_ROUGH_THRESHOLD,
   brakingLpfHz: CONSTANTS.BRAKING_LPF_HZ,
-  brakingGradeWindowSeconds: CONSTANTS.BRAKING_GRADE_WINDOW_SECONDS,
+  brakingGradeLpfHz: CONSTANTS.BRAKING_GRADE_LPF_HZ,
   brakingThresholdMs2: CONSTANTS.BRAKING_THRESHOLD_MS2,
   brakingMaxMs2: CONSTANTS.BRAKING_MAX_MS2,
   positionWindowSeconds: CONSTANTS.POSITION_WINDOW_SECONDS,
@@ -178,7 +178,7 @@ export function EfficiencyTuningModal({
             roughnessSmoothThreshold: parameters.roughnessSmoothThreshold,
             roughnessRoughThreshold: parameters.roughnessRoughThreshold,
             brakingLpfHz: parameters.brakingLpfHz,
-            brakingGradeWindowSeconds: parameters.brakingGradeWindowSeconds,
+            brakingGradeLpfHz: parameters.brakingGradeLpfHz,
             brakingThresholdMs2: parameters.brakingThresholdMs2,
             brakingMaxMs2: parameters.brakingMaxMs2,
             positionWindowSeconds: parameters.positionWindowSeconds,
@@ -415,10 +415,10 @@ export function EfficiencyTuningModal({
                 hint="Smooths accel before pitch calc. Lower = smoother. Default: 2.0"
               />
               <FormField
-                label="Grade Window (s)"
-                value={parameters.brakingGradeWindowSeconds}
-                onChange={(v) => setParameters({ ...parameters, brakingGradeWindowSeconds: v })}
-                hint="Rolling avg for grade baseline. Longer = more stable. Default: 10"
+                label="Grade LPF (Hz)"
+                value={parameters.brakingGradeLpfHz}
+                onChange={(v) => setParameters({ ...parameters, brakingGradeLpfHz: v })}
+                hint="Zero-phase EMA cutoff for grade baseline. Lower = smoother. Default: 0.1"
               />
               <FormField
                 label="Threshold (m/s²)"
