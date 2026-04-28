@@ -35,7 +35,7 @@ interface TuningParameters {
   roughnessRoughThreshold: number
   // Braking detection
   brakingLpfHz: number
-  brakingGradeLpfHz: number
+  brakingHpfHz: number
   brakingThresholdMs2: number
   brakingMaxMs2: number
   // Riding position detection
@@ -116,7 +116,7 @@ const DEFAULT_PARAMS: TuningParameters = {
   roughnessSmoothThreshold: CONSTANTS.ROUGHNESS_SMOOTH_THRESHOLD,
   roughnessRoughThreshold: CONSTANTS.ROUGHNESS_ROUGH_THRESHOLD,
   brakingLpfHz: CONSTANTS.BRAKING_LPF_HZ,
-  brakingGradeLpfHz: CONSTANTS.BRAKING_GRADE_LPF_HZ,
+  brakingHpfHz: CONSTANTS.BRAKING_HPF_HZ,
   brakingThresholdMs2: CONSTANTS.BRAKING_THRESHOLD_MS2,
   brakingMaxMs2: CONSTANTS.BRAKING_MAX_MS2,
   positionWindowSeconds: CONSTANTS.POSITION_WINDOW_SECONDS,
@@ -178,7 +178,7 @@ export function EfficiencyTuningModal({
             roughnessSmoothThreshold: parameters.roughnessSmoothThreshold,
             roughnessRoughThreshold: parameters.roughnessRoughThreshold,
             brakingLpfHz: parameters.brakingLpfHz,
-            brakingGradeLpfHz: parameters.brakingGradeLpfHz,
+            brakingHpfHz: parameters.brakingHpfHz,
             brakingThresholdMs2: parameters.brakingThresholdMs2,
             brakingMaxMs2: parameters.brakingMaxMs2,
             positionWindowSeconds: parameters.positionWindowSeconds,
@@ -409,16 +409,16 @@ export function EfficiencyTuningModal({
             <h3 className="text-sm font-medium text-primary">Braking Detection</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <FormField
-                label="Noise LPF (Hz)"
+                label="BPF Low-Pass (Hz)"
                 value={parameters.brakingLpfHz}
                 onChange={(v) => setParameters({ ...parameters, brakingLpfHz: v })}
-                hint="Smooths accel before pitch calc. Lower = smoother. Default: 2.0"
+                hint="LPF cutoff for braking BPF. Removes road chatter. Default: 1.5"
               />
               <FormField
-                label="Grade LPF (Hz)"
-                value={parameters.brakingGradeLpfHz}
-                onChange={(v) => setParameters({ ...parameters, brakingGradeLpfHz: v })}
-                hint="Zero-phase EMA cutoff for grade baseline. Lower = smoother. Default: 0.1"
+                label="BPF High-Pass (Hz)"
+                value={parameters.brakingHpfHz}
+                onChange={(v) => setParameters({ ...parameters, brakingHpfHz: v })}
+                hint="HPF cutoff for braking BPF. Removes gravity/grade. Default: 0.1"
               />
               <FormField
                 label="Threshold (m/s²)"

@@ -215,7 +215,7 @@ export async function GET(
         maxStabilityRms: getFloat('max_stability_rms'),
         // Braking
         brakingLpfHz: getFloat('braking_lpf_hz'),
-        brakingGradeLpfHz: getFloat('braking_grade_lpf_hz'),
+        brakingHpfHz: getFloat('braking_hpf_hz'),
         brakingThresholdMs2: getFloat('braking_threshold_ms2'),
         brakingMaxMs2: getFloat('braking_max_ms2'),
         // Roughness
@@ -241,9 +241,16 @@ export async function GET(
       samples: result.efficiency.samples,
       metadata: result.efficiency.metadata,
       position: {
-        samples: result.position.samples,       // 1 Hz downsampled (majority vote)
-        rawSamples: result.position.rawSamples,  // 5 Hz with accelScore/gyroScore/combinedScore
+        samples: result.position.samples,
+        rawSamples: result.position.rawSamples,
         metadata: result.position.metadata
+      },
+      braking: {
+        samples: result.braking.samples,
+        metadata: result.braking.metadata
+      },
+      roughness: {
+        metadata: result.roughness.metadata
       },
       rawInputs: {
         vtxSampleCount: allVtxSamples.length,

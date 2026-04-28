@@ -16,7 +16,7 @@
  * Version string for cache invalidation
  * Bump this when changing any constants or algorithm logic
  */
-export const ALGORITHM_VERSION = '8.3.0'  // Longitudinal accel compensation + per-ride pitch offset calibration
+export const ALGORITHM_VERSION = '9.2.0'  // BPF on native 104Hz VTX (bypass sync decimation), min-duration gate
 
 // ============================================
 // WINDOWED RMS CONFIGURATION
@@ -317,106 +317,70 @@ export const POSITION_YAW_WEIGHT = 0.5
 // ============================================
 // BRAKING DETECTION
 // ============================================
+//
+// Algorithm: CAUSAL (forward-only) BPF on accel_x isolates the braking
+// frequency band (0.1–1.5 Hz). Gravity/grade is DC or very slow (<0.1 Hz)
+// and gets removed by the HPF. Road chatter is high-frequency (>1.5 Hz)
+// and gets removed by the LPF. Negative excursions = deceleration = braking.
+//
+// CAUSAL not zero-phase: filtfilt's backward pass propagates transients from
+// distant parts of the ride, creating phantom braking spikes at grade
+// transitions. Causal BPF has ~50ms phase lag which is negligible.
+//
+// Grade estimation is computed separately (for display) and does NOT feed
+// into braking detection.
 
 /**
- * Zero-phase Butterworth LPF cutoff for accel before pitch calculation (Hz)
- * Applied as forward-backward (filtfilt) so no phase lag.
- * 5 Hz preserves the full braking envelope (human actions 0.5-4 Hz)
- * while rejecting road chatter and knobby tire vibration (>15 Hz).
+ * BPF high-pass cutoff for braking detection (Hz).
+ * Removes gravity projection and grade — both DC or very slow-moving.
+ * 0.1 Hz time constant ≈ 1.6s: a constant brake drag decays to 37% after
+ * 1.6s, 4% after 5s. Real braking is modulated (squeeze-release) so the
+ * oscillations pass through.
  */
-export const BRAKING_LPF_HZ = 5.0
+export const BRAKING_HPF_HZ = 0.1
 
 /**
- * Grade baseline EMA cutoff frequency (Hz)
- * Applied as forward-backward EMA for zero-lag grade tracking.
- * 0.1 Hz ≈ 10-second equivalent window — captures grade changes
- * without lagging on steep transitions.
+ * BPF low-pass cutoff for braking detection (Hz).
+ * Removes road chatter and tire vibration. 1.5 Hz preserves brake modulation
+ * detail; use 1.0 Hz for smoother envelopes on very rough terrain.
  */
-export const BRAKING_GRADE_LPF_HZ = 0.1
+export const BRAKING_LPF_HZ = 1.5
 
 /**
- * FIT speed smoothing cutoff (Hz) for dv/dt computation.
- * Applied as forward-backward EMA over FIT speed before differentiation.
- * 0.3 Hz ≈ 3-second equivalent window — smooths GPS noise without
- * blurring real acceleration events.
- *
- * Used to compensate longitudinal inertial bleed onto accel_x. When the
- * rider accelerates, the accelerometer can't distinguish forward inertia
- * from a nose-up tilt — both bleed gravity onto accel_x. We subtract the
- * FIT-derived pitch-equivalent acceleration before computing grade.
+ * Minimum deceleration magnitude to register as braking (m/s²).
+ * Applied to the absolute value of the negative BPF peaks.
+ * Below this is pedaling cadence oscillation and aero buffeting.
  */
-export const BRAKING_SPEED_LPF_HZ = 0.3
+export const BRAKING_THRESHOLD_MS2 = 0.8
 
 /**
- * Minimum deceleration to register as braking (m/s²)
- * Below this is coasting/aero drag. Typical light braking starts at ~1 m/s².
+ * Maximum braking deceleration for 0-100 scaling (m/s²).
+ * Measured as BPF magnitude, not absolute deceleration — values are
+ * relative to the local mean, so typically smaller than absolute g-force.
  */
-export const BRAKING_THRESHOLD_MS2 = 3.0
+export const BRAKING_MAX_MS2 = 4.0
+
+// No windowing — BPF output is point-sampled at OUTPUT_SAMPLE_RATE_HZ.
+// The 1.5 Hz LPF in the BPF already smooths the signal sufficiently.
+
+// ============================================
+// GRADE ESTIMATION (display only, decoupled from braking)
+// ============================================
 
 /**
- * Maximum braking deceleration for 0-100 scaling (m/s²)
- * ~0.8g is near pitch-over limit for most bikes.
+ * LPF cutoff for accel smoothing before pitch/grade calculation (Hz).
+ * Used only for the estimatedGradePercent display line.
  */
-export const BRAKING_MAX_MS2 = 8.0
+export const GRADE_LPF_HZ = 5.0
 
 /**
- * Braking-specific window size in seconds.
- * Shorter than stability/roughness window to capture brief brake checks.
- * 0.75s captures events as short as 400ms without over-fragmenting.
+ * Grade baseline EMA cutoff frequency (Hz).
+ * Forward-backward EMA for zero-lag grade tracking.
  */
-export const BRAKING_WINDOW_SECONDS = 0.75
+export const GRADE_BASELINE_LPF_HZ = 0.1
 
 /**
- * Braking window hop size in seconds.
- * 0.2s → 5 Hz braking resolution, matching output rate.
+ * FIT speed smoothing cutoff (Hz) for longitudinal acceleration compensation
+ * in the grade estimator. Not used by braking detection.
  */
-export const BRAKING_WINDOW_HOP_SECONDS = 0.2
-
-/**
- * Gyro-Y (pitch rate) correlation — minimum pitch rate (deg/s) that
- * indicates sustained forward rotation consistent with braking.
- * Below this, pitch rate is ambiguous (could be terrain oscillation).
- */
-export const BRAKING_GYRO_PITCH_RATE_MIN = 3.0
-
-/**
- * Gyro-Y correlation boost factor.
- * When gyro pitch rate is sustained and correlates with accel deceleration,
- * effective deceleration is scaled by (1 + boost).
- * When gyro shows oscillatory pattern (bump), scaled by (1 - penalty).
- */
-export const BRAKING_GYRO_CORRELATION_BOOST = 0.3
-
-/**
- * Gyro-Y anti-correlation penalty factor.
- * Applied when gyro pitch rate oscillates (sign changes), suggesting
- * bump-induced pitch rather than braking.
- */
-export const BRAKING_GYRO_OSCILLATION_PENALTY = 0.4
-
-/**
- * Gyro-Y integration window for terrain transition detection (seconds).
- * Wider than the brake correlation window so we can see the full crest/dip
- * rotation event around the suspected braking peak.
- */
-export const BRAKING_GYRO_INTEGRAL_WINDOW_SECONDS = 2.0
-
-/**
- * Net rotation threshold (degrees) over the integration window.
- *
- * A brake stab oscillates around an angular position — pitch dives forward
- * then returns when brakes release — so the integral of gyro_y is ~0.
- *
- * A terrain transition (crest, dip, grade change) is a true rotation —
- * the bike ends up at a new pitch — so the integral is non-trivial.
- *
- * 5° over 2 seconds = a moderate crest/dip; bigger = penalize.
- */
-export const BRAKING_GYRO_INTEGRAL_THRESHOLD_DEG = 5.0
-
-/**
- * Penalty factor when gyro_y integral exceeds threshold.
- * 0.0 = full suppression (treat as terrain, not braking).
- * Aggressive because terrain transitions are confidently NOT braking.
- */
-export const BRAKING_TERRAIN_TRANSITION_PENALTY = 0.0
+export const GRADE_SPEED_LPF_HZ = 0.3

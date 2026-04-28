@@ -59,7 +59,9 @@ export function useAnalyticsMetrics({
       metric: m.apiMetric,
       timeRange: null,
       fitRecordingId,
-      resolution: 1,
+      // No resolution override — use native output rate (5 Hz for braking,
+      // stability, roughness, position). The API's peak-selection downsampling
+      // at 1 Hz was amplifying single-sample noise in braking BPF data.
       enabled: enabled && requested.has(m.tabId),
     })
 

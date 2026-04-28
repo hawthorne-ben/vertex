@@ -482,7 +482,7 @@ export function UPlotBase({
                   style={{ backgroundColor: s.color }}
                 />
                 {/* Only show label when there are multiple series to distinguish */}
-                {stats.length > 1 && <span className="text-foreground font-medium">{s.label}:</span>}
+                {stats.length > 1 && <span className="text-foreground font-medium">{s.label}{s.avg != null || s.max != null ? ':' : ''}</span>}
                 {s.avg != null && <span>{(s.avgPrefix ?? 'Avg') + ((s.avgPrefix ?? 'Avg') ? ' ' : '')}{s.avg.toFixed(1)}{s.unit ? ` ${s.unit}` : ''}</span>}
                 {s.avg != null && s.max != null && <span>/</span>}
                 {s.max != null && <span>Max {s.max.toFixed(1)}{s.unit ? ` ${s.unit}` : ''}</span>}

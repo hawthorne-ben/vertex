@@ -9,6 +9,7 @@ export interface BrakingSample {
   isBraking: boolean
   brakingIntensity: number        // 0-100 scale
   brakingDecelerationMs2: number  // peak deceleration in window (m/s²)
+  bpfAccelX: number               // raw BPF output at window center (m/s², negative = braking)
   estimatedGradePercent: number   // IMU-derived grade from pitch baseline
   fitGradePercent: number | null  // FIT grade (independent reference, lags by ~5-10s)
 }

@@ -268,6 +268,52 @@ export function buildIMUChartConfig(
 }
 
 /**
+ * Merge filtered streams into an existing IMU ChartData. Each stream becomes an
+ * additional dashed series appended after the raw axes. Stream `values` must be
+ * parallel to the samples that produced the ChartData (same length/ordering).
+ *
+ * Colors cycle through a palette that avoids the raw axis colors (red/green/blue).
+ */
+export function mergeFilteredStreams(
+  base: ChartData,
+  streams: Array<{ label: string; values: (number | null)[] }>,
+): ChartData {
+  if (streams.length === 0) return base
+
+  const palette = [
+    'hsl(280, 60%, 55%)',  // purple
+    'hsl(35, 85%, 55%)',   // orange
+    'hsl(190, 70%, 45%)',  // teal
+    'hsl(330, 60%, 55%)',  // pink
+    'hsl(60, 70%, 45%)',   // olive
+    'hsl(220, 80%, 65%)',  // light blue
+  ]
+
+  const newData = [...base.data] as (number | null | (number | null)[])[]
+  const newSeries = [...base.series]
+
+  for (let si = 0; si < streams.length; si++) {
+    const stream = streams[si]
+    const color = palette[si % palette.length]
+
+    newData.push(stream.values as (number | null)[])
+    newSeries.push({
+      label: stream.label,
+      stroke: color,
+      width: 1.5,
+      spanGaps: false,
+      points: { show: false },
+    })
+  }
+
+  return {
+    ...base,
+    data: newData as uPlot.AlignedData,
+    series: newSeries,
+  }
+}
+
+/**
  * Build chart config for pedaling efficiency (scatter plot, 0-100%).
  */
 export function buildEfficiencyChartConfig(
@@ -539,6 +585,7 @@ export function buildBrakingChartConfig(
     final.map(s => s?.estimatedGradePercent ?? null),
     final.map(s => s?.fitGradePercent ?? null),
     final.map(s => s?.brakingDecelerationMs2 ?? null),
+    final.map(s => (s as any)?.bpfAccelX ?? null),
   ]
 
   const series: uPlot.Series[] = [
@@ -569,6 +616,14 @@ export function buildBrakingChartConfig(
       spanGaps: false,
       points: { show: false },
     },
+    {
+      label: 'BPF Accel X',
+      stroke: 'hsl(280, 60%, 55%)',
+      width: 1.5,
+      scale: 'braking',
+      spanGaps: false,
+      points: { show: false },
+    },
   ]
 
   const scales: Record<string, uPlot.Scale> = {
@@ -586,9 +641,6 @@ export function buildBrakingChartConfig(
     },
     braking: {
       auto: true,
-      range: (u, dataMin, dataMax) => {
-        return [0, Math.max(dataMax * 1.1, 1)]
-      },
     },
   }
 
@@ -667,6 +719,13 @@ export function buildBrakingChartConfig(
       unit: ' m/s²',
     })
   }
+  // BPF debug line — toggle-only, no stats
+  stats.push({
+    label: 'BPF Accel X',
+    color: 'hsl(280, 60%, 55%)',
+    avg: null,
+    max: null,
+  })
 
   return { data, series, scales, axes, stats }
 }

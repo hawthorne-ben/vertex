@@ -27,7 +27,7 @@ import { calculateStability } from './efficiency-calculation'
 import { smoothGrades } from './efficiency-calculation'
 import { calculateMetadata } from './efficiency-metadata'
 import { calculateRoughness, calculateRoughnessMetadata } from './surface-roughness'
-import { calculateBraking, calculateBrakingMetadata } from './braking-detection'
+import { calculateBrakingMetadata } from './braking-detection'
 import { calculateRidingPosition, downsamplePositionByMajorityVote } from './riding-position-calculation'
 import { calculateRidingPositionMetadata } from './riding-position-metadata'
 import type { PedalingEfficiencyOutput, PedalingEfficiencyMetadata } from './efficiency-metadata'
@@ -106,7 +106,7 @@ export interface PedalingEfficiencyInput {
     roughnessRoughThreshold?: number
     // Braking detection
     brakingLpfHz?: number
-    brakingGradeLpfHz?: number
+    brakingHpfHz?: number
     brakingThresholdMs2?: number
     brakingMaxMs2?: number
   }
@@ -197,82 +197,75 @@ export function calculatePedalingEfficiency(
   // Detect if gyro data is present
   const hasGyroData = vtxSamples.slice(0, 5).some(s => s.gyro_x !== undefined && s.gyro_x !== null)
   const hasGyroZ = vtxSamples.slice(0, 5).some(s => s.gyro_z !== undefined && s.gyro_z !== null)
-  const hasGyroY = vtxSamples.slice(0, 5).some(s => s.gyro_y !== undefined && s.gyro_y !== null)
 
   // ============================================
-  // BRAKING PRE-PASS: zero-phase filtering (whole-array, no phase lag)
+  // BRAKING PRE-PASS: causal BPF on raw vtxSamples (no sync, no FIT)
   // ============================================
+  //
+  // Runs directly on vtxSamples at native 104 Hz — NOT on the synced array.
+  // The sync drops ~91% of VTX samples (tolerance-based dedup), which aliases
+  // high-frequency content into the BPF passband and creates phantom braking.
+  // Braking only needs accel_x; FIT data is used separately for grade display.
 
+  const brakingHpfHz = options.brakingHpfHz ?? C.BRAKING_HPF_HZ
   const brakingLpfHz = options.brakingLpfHz ?? C.BRAKING_LPF_HZ
-  const brakingGradeLpfHz = options.brakingGradeLpfHz ?? C.BRAKING_GRADE_LPF_HZ
-  const speedLpfHz = C.BRAKING_SPEED_LPF_HZ
+  const brakingBpf = new BandPassFilter(brakingHpfHz, brakingLpfHz, sampleRate)
 
-  // Collect raw accel arrays from synced data (only VTX-bearing points).
-  // Also carry forward FIT speed at the dense (VTX) cadence so we can compute
-  // longitudinal-acceleration compensation aligned with the IMU samples.
+  // BPF at native sample rate — one output per VTX sample
+  const brakingBpfFull = new Array<number>(vtxSamples.length)
+  for (let i = 0; i < vtxSamples.length; i++) {
+    brakingBpfFull[i] = brakingBpf.update(vtxSamples[i].accel_x)
+  }
+
+  // Collect synced-aligned arrays for grade estimation (display only)
   const rawAccelX: number[] = []
   const rawAccelZ: number[] = []
-  const rawGyroY: number[] = []
-  const rawSpeedArray: number[] = []  // m/s, carry-forward from FIT (1 Hz → dense)
-  const fitGradeArray: Array<number | null> = []  // FIT grade aligned with dense index
+  const rawSpeedArray: number[] = []
+  const fitGradeArray: Array<number | null> = []
 
-  let prepassLastSpeed = 0  // carry-forward seed
+  let prepassLastSpeed = 0
   synced.forEach((point, idx) => {
-    // Update carry-forward speed from any point with FIT data
     if (point.fit) {
       const s = (point.fit as any)?.speed
       if (s !== undefined && s !== null) prepassLastSpeed = s
     }
     if (!point.vtx) return
     rawAccelX.push(point.vtx.accel_x)
-    rawAccelZ.push(-(point.vtx.accel_z ?? 0))  // negate: BNO055 Z reads -9.81 on up axis
-    rawGyroY.push(point.vtx.gyro_y ?? 0)
+    rawAccelZ.push(-(point.vtx.accel_z ?? 0))
     rawSpeedArray.push(prepassLastSpeed)
     fitGradeArray.push(grades[idx] ?? null)
   })
 
-  // Forward-backward Butterworth on accel (zero-phase, 5 Hz cutoff)
-  const smoothAccelX = filtfilt(rawAccelX, brakingLpfHz, sampleRate)
-  const smoothAccelZ = filtfilt(rawAccelZ, brakingLpfHz, sampleRate)
+  // Grade estimation (display only — decoupled from braking detection)
+  const gradeLpfHz = C.GRADE_LPF_HZ
+  const gradeBaselineLpfHz = C.GRADE_BASELINE_LPF_HZ
+  const gradeSpeedLpfHz = C.GRADE_SPEED_LPF_HZ
 
-  // Smooth FIT speed with zero-phase EMA, then compute dv/dt per sample.
-  // Convert to pitch-equivalent radians: a forward inertial acceleration of `a`
-  // bleeds onto accel_x identically to a nose-up tilt of arcsin(a/g).
-  const smoothSpeed = filtfiltEma(rawSpeedArray, speedLpfHz, sampleRate)
+  const smoothAccelX = filtfilt(rawAccelX, gradeLpfHz, sampleRate)
+  const smoothAccelZ = filtfilt(rawAccelZ, gradeLpfHz, sampleRate)
+
+  // Speed compensation for grade estimation
+  const smoothSpeed = filtfiltEma(rawSpeedArray, gradeSpeedLpfHz, sampleRate)
   const pitchInertial = new Array<number>(smoothSpeed.length).fill(0)
   for (let i = 1; i < smoothSpeed.length - 1; i++) {
-    const dvdt = (smoothSpeed[i + 1] - smoothSpeed[i - 1]) * (sampleRate / 2)  // central diff
+    const dvdt = (smoothSpeed[i + 1] - smoothSpeed[i - 1]) * (sampleRate / 2)
     const ratio = Math.max(-1, Math.min(1, dvdt / G))
     pitchInertial[i] = Math.asin(ratio)
   }
   pitchInertial[0] = pitchInertial[1] ?? 0
   pitchInertial[pitchInertial.length - 1] = pitchInertial[pitchInertial.length - 2] ?? 0
 
-  // Compute raw pitch from zero-phase-filtered accel, then subtract the
-  // inertial component. Whatever remains is true geometric pitch (grade + tilt).
   const pitchArray = new Array<number>(smoothAccelX.length)
   for (let i = 0; i < smoothAccelX.length; i++) {
-    const rawPitch = Math.atan2(smoothAccelX[i], smoothAccelZ[i])
-    pitchArray[i] = rawPitch - pitchInertial[i]
+    pitchArray[i] = Math.atan2(smoothAccelX[i], smoothAccelZ[i]) - pitchInertial[i]
   }
 
-  // Forward-backward EMA on compensated pitch → grade baseline (lag-free)
-  const gradeBaselineRaw = filtfiltEma(pitchArray, brakingGradeLpfHz, sampleRate)
-
-  // Per-ride static offset: median of compensated pitch = mounting offset.
-  // (After longitudinal compensation, residual constant bias is the bike-to-IMU
-  // mounting tilt. On a closed loop the median is unbiased; with net elevation
-  // change it's biased by ~half the average grade — still a useful first-order
-  // correction for typical rides.)
+  const gradeBaselineRaw = filtfiltEma(pitchArray, gradeBaselineLpfHz, sampleRate)
   const pitchOffsetRad = computeMedian(pitchArray)
   const gradeBaseline = gradeBaselineRaw.map(p => p - pitchOffsetRad)
 
-  // Braking deceleration = pitch deviation from grade baseline
-  const brakingDecelArray = new Array<number>(pitchArray.length)
   const estimatedGradePctArray = new Array<number>(pitchArray.length)
   for (let i = 0; i < pitchArray.length; i++) {
-    const brakingPitch = gradeBaseline[i] - (pitchArray[i] - pitchOffsetRad)
-    brakingDecelArray[i] = Math.max(0, G * Math.sin(brakingPitch))
     const clamped = Math.max(-Math.PI / 4, Math.min(Math.PI / 4, gradeBaseline[i]))
     estimatedGradePctArray[i] = Math.tan(clamped) * 100
   }
@@ -496,60 +489,48 @@ export function calculatePedalingEfficiency(
   }
 
   // ============================================
-  // BRAKING WINDOWED PASS: shorter windows from pre-pass arrays
+  // BRAKING: direct output from native BPF at OUTPUT_SAMPLE_RATE_HZ
   // ============================================
+  //
+  // Window + threshold directly on brakingBpfFull (native 104 Hz VTX array).
+  // Output one BrakingSample per output step, aligned by timestamp with the
+  // VTX data. Grade/FIT values are looked up by nearest VTX timestamp.
 
-  const brakingWindowSamples = Math.round(C.BRAKING_WINDOW_SECONDS * sampleRate)
-  const brakingHopSamples = Math.round(C.BRAKING_WINDOW_HOP_SECONDS * sampleRate)
-  const gyroIntegralHalfWidth = Math.round((C.BRAKING_GYRO_INTEGRAL_WINDOW_SECONDS * sampleRate) / 2)
+  // Output braking at 5 Hz. Average a small window around each output point
+  // to anti-alias before decimation (point-sampling picks up residual noise
+  // that the workbench's full-res view smooths over visually).
+  const brakingOutputStep = Math.max(1, Math.round(sampleRate / C.OUTPUT_SAMPLE_RATE_HZ))
+  const brakingAvgHalf = Math.floor(brakingOutputStep / 2)  // ±10 samples at 104Hz/5Hz
+  const threshold = options.brakingThresholdMs2 ?? C.BRAKING_THRESHOLD_MS2
+  const maxDecel = options.brakingMaxMs2 ?? C.BRAKING_MAX_MS2
 
-  interface BrakingWindowResult {
-    centerIdx: number
-    isBraking: boolean
-    brakingIntensity: number
-    brakingDecelerationMs2: number
-    estimatedGradePercent: number
-    fitGradePercent: number | null
-  }
+  const brakingSamples: BrakingSample[] = []
+  for (let i = 0; i < brakingBpfFull.length; i += brakingOutputStep) {
+    // Average BPF over a small window centered on the output sample
+    const avgStart = Math.max(0, i - brakingAvgHalf)
+    const avgEnd = Math.min(brakingBpfFull.length, i + brakingAvgHalf + 1)
+    let bpfSum = 0
+    for (let j = avgStart; j < avgEnd; j++) bpfSum += brakingBpfFull[j]
+    const bpfVal = bpfSum / (avgEnd - avgStart)
 
-  const brakingWindowResults: BrakingWindowResult[] = []
-  const nBrakingSamples = brakingDecelArray.length
+    // Braking = negative BPF excursion; negate so braking is positive
+    const decel = Math.max(0, -bpfVal)
+    const isBraking = decel >= threshold
+    const brakingIntensity = isBraking ? Math.min(100, (decel / maxDecel) * 100) : 0
 
-  for (let windowStart = 0; windowStart + brakingWindowSamples <= nBrakingSamples; windowStart += brakingHopSamples) {
-    const windowEnd = windowStart + brakingWindowSamples
-    const centerIdx = windowStart + Math.floor(brakingWindowSamples / 2)
+    // Grade lookup by position ratio (grade arrays are synced-aligned, not VTX-aligned)
+    const ratio = i / brakingBpfFull.length
+    const gradeIdx = Math.min(estimatedGradePctArray.length - 1, Math.round(ratio * estimatedGradePctArray.length))
+    const fitIdx = Math.min(fitGradeArray.length - 1, Math.round(ratio * fitGradeArray.length))
 
-    const decelWindow = brakingDecelArray.slice(windowStart, windowEnd)
-    const meanGrade = estimatedGradePctArray.slice(windowStart, windowEnd)
-      .reduce((s, v) => s + v, 0) / (windowEnd - windowStart)
-
-    // FIT grade at window center (lagged independent reference for visualization)
-    const fitGradePercent = fitGradeArray[centerIdx] ?? null
-
-    // Gyro context for terrain rejection + pitch-rate correlation
-    let gyroContext: { window: number[]; integralWindow: number[]; sampleRate: number } | undefined
-    if (hasGyroY) {
-      const integralStart = Math.max(0, centerIdx - gyroIntegralHalfWidth)
-      const integralEnd = Math.min(nBrakingSamples, centerIdx + gyroIntegralHalfWidth + 1)
-      gyroContext = {
-        window: rawGyroY.slice(windowStart, windowEnd),
-        integralWindow: rawGyroY.slice(integralStart, integralEnd),
-        sampleRate,
-      }
-    }
-
-    const result = calculateBraking(decelWindow, meanGrade, {
-      threshold: options.brakingThresholdMs2,
-      maxDeceleration: options.brakingMaxMs2,
-    }, gyroContext)
-
-    brakingWindowResults.push({
-      centerIdx,
-      isBraking: result.isBraking,
-      brakingIntensity: result.brakingIntensity,
-      brakingDecelerationMs2: result.brakingDecelerationMs2,
-      estimatedGradePercent: result.estimatedGradePercent,
-      fitGradePercent,
+    brakingSamples.push({
+      timestamp: vtxSamples[i].timestamp,
+      isBraking,
+      brakingIntensity,
+      brakingDecelerationMs2: isBraking ? decel : 0,
+      bpfAccelX: bpfVal,
+      estimatedGradePercent: estimatedGradePctArray[gradeIdx] ?? 0,
+      fitGradePercent: fitGradeArray[fitIdx] ?? null,
     })
   }
 
@@ -559,7 +540,6 @@ export function calculatePedalingEfficiency(
 
   const efficiencySamples: PedalingEfficiencyOutput[] = []
   const roughnessSamples: SurfaceRoughnessSample[] = []
-  const brakingSamples: BrakingSample[] = []
   const positionSamples: RidingPositionSample[] = []
 
   // Position detection config
@@ -575,12 +555,9 @@ export function calculatePedalingEfficiency(
   // Step through at output rate (e.g. every 20th sample at 100Hz input → 5Hz output)
   const outputStep = Math.max(1, Math.round(sampleRate / C.OUTPUT_SAMPLE_RATE_HZ))
 
-  // Two-pointer cursors that advance with `i`. Both windowResults[] and
-  // brakingWindowResults[] are sorted by centerIdx, and `i` is monotonic, so
-  // we never need to walk backward. This makes the third pass O(n) instead of
-  // O(n × windows).
+  // Two-pointer cursor that advances with `i`. windowResults[] is sorted by
+  // centerIdx, and `i` is monotonic, so we never walk backward.
   let stabWinCursor = 0
-  let brakWinCursor = 0
 
   for (let i = 0; i < processedSamples.length; i += outputStep) {
     const sample = processedSamples[i]
@@ -609,18 +586,6 @@ export function calculatePedalingEfficiency(
       roughness: interpolated.roughness,
       roughnessRms: interpolated.roughnessRms,
       speed: sample.speed,
-    })
-
-    // Braking: interpolate from dedicated braking window results
-    const brakingInterp = interpolateBrakingAtCursor(brakingWindowResults, i, brakWinCursor)
-    brakWinCursor = brakingInterp.cursor
-    brakingSamples.push({
-      timestamp: sample.timestamp,
-      isBraking: brakingInterp.isBraking,
-      brakingIntensity: brakingInterp.brakingIntensity,
-      brakingDecelerationMs2: brakingInterp.brakingDecelerationMs2,
-      estimatedGradePercent: brakingInterp.estimatedGradePercent,
-      fitGradePercent: brakingInterp.fitGradePercent,
     })
 
     // ============================================
@@ -820,58 +785,6 @@ function interpolateAtCursor<T extends { centerIdx: number } & InterpolatedResul
   return { ...nearest, roughness, roughnessRms, cursor }
 }
 
-interface InterpolatedBrakingResult {
-  isBraking: boolean
-  brakingIntensity: number
-  brakingDecelerationMs2: number
-  estimatedGradePercent: number
-  fitGradePercent: number | null
-}
-
-const EMPTY_BRAKING_INTERPOLATED: InterpolatedBrakingResult & { cursor: number } = {
-  isBraking: false,
-  brakingIntensity: 0,
-  brakingDecelerationMs2: 0,
-  estimatedGradePercent: 0,
-  fitGradePercent: null,
-  cursor: 0,
-}
-
-/**
- * Two-pointer braking interpolation. Same monotonic-cursor pattern as
- * interpolateAtCursor but for the braking-specific window shape.
- */
-function interpolateBrakingAtCursor<T extends { centerIdx: number } & InterpolatedBrakingResult>(
-  results: T[],
-  sampleIdx: number,
-  cursor: number,
-): InterpolatedBrakingResult & { cursor: number } {
-  if (results.length === 0) return EMPTY_BRAKING_INTERPOLATED
-
-  while (cursor + 1 < results.length && results[cursor + 1].centerIdx <= sampleIdx) {
-    cursor++
-  }
-
-  const left = results[cursor]
-  const rightIdx = cursor + 1 < results.length ? cursor + 1 : cursor
-  const right = results[rightIdx]
-
-  if (left.centerIdx === right.centerIdx || sampleIdx <= left.centerIdx) {
-    return { ...left, cursor }
-  }
-  if (sampleIdx >= right.centerIdx) {
-    return { ...right, cursor }
-  }
-
-  const t = (sampleIdx - left.centerIdx) / (right.centerIdx - left.centerIdx)
-  const brakingDecelerationMs2 = lerp(left.brakingDecelerationMs2, right.brakingDecelerationMs2, t)
-  const brakingIntensity = lerp(left.brakingIntensity, right.brakingIntensity, t)
-  const estimatedGradePercent = lerp(left.estimatedGradePercent, right.estimatedGradePercent, t)
-  const fitGradePercent = (t < 0.5 ? left : right).fitGradePercent
-  const isBraking = brakingIntensity > 0
-
-  return { isBraking, brakingIntensity, brakingDecelerationMs2, estimatedGradePercent, fitGradePercent, cursor }
-}
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t

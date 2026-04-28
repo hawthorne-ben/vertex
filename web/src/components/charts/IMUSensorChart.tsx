@@ -3,8 +3,9 @@
 import { useState, useMemo, useEffect } from 'react'
 import { UPlotBase } from './UPlotBase'
 import { useIMUData, IMUDataType, IMUSample } from './hooks/useIMUData'
-import { processIMUChartData, calculateIMUStats } from '@/lib/charts/processing'
+import { processIMUChartData, calculateIMUStats, mergeFilteredStreams } from '@/lib/charts/processing'
 import type { ChartStat } from './UPlotBase'
+import type { FilteredStream } from './hooks/useFilteredStreams'
 
 export interface VTXRecording {
   id: string
@@ -24,6 +25,8 @@ export interface IMUSensorChartProps {
   initialSamples?: IMUSample[]  // Optional: server-fetched samples (recording detail page)
   originalCount?: number  // Optional: total sample count when initialSamples provided
   parentLoading?: boolean  // Optional: parent is still fetching initialSamples
+  filteredStreams?: FilteredStream[]  // Optional: pre-computed filtered series to overlay
+  onDataTypeChange?: (dt: IMUDataType) => void  // Optional: notify parent of data type changes
 }
 
 /**
@@ -42,7 +45,9 @@ export function IMUSensorChart({
   className = '',
   initialSamples,
   originalCount: propOriginalCount,
-  parentLoading = false
+  parentLoading = false,
+  filteredStreams,
+  onDataTypeChange,
 }: IMUSensorChartProps) {
   const [internalDataType, setInternalDataType] = useState<IMUDataType>('accel')
   const dataType = controlledDataType ?? internalDataType
@@ -75,31 +80,63 @@ export function IMUSensorChart({
   }, [coverageRanges, onCoverageUpdate])
 
   // Process data for chart using pure function
-  const chartData = useMemo(() => {
+  const baseChartData = useMemo(() => {
     return processIMUChartData(samples, dataType, zoomRange)
   }, [samples, dataType, zoomRange])
 
-  // Calculate stats using pure function
+  // Merge filtered streams (if any) into the chart data
+  const chartData = useMemo(() => {
+    if (!filteredStreams || filteredStreams.length === 0) return baseChartData
+    // Filter to only streams whose axis matches the current data type
+    const prefix = dataType === 'gyro' ? 'gyro_' : 'accel_'
+    const relevant = filteredStreams.filter(s => s.axis.startsWith(prefix))
+    if (relevant.length === 0) return baseChartData
+    return mergeFilteredStreams(baseChartData, relevant)
+  }, [baseChartData, filteredStreams, dataType])
+
+  // Calculate stats using pure function (raw data only, not filtered)
   const stats = useMemo(() => {
     return calculateIMUStats(samples, dataType)
   }, [samples, dataType])
 
-  // Convert stats to ChartStat format for UPlotBase
+  // Convert stats to ChartStat format for UPlotBase.
+  // Includes both raw axis stats and filtered stream entries so the legend
+  // shows toggle buttons for every series in the chart.
   const chartStats = useMemo((): ChartStat[] => {
-    if (stats.length === 0 || !chartData.series.length) return []
-    // Series colors from processing.ts — series[0] is {}, series[1..3] are the axes
-    return stats.map((s, i) => {
-      const seriesEntry = chartData.series[i + 1]
+    if (stats.length === 0 || !baseChartData.series.length) return []
+
+    // Raw axis stats
+    const rawStats: ChartStat[] = stats.map((s, i) => {
+      const seriesEntry = baseChartData.series[i + 1]
       const color = typeof seriesEntry?.stroke === 'string' ? seriesEntry.stroke : '#888'
       return {
         label: s.axis,
         color,
         avg: s.mean,
         max: s.max,
-        unit: chartData.yAxisLabel,
+        unit: baseChartData.yAxisLabel,
       }
     })
-  }, [stats, chartData.series, chartData.yAxisLabel])
+
+    // Filtered stream entries — label-only (no avg/max stats, just toggle)
+    if (filteredStreams && filteredStreams.length > 0) {
+      const prefix = dataType === 'gyro' ? 'gyro_' : 'accel_'
+      const relevant = filteredStreams.filter(s => s.axis.startsWith(prefix))
+      for (const stream of relevant) {
+        // Find the matching series in chartData to get the color
+        const seriesEntry = chartData.series.find(s => s.label === stream.label)
+        const color = typeof seriesEntry?.stroke === 'string' ? seriesEntry.stroke : '#888'
+        rawStats.push({
+          label: stream.label,
+          color,
+          avg: null,
+          max: null,
+        })
+      }
+    }
+
+    return rawStats
+  }, [stats, baseChartData.series, baseChartData.yAxisLabel, filteredStreams, dataType, chartData.series])
 
   const getTitle = () => {
     switch (dataType) {
@@ -129,14 +166,21 @@ export function IMUSensorChart({
 
   return (
     <div className={`space-y-4 ${className}`}>
-      {/* Data source selector (only shown in uncontrolled mode) */}
-      {!isControlled ? (
+      {/* Data source selector */}
+      {(!isControlled || onDataTypeChange) ? (
         <div className="flex gap-4 items-center">
           <div className="flex items-center gap-2">
             <label className="text-sm font-medium text-muted-foreground">Data Source:</label>
             <select
               value={dataType}
-              onChange={(e) => setInternalDataType(e.target.value as IMUDataType)}
+              onChange={(e) => {
+                const dt = e.target.value as IMUDataType
+                if (isControlled) {
+                  onDataTypeChange?.(dt)
+                } else {
+                  setInternalDataType(dt)
+                }
+              }}
               className="px-3 py-2 pr-8 rounded-md text-sm bg-background border border-border text-foreground focus:outline-none focus:ring-2 focus:ring-primary appearance-none bg-[url('data:image/svg+xml;charset=utf-8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2212%22%20height%3D%2212%22%20viewBox%3D%220%200%2012%2012%22%3E%3Cpath%20fill%3D%22%23666%22%20d%3D%22M6%209L1%204h10z%22%2F%3E%3C%2Fsvg%3E')] bg-[length:12px] bg-[position:right_0.5rem_center] bg-no-repeat"
               disabled={loading}
             >
