@@ -27,7 +27,15 @@ export interface DerivedMetricSample {
 export interface UseDerivedMetricOptions {
   rideId: string
   metric: DerivedMetricType
-  timeRange?: { start: string; end: string } | null
+  /**
+   * Time windows to fetch. The server filters samples to the union of these
+   * ranges (and downsamples by total covered duration). Null/empty fetches
+   * the full ride.
+   *
+   * Caller is responsible for snapping endpoints to a stable grid (e.g. 5s)
+   * so subtle pan/zoom jitter doesn't bypass the URL-keyed apiCache.
+   */
+  ranges?: Array<{ start: string; end: string }> | null
   fitRecordingId?: string | null
   resolution?: number // Samples per second (e.g. 1 for GPS frequency)
   enabled?: boolean // Whether to fetch data (default: true)
@@ -103,11 +111,21 @@ interface ApiResponse {
 export function useDerivedMetric({
   rideId,
   metric,
-  timeRange,
+  ranges,
   fitRecordingId,
   resolution,
   enabled = true
 }: UseDerivedMetricOptions): UseDerivedMetricResult {
+  // Normalize ranges into a stable string for the effect dep array. Without
+  // this, a new array identity on every render would re-trigger the fetch
+  // even when the contents are equivalent.
+  const rangesKey = ranges && ranges.length > 0
+    ? JSON.stringify(
+        [...ranges]
+          .map(r => ({ start: r.start, end: r.end }))
+          .sort((a, b) => a.start.localeCompare(b.start))
+      )
+    : null
   const [samples, setSamples] = useState<DerivedMetricSample[]>([])
   const [loading, setLoading] = useState(false)
   const [polling, setPolling] = useState(false)
@@ -135,12 +153,12 @@ export function useDerivedMetric({
 
     clearPollTimer()
 
-    // Build the heavy metric URL once (depends on rideId/metric/timeRange/resolution)
+    // Build the heavy metric URL once (depends on rideId/metric/ranges/resolution)
     const buildMetricUrl = (): string => {
       const params = new URLSearchParams()
-      if (timeRange) {
-        params.set('start', timeRange.start)
-        params.set('end', timeRange.end)
+      if (rangesKey) {
+        // rangesKey is the canonical (sorted) JSON we keyed the cache against.
+        params.set('ranges', rangesKey)
       }
       if (resolution !== undefined) {
         params.set('resolution', resolution.toString())
@@ -331,7 +349,7 @@ export function useDerivedMetric({
       cancelledRef.current = true
       clearPollTimer()
     }
-  }, [rideId, metric, timeRange, fitRecordingId, resolution, enabled, authFetch])
+  }, [rideId, metric, rangesKey, fitRecordingId, resolution, enabled, authFetch])
 
   return { samples, loading, polling, error, metadata }
 }

@@ -3,6 +3,8 @@ import {
   setupAnalysisRoute,
   buildPendingResponse,
   loadSamples,
+  parseRanges,
+  filterByRanges,
 } from '@/lib/api/ride-analysis'
 
 export const dynamic = 'force-dynamic'
@@ -99,9 +101,8 @@ export async function GET(
     // Parse query parameters
     const fieldsParam = searchParams.get('fields')
     const metadataOnly = fieldsParam === 'metadata'
-    const startTime = searchParams.get('start') || undefined
-    const endTime = searchParams.get('end') || undefined
     const resolution = searchParams.get('resolution') // Custom resolution (samples per second)
+    const ranges = parseRanges(searchParams)
 
     const setup = await setupAnalysisRoute(request, rideId, 'riding_position')
     if ('earlyResponse' in setup) return setup.earlyResponse
@@ -117,18 +118,10 @@ export async function GET(
     const completedAnalysis = analysis!
 
     // Fetch the heavy samples column only now that we know status is completed
-    let samples = await loadSamples(context.supabase, completedAnalysis.samples_path)
-
-    // Filter by time range if provided
-    if (startTime || endTime) {
-      const startMs = startTime ? new Date(startTime).getTime() : -Infinity
-      const endMs = endTime ? new Date(endTime).getTime() : Infinity
-
-      samples = samples.filter((s: any) => {
-        const sampleMs = new Date(s.timestamp).getTime()
-        return sampleMs >= startMs && sampleMs <= endMs
-      })
-    }
+    let samples: any[] = filterByRanges(
+      await loadSamples(context.supabase, completedAnalysis.samples_path),
+      ranges
+    )
 
     // Downsample if resolution is specified and is lower than 1 Hz
     // Position data is already at 1 Hz, so only downsample if requested resolution is lower
@@ -205,7 +198,7 @@ export async function GET(
       {
         headers: {
           'Cache-Control': 'public, no-cache',
-          'ETag': `"${completedAnalysis.id}-${completedAnalysis.completed_at}-${startTime || 'full'}-${endTime || 'full'}"`,
+          'ETag': `"${completedAnalysis.id}-${completedAnalysis.completed_at}-${ranges ? JSON.stringify(ranges) : 'full'}"`,
         },
       }
     )

@@ -167,3 +167,79 @@ export async function loadSamples(
   }
   return downloadSamples(supabase, samplesPath)
 }
+
+export interface TimeRange {
+  startMs: number
+  endMs: number
+}
+
+/**
+ * Parse the ?ranges= JSON array and/or legacy ?start=/?end= query params into
+ * a normalized list of {startMs, endMs} intervals. Returns null when neither
+ * is present (caller should treat as "full ride").
+ *
+ * Ranges with overlapping or touching intervals are merged so downstream
+ * filtering and downsampling can assume disjoint windows.
+ */
+export function parseRanges(searchParams: URLSearchParams): TimeRange[] | null {
+  const rangesParam = searchParams.get('ranges')
+  const startParam = searchParams.get('start')
+  const endParam = searchParams.get('end')
+
+  let raw: TimeRange[] = []
+
+  if (rangesParam) {
+    try {
+      const parsed = JSON.parse(rangesParam)
+      if (Array.isArray(parsed)) {
+        for (const r of parsed) {
+          const startMs = new Date(r.start).getTime()
+          const endMs = new Date(r.end).getTime()
+          if (Number.isFinite(startMs) && Number.isFinite(endMs) && endMs > startMs) {
+            raw.push({ startMs, endMs })
+          }
+        }
+      }
+    } catch {
+      // Malformed JSON — ignore and fall back to start/end below.
+    }
+  }
+
+  if (raw.length === 0 && (startParam || endParam)) {
+    raw.push({
+      startMs: startParam ? new Date(startParam).getTime() : -Infinity,
+      endMs: endParam ? new Date(endParam).getTime() : Infinity,
+    })
+  }
+
+  if (raw.length === 0) return null
+
+  // Merge overlapping/touching intervals so callers see disjoint windows.
+  raw.sort((a, b) => a.startMs - b.startMs)
+  const merged: TimeRange[] = [raw[0]]
+  for (let i = 1; i < raw.length; i++) {
+    const last = merged[merged.length - 1]
+    if (raw[i].startMs <= last.endMs) {
+      last.endMs = Math.max(last.endMs, raw[i].endMs)
+    } else {
+      merged.push(raw[i])
+    }
+  }
+  return merged
+}
+
+/** Filter samples to those whose timestamp falls inside any of the given ranges. */
+export function filterByRanges<T extends { timestamp: string }>(
+  samples: T[],
+  ranges: TimeRange[] | null
+): T[] {
+  if (!ranges) return samples
+  return samples.filter(s => {
+    const t = new Date(s.timestamp).getTime()
+    for (const r of ranges) {
+      if (t >= r.startMs && t <= r.endMs) return true
+    }
+    return false
+  })
+}
+

@@ -2,8 +2,12 @@
 
 import { useMemo, useState, useEffect, useRef } from 'react'
 import dynamic from 'next/dynamic'
-import { findClosestByTime } from '@/lib/sync/fit-vtx-sync'
 import type { FitStatsSample, FitStatsMetric, AnalyticsOverlay } from './ride-map'
+
+// Stable empty array — passing `[]` inline as a prop each render would
+// invalidate RoutePolylines' memo and force a full-track segment rebuild
+// every scrub tick on tabs that don't show IMU coverage.
+const EMPTY_IMU_RANGES: never[] = []
 
 // Dynamically import map to avoid SSR issues with Leaflet
 const RideMap = dynamic(
@@ -57,7 +61,6 @@ export function RideMapClient({
   imuColor,
   onZoomChange
 }: RideMapClientProps) {
-
   // Process samples into GPS track format
   const gpsTrack = useMemo(() => {
     return samples
@@ -73,14 +76,37 @@ export function RideMapClient({
       }))
   }, [samples])
 
-  // Convert highlightTime to GPS track index
+  // Parallel array of timestamps as Unix ms, sorted ascending. Built once per
+  // gpsTrack so highlight lookups during scrub do a pure-numeric binary search
+  // instead of allocating a Date object per probe.
+  const trackTimestampsMs = useMemo(() => {
+    const out = new Float64Array(gpsTrack.length)
+    for (let i = 0; i < gpsTrack.length; i++) {
+      out[i] = new Date(gpsTrack[i].timestamp).getTime()
+    }
+    return out
+  }, [gpsTrack])
+
+  // Convert highlightTime to GPS track index. Inline binary search on the
+  // precomputed ms array — runs every scrub tick, so allocating zero objects
+  // matters.
   const highlightIndex = useMemo(() => {
-    if (highlightTime === null || highlightTime === undefined || gpsTrack.length === 0) {
+    if (highlightTime === null || highlightTime === undefined || trackTimestampsMs.length === 0) {
       return null
     }
-    const result = findClosestByTime(gpsTrack, highlightTime)
-    return result?.index ?? null
-  }, [highlightTime, gpsTrack])
+    const targetMs = highlightTime * 1000
+    let lo = 0
+    let hi = trackTimestampsMs.length - 1
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1
+      if (trackTimestampsMs[mid] < targetMs) lo = mid + 1
+      else hi = mid
+    }
+    if (lo > 0 && Math.abs(trackTimestampsMs[lo - 1] - targetMs) < Math.abs(trackTimestampsMs[lo] - targetMs)) {
+      lo = lo - 1
+    }
+    return lo
+  }, [highlightTime, trackTimestampsMs])
 
   // Overlay data is still loading
   const isOverlayLoading = !loading && gpsTrack.length > 0 && mapMode !== 'route' && analyticsLoading
@@ -133,9 +159,9 @@ export function RideMapClient({
     <div className="relative rounded-lg map-shadow">
       <RideMap
         gpsTrack={gpsTrack}
-        hoverIndex={highlightIndex !== null && highlightIndex !== -1 ? highlightIndex : null}
+        hoverIndex={highlightIndex}
         className="w-full"
-        imuTimeRanges={deferredMode === 'vtx' ? imuTimeRanges : []}
+        imuTimeRanges={deferredMode === 'vtx' ? imuTimeRanges : EMPTY_IMU_RANGES}
         imuColor={deferredMode === 'route' ? undefined : deferredImuColor}
         analyticsOverlay={!isOverlayLoading && analyticsOverlay && analyticsOverlay.samples.length > 0 ? analyticsOverlay : undefined}
         fitStatsSamples={deferredMode === 'fitStats' ? fitStatsSamples : undefined}

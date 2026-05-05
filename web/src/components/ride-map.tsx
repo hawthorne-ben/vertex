@@ -487,6 +487,29 @@ const RoutePolylines = memo(function RoutePolylines({
   )
 })
 
+// Hover marker is split out + memoized so a scrub tick (which only changes
+// hoverIndex) doesn't cascade through the whole RideMap tree, re-rendering
+// the MapContainer / TileLayer / Polylines / start-end markers each time.
+const HoverMarker = memo(function HoverMarker({
+  gpsTrack,
+  hoverIndex,
+}: {
+  gpsTrack: GPSPoint[]
+  hoverIndex: number | null
+}) {
+  if (hoverIndex === null || hoverIndex < 0 || hoverIndex >= gpsTrack.length) return null
+  const point = gpsTrack[hoverIndex]
+  const position: [number, number] = [point.lat, point.lon]
+  return (
+    <Marker position={position} icon={hoverIcon} zIndexOffset={1000}>
+      <Popup>
+        {point.speedMph !== undefined && <div>Speed: {point.speedMph.toFixed(1)} mph</div>}
+        {point.altitudeFt !== undefined && <div>Elevation: {point.altitudeFt.toFixed(0)} ft</div>}
+      </Popup>
+    </Marker>
+  )
+})
+
 export function RideMap({
   gpsTrack,
   hoverIndex = null,
@@ -596,11 +619,6 @@ export function RideMap({
     return '#3b82f6' // Default blue
   }
 
-  // Create hover marker position
-  const hoverPosition = hoverIndex !== null && hoverIndex >= 0 && hoverIndex < gpsTrack.length
-    ? [gpsTrack[hoverIndex].lat, gpsTrack[hoverIndex].lon] as [number, number]
-    : null
-
   // Theme-aware colors
   const defaultRouteColor = isDark ? '#ffffff' : '#000000'
   const imuRouteColor = imuColorProp ?? '#22c55e' // Default green for IMU coverage
@@ -638,19 +656,9 @@ export function RideMap({
           fitStatsMetric={fitStatsMetric}
         />
 
-        {/* Hover marker - zIndex 1000 */}
-        {hoverPosition && (
-          <Marker position={hoverPosition} icon={hoverIcon} zIndexOffset={1000}>
-            <Popup>
-              {gpsTrack[hoverIndex!].speedMph !== undefined && (
-                <div>Speed: {gpsTrack[hoverIndex!].speedMph!.toFixed(1)} mph</div>
-              )}
-              {gpsTrack[hoverIndex!].altitudeFt !== undefined && (
-                <div>Elevation: {gpsTrack[hoverIndex!].altitudeFt!.toFixed(0)} ft</div>
-              )}
-            </Popup>
-          </Marker>
-        )}
+        {/* Hover marker - zIndex 1000. Memoized so scrub ticks don't reconcile
+            the rest of the map tree. */}
+        <HoverMarker gpsTrack={gpsTrack} hoverIndex={hoverIndex} />
 
         {/* Start marker - green home icon - zIndex 500 */}
         <Marker position={positions[0]} icon={startIcon} zIndexOffset={500}>

@@ -585,7 +585,6 @@ export function buildBrakingChartConfig(
     final.map(s => s?.estimatedGradePercent ?? null),
     final.map(s => s?.fitGradePercent ?? null),
     final.map(s => s?.brakingDecelerationMs2 ?? null),
-    final.map(s => (s as any)?.bpfAccelX ?? null),
   ]
 
   const series: uPlot.Series[] = [
@@ -610,19 +609,10 @@ export function buildBrakingChartConfig(
     {
       label: 'Braking Force',
       stroke: 'hsl(0, 84%, 60%)',
-      fill: 'hsla(0, 84%, 60%, 0.12)',
-      width: 2,
+      width: 0,
       scale: 'braking',
       spanGaps: false,
-      points: { show: false },
-    },
-    {
-      label: 'BPF Accel X',
-      stroke: 'hsl(280, 60%, 55%)',
-      width: 1.5,
-      scale: 'braking',
-      spanGaps: false,
-      points: { show: false },
+      points: { show: true, size: 4, fill: 'hsl(0, 84%, 60%)', stroke: 'hsl(0, 84%, 60%)' },
     },
   ]
 
@@ -719,13 +709,6 @@ export function buildBrakingChartConfig(
       unit: ' m/s²',
     })
   }
-  // BPF debug line — toggle-only, no stats
-  stats.push({
-    label: 'BPF Accel X',
-    color: 'hsl(280, 60%, 55%)',
-    avg: null,
-    max: null,
-  })
 
   return { data, series, scales, axes, stats }
 }

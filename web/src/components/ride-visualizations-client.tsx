@@ -32,6 +32,41 @@ const CHART_BUILDERS: Record<string, (samples: any[], zoomRange?: { start: strin
   braking: buildBrakingChartConfig,
 }
 
+// Stable empty array for the "no IMU coverage" prop. Inline `[]` would create
+// a new identity per render, defeating RoutePolylines' memoization and
+// re-running its full-track segment build on every scrub tick.
+const EMPTY_IMU_RANGES: never[] = []
+
+/**
+ * Mirror a value into state that updates at most once per animation frame.
+ * Multiple synchronous updates within the same frame collapse to the latest
+ * value. Used to throttle the highlight prop to the analytics chart so the
+ * canvas doesn't repaint for every slider event — the chart catches up at
+ * frame cadence while the map keeps the live value.
+ */
+function useRafThrottled<T>(value: T): T {
+  const [throttled, setThrottled] = useState(value)
+  const pendingRef = useRef<number | null>(null)
+  const latestRef = useRef(value)
+  latestRef.current = value
+
+  useEffect(() => {
+    if (pendingRef.current !== null) return
+    pendingRef.current = requestAnimationFrame(() => {
+      pendingRef.current = null
+      setThrottled(latestRef.current)
+    })
+    return () => {
+      if (pendingRef.current !== null) {
+        cancelAnimationFrame(pendingRef.current)
+        pendingRef.current = null
+      }
+    }
+  }, [value])
+
+  return throttled
+}
+
 // Shared stats dropdown used in both map and chart tab bars
 function StatsDropdown({
   tabId,
@@ -226,6 +261,11 @@ export function RideVisualizationsClient({
   const [statsDropdownOpen, setStatsDropdownOpen] = useState(false)
   const [chartStatsDropdownOpen, setChartStatsDropdownOpen] = useState(false)
   const [selectedTime, setSelectedTime] = useState<number | null>(null)
+  // Chart highlight is rAF-throttled — uPlot has to repaint the whole canvas
+  // on every highlight change, which can't keep up with raw slider events on
+  // long rides. The map reads selectedTime directly so the hover marker
+  // stays live.
+  const chartHighlightTime = useRafThrottled(selectedTime)
   const [sharedZoomRange, setSharedZoomRange] = useState<{ start: string; end: string } | null>(null)
   const [mapZoom, setMapZoom] = useState<number | null>(null)
   const [showRerunConfirm, setShowRerunConfirm] = useState(false)
@@ -292,13 +332,23 @@ export function RideVisualizationsClient({
     skip: !hasVtxData
   })
 
-  // All analytics metrics via centralized hook — lazy-fetched, data-driven
-  const metrics = useAnalyticsMetrics({
+  const rideDurationSeconds = useMemo(
+    () => Math.max(1, (new Date(rideEndTime).getTime() - new Date(rideStartTime).getTime()) / 1000),
+    [rideStartTime, rideEndTime]
+  )
+
+  // All analytics metrics via centralized hook — lazy-fetched, data-driven.
+  // Map gets a full-ride 1 Hz fetch (cached forever — overlay always dense).
+  // Chart fetches its current zoom range at a density that scales with the
+  // span (more zoom → more samples per second), refetching on zoom change.
+  const { mapMetrics, chartMetrics } = useAnalyticsMetrics({
     rideId,
     fitRecordingId,
     enabled: hasAnalyticsData,
     activeMapTab: mapTab,
     activeChartTab: chartTab,
+    chartRange: sharedZoomRange,
+    rideDurationSeconds,
   })
 
   // Derived state
@@ -308,8 +358,8 @@ export function RideVisualizationsClient({
   const isChartImuTab = IMU_TABS.has(chartTab)
   const isChartAnalyticsTab = ANALYTICS_TAB_IDS.has(chartTab)
 
-  const anyPolling = isAnyPolling(metrics)
-  const anyLoaded = isAnyLoaded(metrics)
+  const anyPolling = isAnyPolling({ mapMetrics, chartMetrics })
+  const anyLoaded = isAnyLoaded({ mapMetrics, chartMetrics })
 
   // Track analysis completion for comparison cards refresh
   const [analysisRefreshKey, setAnalysisRefreshKey] = useState(0)
@@ -356,18 +406,18 @@ export function RideVisualizationsClient({
   const analyticsOverlay = useMemo((): AnalyticsOverlay | undefined => {
     if (!isMapAnalyticsTab || isMapRouteTab) return undefined
     const def = ANALYTICS_BY_TAB.get(mapTab)
-    const metricState = metrics[mapTab]
+    const metricState = mapMetrics[mapTab]
     if (!def || !metricState || metricState.samples.length === 0) return undefined
     return {
       samples: metricState.samples,
       getColor: def.getOverlayColor,
     }
-  }, [isMapAnalyticsTab, isMapRouteTab, mapTab, metrics])
+  }, [isMapAnalyticsTab, isMapRouteTab, mapTab, mapMetrics])
 
-  const activeMapMetric = metrics[mapTab]
-  const activeChartMetric = metrics[chartTab]
+  const activeMapMetric = mapMetrics[mapTab]
+  const activeChartMetric = chartMetrics[chartTab]
 
-  const showRerunButton = hasAnalyticsData && (isMapAnalyticsTab ? !isAnyLoading(metrics) : true)
+  const showRerunButton = hasAnalyticsData && (isMapAnalyticsTab ? !isAnyLoading({ mapMetrics, chartMetrics }) : true)
   const mapAnalyticsLoading = isMapAnalyticsTab && activeMapMetric?.loading
 
   // Chart stats config
@@ -531,7 +581,7 @@ export function RideVisualizationsClient({
               rideId={rideId}
               fitRecordingId={fitRecordingId}
               highlightTime={selectedTime}
-              imuTimeRanges={isMapRouteTab ? [] : imuTimeRanges}
+              imuTimeRanges={isMapRouteTab ? EMPTY_IMU_RANGES : imuTimeRanges}
               imuColor={isMapRouteTab ? undefined : imuColor}
               samples={samples}
               loading={loading}
@@ -650,7 +700,7 @@ export function RideVisualizationsClient({
                 series={chartConfig.series}
                 scales={chartConfig.scales}
                 axes={chartConfig.axes}
-                highlightTime={selectedTime}
+                highlightTime={chartHighlightTime}
                 onZoom={(start, end) => setSharedZoomRange({ start, end })}
                 stats={chartConfig.stats}
               />
@@ -671,7 +721,6 @@ export function RideVisualizationsClient({
           <RideChartsClient
             rideId={rideId}
             fitRecordingId={fitRecordingId}
-            highlightTime={selectedTime}
             samples={samples}
             loading={loading}
             error={error}

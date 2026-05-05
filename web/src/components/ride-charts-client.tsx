@@ -18,7 +18,6 @@ const ElevationProfile = dynamic(
 interface RideChartsClientProps {
   rideId: string
   fitRecordingId: string | null
-  highlightTime?: number | null // Unix timestamp in seconds to highlight
   samples?: Sample[]
   loading?: boolean
   error?: string | null
@@ -41,7 +40,6 @@ interface Sample {
 export function RideChartsClient({
   rideId,
   fitRecordingId,
-  highlightTime,
   samples: propSamples,
   loading: propLoading,
   error: propError,
@@ -152,7 +150,10 @@ export function RideChartsClient({
   return (
     <div className="space-y-6">
 
-      {/* Performance Charts Grid - 2 per row */}
+      {/* Performance Charts Grid - 2 per row.
+          highlightTime is intentionally NOT forwarded — repainting 5 canvases
+          per scrub tick can't keep up with slider events. The main analytics
+          chart above already shows the highlight, which is enough. */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {hasPower && (
           <Card>
@@ -161,7 +162,6 @@ export function RideChartsClient({
                 samples={powerData}
                 label="Power"
                 unit="W"
-                highlightTime={highlightTime}
                 color="#ef4444"
                 className="w-full"
               />
@@ -176,7 +176,6 @@ export function RideChartsClient({
                 samples={hrData}
                 label="Heart Rate"
                 unit="bpm"
-                highlightTime={highlightTime}
                 color="#ec4899"
                 className="w-full"
               />
@@ -191,7 +190,6 @@ export function RideChartsClient({
                 samples={cadenceData}
                 label="Cadence"
                 unit="rpm"
-                highlightTime={highlightTime}
                 color="#3b82f6"
                 className="w-full"
               />
@@ -206,7 +204,6 @@ export function RideChartsClient({
                 samples={speedData}
                 label="Speed"
                 unit="mph"
-                highlightTime={highlightTime}
                 color="#10b981"
                 className="w-full"
               />
@@ -224,7 +221,6 @@ export function RideChartsClient({
           <CardContent className="pt-0">
             <ElevationProfile
               samples={samples}
-              highlightTime={highlightTime}
               zoomRange={zoomRange}
               onZoom={onZoomChange ? (start, end) => onZoomChange({ start, end }) : undefined}
               className="w-full"

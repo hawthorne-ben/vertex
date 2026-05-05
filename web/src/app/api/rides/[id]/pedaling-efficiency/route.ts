@@ -3,6 +3,8 @@ import {
   setupAnalysisRoute,
   buildPendingResponse,
   loadSamples,
+  parseRanges,
+  filterByRanges,
 } from '@/lib/api/ride-analysis'
 
 export const dynamic = 'force-dynamic'
@@ -130,9 +132,8 @@ export async function GET(
     // Parse query parameters
     const fieldsParam = searchParams.get('fields')
     const metadataOnly = fieldsParam === 'metadata'
-    const startTime = searchParams.get('start') || undefined
-    const endTime = searchParams.get('end') || undefined
     const resolution = searchParams.get('resolution') // Custom resolution (samples per second)
+    const ranges = parseRanges(searchParams)
 
     const setup = await setupAnalysisRoute(request, rideId, 'pedaling_efficiency')
     if ('earlyResponse' in setup) return setup.earlyResponse
@@ -153,18 +154,7 @@ export async function GET(
     const rawSamples = await loadSamples(context.supabase, completedAnalysis.samples_path)
 
     // Normalize legacy field names (v4 efficiency → v5 stability)
-    let samples = rawSamples.map(normalizeSample)
-
-    // Filter by time range if provided
-    if (startTime || endTime) {
-      const startMs = startTime ? new Date(startTime).getTime() : -Infinity
-      const endMs = endTime ? new Date(endTime).getTime() : Infinity
-
-      samples = samples.filter((s: any) => {
-        const sampleMs = new Date(s.timestamp).getTime()
-        return sampleMs >= startMs && sampleMs <= endMs
-      })
-    }
+    let samples: any[] = filterByRanges(rawSamples.map(normalizeSample), ranges)
 
     // Downsample based on resolution parameter or defaults
     if (resolution) {
@@ -202,22 +192,11 @@ export async function GET(
       }
 
       samples = bucketedSamples
-    } else if (!startTime || !endTime) {
-      // Full ride overview: ~1000 samples using stride sampling
-      const targetResolution = 1000
-      if (samples.length > targetResolution) {
-        const stride = Math.ceil(samples.length / targetResolution)
-        samples = samples.filter((_: any, i: number) => i % stride === 0)
-      }
-    } else {
-      // Zoomed view: up to 10 samples per second using stride sampling
-      const durationSeconds = (new Date(endTime).getTime() - new Date(startTime).getTime()) / 1000
-      const targetResolution = Math.min(Math.ceil(durationSeconds * 10), 5000)
-      if (samples.length > targetResolution) {
-        const stride = Math.ceil(samples.length / targetResolution)
-        samples = samples.filter((_: any, i: number) => i % stride === 0)
-      }
     }
+    // No default downsample: the map needs full-resolution stability to
+    // colorize every GPS point, matching the other three IMU metrics
+    // (riding-position, surface-roughness, braking) which already return
+    // their full sample arrays. Charts filter client-side for zoom.
 
     // Normalize legacy metadata field names
     const metadata = normalizeMetadata(completedAnalysis.metadata)
@@ -255,7 +234,7 @@ export async function GET(
       {
         headers: {
           'Cache-Control': 'public, no-cache',
-          'ETag': `"${completedAnalysis.id}-${completedAnalysis.completed_at}-${startTime || 'full'}-${endTime || 'full'}"`,
+          'ETag': `"${completedAnalysis.id}-${completedAnalysis.completed_at}-${ranges ? JSON.stringify(ranges) : 'full'}"`,
         },
       }
     )
