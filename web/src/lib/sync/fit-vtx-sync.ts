@@ -44,47 +44,58 @@ export function syncFitVtxData<
     sample: s
   })).sort((a, b) => a.time - b.time)
 
-  const synced: SyncedDataPoint<F, V>[] = []
-  let vtxIdx = 0
+  // Linear-time merge: both arrays are sorted by time. For each VTX sample,
+  // advance through FIT samples; emit a synced point per VTX sample, attaching
+  // the closest FIT sample if it's within tolerance. Then walk any remaining
+  // FIT samples that fell outside any VTX neighborhood and emit FIT-only points
+  // for them. The result stays sorted because we emit in time order.
+  //
+  // (Previous implementation was O(N*M) due to a findIndex over `synced` per
+  // VTX sample, which hangs for hour-plus rides at 100Hz IMU rates.)
 
-  // For each FIT sample, find closest VTX sample within tolerance
-  for (const fit of fitTimes) {
-    // Advance VTX index to closest match
-    while (vtxIdx < vtxTimes.length - 1 &&
-           Math.abs(vtxTimes[vtxIdx + 1].time - fit.time) < Math.abs(vtxTimes[vtxIdx].time - fit.time)) {
-      vtxIdx++
+  const synced: SyncedDataPoint<F, V>[] = []
+  const fitMatched = new Uint8Array(fitTimes.length) // 1 if attached to a vtx point
+  let fitCursor = 0
+
+  for (const vtx of vtxTimes) {
+    // Advance fitCursor while the next FIT sample is closer to this vtx time.
+    while (
+      fitCursor < fitTimes.length - 1 &&
+      Math.abs(fitTimes[fitCursor + 1].time - vtx.time) <
+        Math.abs(fitTimes[fitCursor].time - vtx.time)
+    ) {
+      fitCursor++
     }
 
-    // Check if VTX sample is within tolerance
-    const vtxMatch = vtxIdx < vtxTimes.length &&
-                     Math.abs(vtxTimes[vtxIdx].time - fit.time) <= tolerance
-                     ? vtxTimes[vtxIdx].sample
-                     : null
+    let fitMatch: F | null = null
+    if (
+      fitCursor < fitTimes.length &&
+      Math.abs(fitTimes[fitCursor].time - vtx.time) <= tolerance
+    ) {
+      fitMatch = fitTimes[fitCursor].sample
+      fitMatched[fitCursor] = 1
+    }
 
     synced.push({
-      timestamp: fit.time,
-      fit: fit.sample,
-      vtx: vtxMatch
+      timestamp: vtx.time,
+      fit: fitMatch,
+      vtx: vtx.sample,
     })
   }
 
-  // Add VTX samples that didn't match any FIT sample
-  vtxIdx = 0
-  for (const vtx of vtxTimes) {
-    // Find if this VTX timestamp already exists in synced array
-    const existingIdx = synced.findIndex(s => Math.abs(s.timestamp - vtx.time) <= tolerance)
-
-    if (existingIdx === -1) {
-      // No matching FIT sample, add VTX-only point
+  // Emit FIT-only points for FIT samples that didn't get attached to any VTX.
+  for (let i = 0; i < fitTimes.length; i++) {
+    if (!fitMatched[i]) {
       synced.push({
-        timestamp: vtx.time,
-        fit: null,
-        vtx: vtx.sample
+        timestamp: fitTimes[i].time,
+        fit: fitTimes[i].sample,
+        vtx: null,
       })
     }
   }
 
-  // Final sort by timestamp
+  // Sort once at the end; FIT-only points are sparse (~1 Hz vs 100+ Hz VTX),
+  // so this is effectively O(N log N) on the small remainder.
   return synced.sort((a, b) => a.timestamp - b.timestamp)
 }
 

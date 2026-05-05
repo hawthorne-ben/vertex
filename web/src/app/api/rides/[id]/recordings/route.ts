@@ -96,7 +96,8 @@ export async function POST(
     // Create new associations
     const associations = newRecordingIds.map(recordingId => ({
       ride_id: rideId,
-      recording_id: recordingId
+      recording_id: recordingId,
+      user_id: user.id,
     }))
 
     const { error: insertError } = await supabase

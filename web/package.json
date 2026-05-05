@@ -35,7 +35,7 @@
     "downsample-lttb": "^0.0.1",
     "fili": "^2.0.2",
     "fit-file-parser": "^1.21.0",
-    "inngest": "^3.44.3",
+    "inngest": "^3.54.1",
     "inngest-cli": "^1.16.2",
     "leaflet": "^1.9.4",
     "lru-cache": "^11.2.4",

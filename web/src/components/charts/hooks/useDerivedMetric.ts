@@ -4,6 +4,20 @@ import { apiCache } from '@/lib/cache/api-cache'
 
 export type DerivedMetricType = 'pedalingEfficiency' | 'ridingPosition' | 'surfaceRoughness' | 'braking'
 
+// Map client-facing metric type to the analysis_type stored in ride_analysis
+// (and returned by /api/rides/[id]/analysis-status).
+const METRIC_TO_ANALYSIS_TYPE: Record<DerivedMetricType, string> = {
+  pedalingEfficiency: 'pedaling_efficiency',
+  ridingPosition: 'riding_position',
+  surfaceRoughness: 'surface_roughness',
+  braking: 'braking',
+}
+
+// Exponential backoff schedule (ms) for polling status while a job is processing.
+// First poll fires fast (results often appear within seconds), then backs off so a
+// forgotten tab doesn't hammer Supabase. The last value is the steady-state cadence.
+const POLL_BACKOFF_MS = [3000, 5000, 8000, 12000, 15000]
+
 export interface DerivedMetricSample {
   timestamp: string
   value: number
@@ -100,202 +114,222 @@ export function useDerivedMetric({
   const [error, setError] = useState<string | null>(null)
   const [metadata, setMetadata] = useState<any | null>(null)
   const { authFetch } = useAuthFetch()
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null)
+  const pollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const cancelledRef = useRef(false)
 
   useEffect(() => {
-    // Don't fetch if disabled — but preserve existing data for cache-hit on re-enable
+    // Don't fetch if disabled — preserve existing data for cache-hit on re-enable
     if (!enabled) {
       setLoading(false)
       return
     }
 
-    // Clear any existing polling from previous effect run
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current)
-      pollingIntervalRef.current = null
+    cancelledRef.current = false
+
+    const clearPollTimer = () => {
+      if (pollTimeoutRef.current) {
+        clearTimeout(pollTimeoutRef.current)
+        pollTimeoutRef.current = null
+      }
     }
 
-    const fetchMetric = async () => {
+    clearPollTimer()
+
+    // Build the heavy metric URL once (depends on rideId/metric/timeRange/resolution)
+    const buildMetricUrl = (): string => {
+      const params = new URLSearchParams()
+      if (timeRange) {
+        params.set('start', timeRange.start)
+        params.set('end', timeRange.end)
+      }
+      if (resolution !== undefined) {
+        params.set('resolution', resolution.toString())
+      }
+      const qs = params.toString() ? `?${params}` : ''
+
+      switch (metric) {
+        case 'pedalingEfficiency':
+          if (!fitRecordingId) throw new Error('Pedaling efficiency requires GPS data from FIT file')
+          return `/api/rides/${rideId}/pedaling-efficiency${qs}`
+        case 'ridingPosition':
+          if (!fitRecordingId) throw new Error('Riding position requires GPS data from FIT file')
+          return `/api/rides/${rideId}/riding-position${qs}`
+        case 'surfaceRoughness':
+          if (!fitRecordingId) throw new Error('Surface roughness requires GPS data from FIT file')
+          return `/api/rides/${rideId}/surface-roughness${qs}`
+        case 'braking':
+          if (!fitRecordingId) throw new Error('Braking analysis requires GPS data from FIT file')
+          return `/api/rides/${rideId}/braking${qs}`
+        default:
+          throw new Error(`Unknown metric: ${metric}`)
+      }
+    }
+
+    const transformResult = (result: ApiResponse) => {
+      const metricSamples = result.samples || []
+      const metricMetadata = result.metadata || null
+
+      const transformed = metricSamples.map((s: any) => {
+        let value: number | null = null
+
+        if (metric === 'pedalingEfficiency') {
+          value = s.stabilityPercent ?? (s.stability !== null && s.stability !== undefined ? s.stability * 100 : null)
+        } else if (metric === 'ridingPosition') {
+          value = s.position === 'standing' ? 1 : s.position === 'seated' ? 0 : null
+        } else if (metric === 'surfaceRoughness') {
+          value = s.roughness !== null && s.roughness !== undefined ? s.roughness * 100 : null
+        } else if (metric === 'braking') {
+          value = s.brakingIntensity ?? null
+        }
+
+        return {
+          timestamp: s.timestamp,
+          value,
+          ...s,
+        }
+      })
+
+      if (cancelledRef.current) return
+      setSamples(transformed)
+      setMetadata(metricMetadata)
+      setLoading(false)
+      setPolling(false)
+    }
+
+    // Hit the heavy per-metric endpoint. Returns the parsed body, or throws
+    // POLLING_REQUIRED when the analysis isn't completed yet.
+    const fetchHeavy = async (url: string): Promise<ApiResponse> => {
+      return apiCache.getOrFetch(url, async () => {
+        const response = await authFetch(url)
+        const data: ApiResponse = await response.json()
+
+        if (data.status === 'pending' || data.status === 'processing' || data.status === 'not_started') {
+          const pollingError = new Error('POLLING_REQUIRED')
+          ;(pollingError as any).status = data.status
+          throw pollingError
+        }
+
+        if (data.status === 'failed') {
+          throw new Error(data.error || data.message || 'Analysis failed')
+        }
+
+        if (!response.ok) {
+          throw new Error(data.error || `Failed to fetch ${metric}`)
+        }
+
+        return data
+      })
+    }
+
+    // Poll the cheap cross-metric status endpoint until *this* metric reports
+    // completed (or failed). Uses exponential backoff so a forgotten tab
+    // doesn't hammer Supabase indefinitely.
+    const pollStatus = (attempt: number, url: string) => {
+      if (cancelledRef.current) return
+
+      const delay = POLL_BACKOFF_MS[Math.min(attempt, POLL_BACKOFF_MS.length - 1)]
+
+      pollTimeoutRef.current = setTimeout(async () => {
+        if (cancelledRef.current) return
+
+        try {
+          const statusUrl = `/api/rides/${rideId}/analysis-status`
+          const response = await authFetch(statusUrl)
+          if (!response.ok) {
+            // Transient — keep polling.
+            pollStatus(attempt + 1, url)
+            return
+          }
+
+          const body = await response.json() as {
+            statuses: Record<string, { status: string; errorMessage: string | null }>
+          }
+
+          const analysisType = METRIC_TO_ANALYSIS_TYPE[metric]
+          const entry = body.statuses?.[analysisType]
+          const s = entry?.status
+
+          if (s === 'completed') {
+            // Status flipped — invalidate any 202 we may have cached for the
+            // heavy URL and fetch the real samples once.
+            apiCache.invalidate(url)
+            try {
+              const result = await fetchHeavy(url)
+              transformResult(result)
+            } catch (err: any) {
+              if (err.message === 'POLLING_REQUIRED') {
+                // Race: status said completed but the route disagreed.
+                // Resume polling.
+                pollStatus(attempt + 1, url)
+                return
+              }
+              if (cancelledRef.current) return
+              setError(err.message)
+              setLoading(false)
+              setPolling(false)
+            }
+            return
+          }
+
+          if (s === 'failed') {
+            if (cancelledRef.current) return
+            setError(entry?.errorMessage || 'Analysis failed')
+            setLoading(false)
+            setPolling(false)
+            return
+          }
+
+          // Still pending/processing/not_started — keep polling with backoff.
+          pollStatus(attempt + 1, url)
+        } catch {
+          // Network blip — keep polling.
+          pollStatus(attempt + 1, url)
+        }
+      }, delay)
+    }
+
+    const start = async () => {
       setLoading(true)
       setError(null)
 
+      let url: string
       try {
-        // Build URL based on metric type
-        let url: string
-        switch (metric) {
-          case 'pedalingEfficiency':
-            if (!fitRecordingId) {
-              throw new Error('Pedaling efficiency requires GPS data from FIT file')
-            }
-
-            const effParams = new URLSearchParams()
-            // If zoomed, fetch only the selected range (server determines resolution)
-            if (timeRange) {
-              effParams.set('start', timeRange.start)
-              effParams.set('end', timeRange.end)
-            }
-            // If custom resolution specified (for map at GPS frequency)
-            if (resolution !== undefined) {
-              effParams.set('resolution', resolution.toString())
-            }
-
-            url = `/api/rides/${rideId}/pedaling-efficiency${effParams.toString() ? `?${effParams}` : ''}`
-            break
-
-          case 'ridingPosition':
-            if (!fitRecordingId) {
-              throw new Error('Riding position requires GPS data from FIT file')
-            }
-
-            const posParams = new URLSearchParams()
-            // If zoomed, fetch only the selected range
-            if (timeRange) {
-              posParams.set('start', timeRange.start)
-              posParams.set('end', timeRange.end)
-            }
-            // Position data is already at 1 Hz, but support custom resolution
-            if (resolution !== undefined) {
-              posParams.set('resolution', resolution.toString())
-            }
-
-            url = `/api/rides/${rideId}/riding-position${posParams.toString() ? `?${posParams}` : ''}`
-            break
-
-          case 'surfaceRoughness':
-            if (!fitRecordingId) {
-              throw new Error('Surface roughness requires GPS data from FIT file')
-            }
-
-            const roughParams = new URLSearchParams()
-            if (timeRange) {
-              roughParams.set('start', timeRange.start)
-              roughParams.set('end', timeRange.end)
-            }
-            if (resolution !== undefined) {
-              roughParams.set('resolution', resolution.toString())
-            }
-
-            url = `/api/rides/${rideId}/surface-roughness${roughParams.toString() ? `?${roughParams}` : ''}`
-            break
-
-          case 'braking':
-            if (!fitRecordingId) {
-              throw new Error('Braking analysis requires GPS data from FIT file')
-            }
-
-            const brakingParams = new URLSearchParams()
-            if (timeRange) {
-              brakingParams.set('start', timeRange.start)
-              brakingParams.set('end', timeRange.end)
-            }
-            if (resolution !== undefined) {
-              brakingParams.set('resolution', resolution.toString())
-            }
-
-            url = `/api/rides/${rideId}/braking${brakingParams.toString() ? `?${brakingParams}` : ''}`
-            break
-
-          default:
-            throw new Error(`Unknown metric: ${metric}`)
-        }
-
-        // Use API cache for GET requests
-        const result = await apiCache.getOrFetch(url, async () => {
-          const response = await authFetch(url)
-          const data: ApiResponse = await response.json()
-
-          // Handle new API response format with processing states
-          // not_started means the analysis job hasn't been triggered yet (e.g. user just landed on the ride page
-          // after upload). Treat it the same as pending/processing — poll until it's ready.
-          if (data.status === 'pending' || data.status === 'processing' || data.status === 'not_started') {
-            const pollingError = new Error('POLLING_REQUIRED')
-            ;(pollingError as any).status = data.status
-            throw pollingError
-          }
-
-          if (data.status === 'failed') {
-            throw new Error(data.error || data.message || 'Analysis failed')
-          }
-
-          if (!response.ok) {
-            throw new Error(data.error || `Failed to fetch ${metric}`)
-          }
-
-          return data
-        })
-
-        const metricSamples = result.samples || []
-        const metricMetadata = result.metadata || null
-
-        // Transform to common format
-        const transformed = metricSamples.map((s: any) => {
-          let value: number | null = null
-
-          if (metric === 'pedalingEfficiency') {
-            value = s.stabilityPercent ?? (s.stability !== null && s.stability !== undefined ? s.stability * 100 : null)
-          } else if (metric === 'ridingPosition') {
-            value = s.position === 'standing' ? 1 : s.position === 'seated' ? 0 : null
-          } else if (metric === 'surfaceRoughness') {
-            value = s.roughness !== null && s.roughness !== undefined ? s.roughness * 100 : null
-          } else if (metric === 'braking') {
-            value = s.brakingIntensity ?? null
-          }
-
-          return {
-            timestamp: s.timestamp,
-            value,
-            ...s
-          }
-        })
-
-        setSamples(transformed)
-        setMetadata(metricMetadata)
-        setLoading(false)
-        setPolling(false)
-
-        // Stop polling if we got results
-        if (pollingIntervalRef.current) {
-          clearInterval(pollingIntervalRef.current)
-          pollingIntervalRef.current = null
-        }
+        url = buildMetricUrl()
       } catch (err: any) {
-        // Handle polling case
+        if (cancelledRef.current) return
+        setError(err.message)
+        setLoading(false)
+        return
+      }
+
+      try {
+        const result = await fetchHeavy(url)
+        transformResult(result)
+      } catch (err: any) {
         if (err.message === 'POLLING_REQUIRED') {
+          if (cancelledRef.current) return
           setSamples([])
           setMetadata(null)
           setLoading(true)
           setPolling(true)
-
-          // Start polling every 3 seconds if not already polling
-          if (!pollingIntervalRef.current) {
-            pollingIntervalRef.current = setInterval(() => {
-              fetchMetric()
-            }, 3000)
-          }
+          // Begin polling the cheap status endpoint with exponential backoff.
+          pollStatus(0, url)
           return
         }
 
+        if (cancelledRef.current) return
         console.error(`Failed to fetch ${metric}:`, err)
         setError(err.message)
-
-        // Stop polling on error
-        if (pollingIntervalRef.current) {
-          clearInterval(pollingIntervalRef.current)
-          pollingIntervalRef.current = null
-        }
         setLoading(false)
         setPolling(false)
       }
     }
 
-    fetchMetric()
+    start()
 
-    // Cleanup polling on unmount or dependency change
     return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current)
-        pollingIntervalRef.current = null
-      }
+      cancelledRef.current = true
+      clearPollTimer()
     }
   }, [rideId, metric, timeRange, fitRecordingId, resolution, enabled, authFetch])
 

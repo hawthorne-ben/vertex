@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import { calculatePedalingEfficiency } from '@/lib/analysis/ride-imu-analysis'
 import * as C from '@/lib/analysis/imu-constants'
 import { fileCache } from '@/lib/cache/file-cache'
+import { buildSamplesPath, uploadSamples } from '@/lib/analysis/samples-storage'
 import { VTXDecoder } from '@vertex-pkg/vtx-parser'
 import FitParser from 'fit-file-parser'
 
@@ -73,6 +74,19 @@ export const analyzeRideImuJob = inngest.createFunction(
 
       // Step 2: Compute and store results (all in one step to avoid output size limits)
       const result = await step.run('compute-and-store-analyses', async () => {
+        // Fetch ride to get the owning user_id (denormalized onto ride_analysis
+        // for cheap RLS evaluation; required by the new schema).
+        const { data: rideOwner, error: rideOwnerError } = await supabase
+          .from('rides')
+          .select('user_id')
+          .eq('id', rideId)
+          .single()
+
+        if (rideOwnerError || !rideOwner) {
+          throw new Error(`Failed to load ride owner: ${rideOwnerError?.message ?? 'not found'}`)
+        }
+        const userId = rideOwner.user_id
+
         // Create or update both analysis records with 'processing' status
         const sharedParameters = {
           hpfCutoff: C.ROUGHNESS_HPF_CUTOFF_HZ,
@@ -88,85 +102,66 @@ export const analyzeRideImuJob = inngest.createFunction(
           roughnessSpeedExponent: C.ROUGHNESS_SPEED_EXPONENT,
         }
 
+        // Clear samples_path and old completion fields on the upsert so the UI
+        // doesn't show stale results from a prior run while we reprocess.
+        const buildProcessingRow = (analysisType: string) => ({
+          ride_id: rideId,
+          user_id: userId,
+          analysis_type: analysisType,
+          status: 'processing',
+          started_at: new Date().toISOString(),
+          algorithm_version: C.ALGORITHM_VERSION,
+          parameters: sharedParameters,
+          metadata: {},
+          samples_path: null,
+          samples_size_bytes: null,
+          sample_count: null,
+          sample_rate_hz: null,
+          completed_at: null,
+          error_message: null,
+        })
+
+        // Stringify the whole error object — PostgREST errors don't always have
+        // a `.message`, so blindly interpolating `.message` produced "undefined"
+        // and hid the real failure (code/details/hint).
+        const formatPgError = (e: any) =>
+          e ? JSON.stringify({ message: e.message, code: e.code, details: e.details, hint: e.hint }) : 'unknown'
+
         const { data: efficiencyAnalysis, error: efficiencyError } = await supabase
           .from('ride_analysis')
-          .upsert(
-            {
-              ride_id: rideId,
-              analysis_type: 'pedaling_efficiency',
-              status: 'processing',
-              started_at: new Date().toISOString(),
-              algorithm_version: C.ALGORITHM_VERSION,
-              parameters: sharedParameters,
-              metadata: {},
-            },
-            { onConflict: 'ride_id,analysis_type' }
-          )
+          .upsert(buildProcessingRow('pedaling_efficiency'), { onConflict: 'ride_id,analysis_type' })
           .select('id')
           .single()
 
         if (efficiencyError)
-          throw new Error(`Failed to create efficiency analysis: ${efficiencyError.message}`)
+          throw new Error(`Failed to create efficiency analysis: ${formatPgError(efficiencyError)}`)
 
         const { data: positionAnalysis, error: positionError } = await supabase
           .from('ride_analysis')
-          .upsert(
-            {
-              ride_id: rideId,
-              analysis_type: 'riding_position',
-              status: 'processing',
-              started_at: new Date().toISOString(),
-              algorithm_version: C.ALGORITHM_VERSION,
-              parameters: sharedParameters,
-              metadata: {},
-            },
-            { onConflict: 'ride_id,analysis_type' }
-          )
+          .upsert(buildProcessingRow('riding_position'), { onConflict: 'ride_id,analysis_type' })
           .select('id')
           .single()
 
         if (positionError)
-          throw new Error(`Failed to create position analysis: ${positionError.message}`)
+          throw new Error(`Failed to create position analysis: ${formatPgError(positionError)}`)
 
         const { data: roughnessAnalysis, error: roughnessError } = await supabase
           .from('ride_analysis')
-          .upsert(
-            {
-              ride_id: rideId,
-              analysis_type: 'surface_roughness',
-              status: 'processing',
-              started_at: new Date().toISOString(),
-              algorithm_version: C.ALGORITHM_VERSION,
-              parameters: sharedParameters,
-              metadata: {},
-            },
-            { onConflict: 'ride_id,analysis_type' }
-          )
+          .upsert(buildProcessingRow('surface_roughness'), { onConflict: 'ride_id,analysis_type' })
           .select('id')
           .single()
 
         if (roughnessError)
-          throw new Error(`Failed to create roughness analysis: ${roughnessError.message}`)
+          throw new Error(`Failed to create roughness analysis: ${formatPgError(roughnessError)}`)
 
         const { data: brakingAnalysis, error: brakingError } = await supabase
           .from('ride_analysis')
-          .upsert(
-            {
-              ride_id: rideId,
-              analysis_type: 'braking',
-              status: 'processing',
-              started_at: new Date().toISOString(),
-              algorithm_version: C.ALGORITHM_VERSION,
-              parameters: sharedParameters,
-              metadata: {},
-            },
-            { onConflict: 'ride_id,analysis_type' }
-          )
+          .upsert(buildProcessingRow('braking'), { onConflict: 'ride_id,analysis_type' })
           .select('id')
           .single()
 
         if (brakingError)
-          throw new Error(`Failed to create braking analysis: ${brakingError.message}`)
+          throw new Error(`Failed to create braking analysis: ${formatPgError(brakingError)}`)
 
         const efficiencyAnalysisId = efficiencyAnalysis.id
         const positionAnalysisId = positionAnalysis.id
@@ -318,65 +313,60 @@ export const analyzeRideImuJob = inngest.createFunction(
           },
         })
 
-        // Store efficiency results in database
-        const { error: efficiencyUpdateError } = await supabase
-          .from('ride_analysis')
-          .update({
-            status: 'completed',
-            completed_at: new Date().toISOString(),
-            samples: computeResult.efficiency.samples,
-            metadata: computeResult.efficiency.metadata,
-          })
-          .eq('id', efficiencyAnalysisId)
+        // Upload each samples array to Storage as a gzipped JSON blob, then
+        // update the ride_analysis row with the path + size + count. Keeps
+        // the multi-MB blob out of the database row entirely.
+        const persistAnalysis = async (
+          analysisId: string,
+          analysisType: string,
+          samples: any[],
+          metadata: any
+        ) => {
+          const path = buildSamplesPath(userId, rideId, analysisType, C.ALGORITHM_VERSION)
+          const upload = await uploadSamples(supabase, path, samples)
 
-        if (efficiencyUpdateError) {
-          throw new Error(`Failed to store efficiency results: ${efficiencyUpdateError.message}`)
+          const { error } = await supabase
+            .from('ride_analysis')
+            .update({
+              status: 'completed',
+              completed_at: new Date().toISOString(),
+              metadata,
+              samples_path: upload.path,
+              samples_size_bytes: upload.sizeBytes,
+              sample_count: upload.sampleCount,
+              sample_rate_hz: C.OUTPUT_SAMPLE_RATE_HZ,
+            })
+            .eq('id', analysisId)
+
+          if (error) {
+            throw new Error(`Failed to store ${analysisType} results: ${error.message}`)
+          }
         }
 
-        // Store position results in database
-        const { error: positionUpdateError } = await supabase
-          .from('ride_analysis')
-          .update({
-            status: 'completed',
-            completed_at: new Date().toISOString(),
-            samples: computeResult.position.samples,
-            metadata: computeResult.position.metadata,
-          })
-          .eq('id', positionAnalysisId)
-
-        if (positionUpdateError) {
-          throw new Error(`Failed to store position results: ${positionUpdateError.message}`)
-        }
-
-        // Store roughness results in database
-        const { error: roughnessUpdateError } = await supabase
-          .from('ride_analysis')
-          .update({
-            status: 'completed',
-            completed_at: new Date().toISOString(),
-            samples: computeResult.roughness.samples,
-            metadata: computeResult.roughness.metadata,
-          })
-          .eq('id', roughnessAnalysisId)
-
-        if (roughnessUpdateError) {
-          throw new Error(`Failed to store roughness results: ${roughnessUpdateError.message}`)
-        }
-
-        // Store braking results in database
-        const { error: brakingUpdateError } = await supabase
-          .from('ride_analysis')
-          .update({
-            status: 'completed',
-            completed_at: new Date().toISOString(),
-            samples: computeResult.braking.samples,
-            metadata: computeResult.braking.metadata,
-          })
-          .eq('id', brakingAnalysisId)
-
-        if (brakingUpdateError) {
-          throw new Error(`Failed to store braking results: ${brakingUpdateError.message}`)
-        }
+        await persistAnalysis(
+          efficiencyAnalysisId,
+          'pedaling_efficiency',
+          computeResult.efficiency.samples,
+          computeResult.efficiency.metadata
+        )
+        await persistAnalysis(
+          positionAnalysisId,
+          'riding_position',
+          computeResult.position.samples,
+          computeResult.position.metadata
+        )
+        await persistAnalysis(
+          roughnessAnalysisId,
+          'surface_roughness',
+          computeResult.roughness.samples,
+          computeResult.roughness.metadata
+        )
+        await persistAnalysis(
+          brakingAnalysisId,
+          'braking',
+          computeResult.braking.samples,
+          computeResult.braking.metadata
+        )
 
         // Return only small summary stats (not the full samples arrays)
         return {

@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { withAuth } from '@/lib/api/auth'
 import { calculatePedalingEfficiency } from '@/lib/analysis/ride-imu-analysis'
-import { ALGORITHM_VERSION } from '@/lib/analysis/imu-constants'
+import { ALGORITHM_VERSION, OUTPUT_SAMPLE_RATE_HZ } from '@/lib/analysis/imu-constants'
+import { buildSamplesPath, uploadSamples } from '@/lib/analysis/samples-storage'
 import { VTXDecoder } from '@vertex-pkg/vtx-parser'
 import FitParser from 'fit-file-parser'
 
@@ -200,97 +201,69 @@ export async function POST(
     if (saveToDatabase) {
       const now = new Date().toISOString()
 
-      // Save efficiency analysis
-      const { error: efficiencyError } = await supabase
-        .from('ride_analysis')
-        .upsert(
-          {
-            ride_id: rideId,
-            analysis_type: 'pedaling_efficiency',
-            status: 'completed',
-            algorithm_version: ALGORITHM_VERSION,
-            parameters,
-            samples: result.efficiency.samples,
-            metadata: result.efficiency.metadata,
-            started_at: now,
-            completed_at: now,
-          },
-          {
-            onConflict: 'ride_id,analysis_type',
-          }
-        )
+      // Upload samples to Storage and upsert the row with path + counts.
+      const persistAnalysis = async (
+        analysisType: string,
+        samples: any[],
+        metadata: any
+      ) => {
+        const path = buildSamplesPath(ride.user_id, rideId, analysisType, ALGORITHM_VERSION)
+        const upload = await uploadSamples(supabase, path, samples)
 
+        return supabase
+          .from('ride_analysis')
+          .upsert(
+            {
+              ride_id: rideId,
+              user_id: ride.user_id,
+              analysis_type: analysisType,
+              status: 'completed',
+              algorithm_version: ALGORITHM_VERSION,
+              parameters,
+              metadata,
+              samples_path: upload.path,
+              samples_size_bytes: upload.sizeBytes,
+              sample_count: upload.sampleCount,
+              sample_rate_hz: OUTPUT_SAMPLE_RATE_HZ,
+              started_at: now,
+              completed_at: now,
+            },
+            { onConflict: 'ride_id,analysis_type' }
+          )
+      }
+
+      const { error: efficiencyError } = await persistAnalysis(
+        'pedaling_efficiency',
+        result.efficiency.samples,
+        result.efficiency.metadata
+      )
       if (efficiencyError) {
         throw new Error(`Failed to save efficiency analysis: ${efficiencyError.message}`)
       }
 
-      // Save position analysis
-      const { error: positionError } = await supabase
-        .from('ride_analysis')
-        .upsert(
-          {
-            ride_id: rideId,
-            analysis_type: 'riding_position',
-            status: 'completed',
-            algorithm_version: ALGORITHM_VERSION,
-            parameters,
-            samples: result.position.samples,
-            metadata: result.position.metadata,
-            started_at: now,
-            completed_at: now,
-          },
-          {
-            onConflict: 'ride_id,analysis_type',
-          }
-        )
-
+      const { error: positionError } = await persistAnalysis(
+        'riding_position',
+        result.position.samples,
+        result.position.metadata
+      )
       if (positionError) {
         throw new Error(`Failed to save position analysis: ${positionError.message}`)
       }
 
-      // Save roughness analysis
-      const { error: roughnessError } = await supabase
-        .from('ride_analysis')
-        .upsert(
-          {
-            ride_id: rideId,
-            analysis_type: 'surface_roughness',
-            status: 'completed',
-            algorithm_version: ALGORITHM_VERSION,
-            parameters,
-            samples: result.roughness.samples,
-            metadata: result.roughness.metadata,
-            started_at: now,
-            completed_at: now,
-          },
-          {
-            onConflict: 'ride_id,analysis_type',
-          }
-        )
-
+      const { error: roughnessError } = await persistAnalysis(
+        'surface_roughness',
+        result.roughness.samples,
+        result.roughness.metadata
+      )
       if (roughnessError) {
         throw new Error(`Failed to save roughness analysis: ${roughnessError.message}`)
       }
 
-      // Save braking analysis
-      const { error: brakingError } = await supabase
-        .from('ride_analysis')
-        .upsert(
-          {
-            ride_id: rideId,
-            analysis_type: 'braking',
-            status: 'completed',
-            algorithm_version: ALGORITHM_VERSION,
-            parameters,
-            samples: result.braking.samples,
-            metadata: result.braking.metadata,
-            started_at: now,
-            completed_at: now,
-          },
-          {
-            onConflict: 'ride_id,analysis_type',
-          }
-        )
+      const { error: brakingError } = await persistAnalysis(
+        'braking',
+        result.braking.samples,
+        result.braking.metadata
+      )
 
       if (brakingError) {
         throw new Error(`Failed to save braking analysis: ${brakingError.message}`)
