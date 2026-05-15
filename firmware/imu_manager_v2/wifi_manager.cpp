@@ -22,7 +22,8 @@ WiFiUploadManager::WiFiUploadManager()
     _activeClient(nullptr),
     _clientIsSSL(false),
     _uploadBuf(nullptr),
-    _fileRemaining(0) {
+    _fileRemaining(0),
+    _responseSuccess(false) {
   _ssid[0] = '\0';
   _password[0] = '\0';
   _userId[0] = '\0';
@@ -244,10 +245,11 @@ bool WiFiUploadManager::tick(StorageManager& storage) {
     }
 
     case WIFI_WAIT_RESPONSE: {
-      bool success = readResponse();
+      if (!readResponse()) break;  // Still waiting — yield back to loop()
+
       endFileUpload(storage);
 
-      if (success) {
+      if (_responseSuccess) {
         Serial.printf("[WiFi] PUT complete: %s\n", _fileNames[_currentFileIndex]);
         _state = WIFI_COMPLETE;
         _stateEnteredAt = millis();
@@ -463,26 +465,31 @@ bool WiFiUploadManager::requestPresignedUrl(const char* filename, uint32_t fileS
   Serial.printf("[WiFi] Presign response: %s\n", body.c_str());
 
   // Parse "url" and "storagePath" from JSON response
-  // Simple string parsing (no JSON library)
-  int urlIdx = body.indexOf("\"url\":\"");
-  if (urlIdx < 0) {
+  auto extractJsonString = [&](const char* key, String& out) -> bool {
+    String search = String("\"") + key + "\":\"";
+    int idx = body.indexOf(search);
+    if (idx < 0) return false;
+    int start = idx + search.length();
+    // Find closing quote, skipping escaped quotes
+    int end = start;
+    while (end < (int)body.length()) {
+      if (body[end] == '\\') { end += 2; continue; }
+      if (body[end] == '"') break;
+      end++;
+    }
+    if (end >= (int)body.length()) return false;
+    out = body.substring(start, end);
+    return out.length() > 0;
+  };
+
+  if (!extractJsonString("url", _uploadUrl)) {
     Serial.println("[WiFi] No url in presign response");
     return false;
   }
-  int urlStart = urlIdx + 7;
-  int urlEnd = body.indexOf("\"", urlStart);
-  if (urlEnd < 0) return false;
-  _uploadUrl = body.substring(urlStart, urlEnd);
-
-  int spIdx = body.indexOf("\"storagePath\":\"");
-  if (spIdx < 0) {
+  if (!extractJsonString("storagePath", _storagePath)) {
     Serial.println("[WiFi] No storagePath in presign response");
     return false;
   }
-  int spStart = spIdx + 15;
-  int spEnd = body.indexOf("\"", spStart);
-  if (spEnd < 0) return false;
-  _storagePath = body.substring(spStart, spEnd);
 
   Serial.printf("[WiFi] Upload URL: %s\n", _uploadUrl.c_str());
   Serial.printf("[WiFi] Storage path: %s\n", _storagePath.c_str());
@@ -557,18 +564,26 @@ bool WiFiUploadManager::streamNextChunk(StorageManager& storage) {
 
 // ─── Read HTTP Response ────────────────────────────────────────────────────────
 
+// Non-blocking: returns true when a response has been received (success or fail),
+// false when still waiting. Caller checks _responseSuccess for the result.
+// _stateEnteredAt is used as the timeout reference (set when WIFI_WAIT_RESPONSE entered).
 bool WiFiUploadManager::readResponse() {
-  unsigned long respStart = millis();
-  while (!_activeClient->available() && millis() - respStart < 30000) {
-    delay(10);
+  if (!_activeClient->available()) {
+    if (millis() - _stateEnteredAt > 30000) {
+      Serial.println("[WiFi] Response timeout");
+      _responseSuccess = false;
+      return true;  // Done — timed out
+    }
+    return false;  // Still waiting — yield back to loop()
   }
 
   String statusLine = _activeClient->readStringUntil('\n');
   Serial.printf("[WiFi] Response: %s\n", statusLine.c_str());
 
-  // Drain headers + body
+  // Drain headers + body (data is already available, so this won't block)
   bool headersEnd = false;
-  while (_activeClient->available() || millis() - respStart < 5000) {
+  unsigned long drainStart = millis();
+  while (_activeClient->available() || millis() - drainStart < 2000) {
     if (_activeClient->available()) {
       String line = _activeClient->readStringUntil('\n');
       if (!headersEnd) {
@@ -582,8 +597,8 @@ bool WiFiUploadManager::readResponse() {
     }
   }
 
-  // 200 OK or 201 Created = success
-  return statusLine.indexOf("200") > 0 || statusLine.indexOf("201") > 0;
+  _responseSuccess = statusLine.indexOf("200") > 0 || statusLine.indexOf("201") > 0;
+  return true;  // Done
 }
 
 // ─── Complete Notification ─────────────────────────────────────────────────────

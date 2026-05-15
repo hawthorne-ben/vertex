@@ -608,7 +608,7 @@ const DeviceDetailV2Screen: React.FC = () => {
                 style={[styles.recordButton, { backgroundColor: theme.colors.primary, opacity: status?.state === 'uploading' ? 0.5 : 1 }]}
                 onPress={handleStartRecording}
                 disabled={status?.state === 'uploading'}>
-                <Text style={styles.recordButtonText}>Start Recording</Text>
+                <Text style={[styles.recordButtonText, { color: theme.colors.primaryForeground }]}>Start Recording</Text>
                 <Clock size={14} color={clockSynced ? '#22c55e' : '#f59e0b'} />
               </TouchableOpacity>
               <Button
@@ -834,7 +834,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   recordButtonText: {
-    color: '#fff',
     fontSize: 16,
     fontWeight: '600',
   },

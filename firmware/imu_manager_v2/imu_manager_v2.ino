@@ -211,7 +211,10 @@ void loop() {
       power.updateLED(LED_BLINK_RECORDING);
 
       if (samplesRead > 0) {
-        storage.writeSamples(sensor.getSampleBuffer(), samplesRead);
+        if (!storage.writeSamples(sensor.getSampleBuffer(), samplesRead)) {
+          Serial.println("[REC] SD write failed — stopping recording");
+          stopRecording();
+        }
       }
       break;
     }

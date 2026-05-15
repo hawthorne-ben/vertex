@@ -88,6 +88,7 @@ private:
   uint8_t* _uploadBuf;
   uint32_t _fileRemaining;
   bool _fileSkip[MAX_UPLOAD_FILES];
+  bool _responseSuccess;
 
   // Get presigned URL from server
   bool requestPresignedUrl(const char* filename, uint32_t fileSize);

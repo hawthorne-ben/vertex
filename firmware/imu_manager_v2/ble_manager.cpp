@@ -183,7 +183,7 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
       for (int i = startIdx; i < totalCount; i++) {
         uint8_t nameLen = strlen(entries[i].name);
         int entrySize = 1 + nameLen + 4 + 1;
-        if (off + entrySize > 500) break;
+        if (off + entrySize > (int)sizeof(buf)) break;
         buf[off++] = nameLen;
         memcpy(buf + off, entries[i].name, nameLen);
         off += nameLen;
