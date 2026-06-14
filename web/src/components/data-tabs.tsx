@@ -21,7 +21,7 @@ export function DataTabs({ imuFiles: initialImuFiles }: DataTabsProps) {
         // Fetch VTX recordings only
         const { data: recordings } = await supabase
           .from('recordings')
-          .select('*')
+          .select('id, filename, status, file_size_bytes, start_time, end_time, sample_count, sample_rate, error_message, uploaded_at')
           .eq('user_id', user.id)
           .eq('file_type', 'vtx')
           .order('uploaded_at', { ascending: false })

@@ -14,7 +14,7 @@ export default async function RecordingsPage() {
   // Fetch user's VTX recordings only (FIT files are rides and shown on /rides)
   const { data: recordings, error: recordingsError } = await supabase
     .from('recordings')
-    .select('*')
+    .select('id, filename, status, file_size_bytes, start_time, end_time, sample_count, sample_rate, error_message, uploaded_at')
     .eq('user_id', user.id)
     .eq('file_type', 'vtx')
     .order('start_time', { ascending: false })
