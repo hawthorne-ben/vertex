@@ -9,9 +9,9 @@
 
 ## Overview
 
-Vertex is a full-stack telemetry platform built around a custom ESP32 IMU device. The system captures 6-DOF inertial data (accelerometer + gyroscope) at up to 50Hz, serializes it into a compact custom binary format (`.vtx`), transmits it via BLE to a mobile companion app, and streams it to a cloud pipeline that performs multi-pass digital signal processing and persists results to a time-series PostgreSQL schema.
+Vertex is a full-stack telemetry platform built around a custom ESP32 IMU device. The system captures 6-DOF inertial data (accelerometer + gyroscope) at up to 104Hz, serializes it into a compact custom binary format (`.vtx`), stores it onboard or streams it via BLE, and uploads to a cloud pipeline that performs multi-pass digital signal processing and persists results to a time-series PostgreSQL schema.
 
-The primary engineering challenge is **physical signal quality**: road vibration occupies 40–100Hz, BNO055 gyroscopes saturate under prolonged mechanical noise, and the magnetometer is unreliable near bike frames and vehicle infrastructure. Every layer of the stack — hardware isolation, sensor mode selection, firmware filtering, and cloud-side DSP — exists to solve these constraints.
+The primary engineering challenge is **physical signal quality**: road vibration occupies 40–100Hz, IMU gyroscopes saturate under prolonged mechanical noise, and the magnetometer is unreliable near bike frames and vehicle infrastructure. Sensor mode selection, firmware filtering, and cloud-side DSP each address a different layer of this constraint.
 
 The web frontend is a visualization mid-tier for DSP outputs. It does not define the system.
 
@@ -19,33 +19,19 @@ The web frontend is a visualization mid-tier for DSP outputs. It does not define
 
 ## System Architecture
 
-### Embedded Hardware — ESP32 + BNO055
+### Embedded Hardware
 
-**Sensor:** Adafruit BNO055 9-DOF IMU, connected via I2C.
+Two hardware generations exist. Both output the same `.vtx` binary format.
 
-**Operating mode:** `OPERATION_MODE_IMUPLUS` (6DoF — accelerometer + gyroscope only). The magnetometer is explicitly disabled. Bike frames, passing vehicles, and road infrastructure produce enough ferromagnetic interference to corrupt magnetometer readings. Yaw drift from omitting magnetometer correction is acceptable at cycling timescales and is corrected in post-processing using GPS velocity heading from paired FIT files.
+**V1 — ESP32 + BNO055 (6DoF)**
+Sensor: Adafruit BNO055 in `OPERATION_MODE_IMUPLUS` — accelerometer + gyroscope only. The magnetometer is explicitly disabled: ferromagnetic interference from the bike frame, passing vehicles, and road infrastructure renders it unreliable. Yaw drift is corrected in post-processing using GPS heading from paired FIT files. Sampling at 25Hz over I2C (400kHz fast mode). BLE streams 47-byte sensor packets directly to the mobile app in real time. On-device brake detection runs a forward-backward Butterworth filter on `accel_x`; threshold 3.0 m/s² with 250ms debounce. Battery ADC on GPIO 35 through a 2:1 voltage divider; auto-shutdown at 3.2V.
 
-**Sampling:** Default 25Hz (40ms interval, `DEFAULT_SAMPLE_INTERVAL_MS`). Configurable 20–1000ms via BLE command. The 25Hz default is not arbitrary — it sits below the Nyquist frequency for the 40–100Hz mechanical road noise band, avoiding aliasing of vibration energy into the cadence band (1.5–3.5Hz) and the stability analysis band (0.3–10Hz).
+**V2 — ESP32-S3 Mini + LSM6DS3 (6DoF, current)**
+Sensor: ST LSM6DS3 at native 104Hz ODR — `+/−8g` accelerometer, `+/−1000 dps` gyroscope, configured via direct register writes over I2C (400kHz). The FIFO is set to continuous mode with a 60-sample threshold, batched to the MCU every 100ms (~10 samples per read, decoupling SD write latency from sensor timing). Raw 16-bit register values are converted to physical units on-device using fixed sensitivity constants (`0.000244 × 9.80665 m/s²/LSB` for accel, `0.035 deg/s/LSB` for gyro), then mapped from chip axes to a standard body frame before being packed into 28-byte `IMURecord` structs and written to SD card over SPI (16MHz). No BLE data streaming — BLE is a control interface only (start/stop recording, clock sync, trigger upload). CPU runs at 80MHz during recording; scales to 240MHz for WiFi upload. Battery ADC on GPIO 4 through a 100K/100K divider tapping the TP4057 charger output before the Schottky isolation diode; 8-sample averaging with empirical calibration factor.
 
-**I2C clock:** Switched dynamically between 100kHz (low-power mode) and 400kHz (normal/high-performance mode) based on the active power profile commanded over BLE.
+At 104Hz the road vibration band (40–100Hz) falls above Nyquist and aliases into the analysis band. The cloud-side DSP must account for this; the higher sample rate is worth the tradeoff because it captures genuine sub-52Hz dynamics — cornering, braking, pedaling — at substantially higher resolution than V1.
 
-**Physical vibration isolation:** The sensor must be mechanically decoupled from the bike frame. Road vibration in the 40–100Hz range is energetic enough to saturate gyroscope registers and produce railing artifacts in orientation output. Sorbothane elastomer mounting is used for vibration damping. Without physical isolation, software-only filtering cannot recover clean signal from a clipped sensor output.
-
-**Brake detection (on-device):** A forward-backward Butterworth filter on `accel_x` (linear, gravity-compensated) is applied on-device for real-time brake light actuation. Threshold: 3.0 m/s² (~0.3g) with 250ms debounce — approximately 6–7 samples at 25Hz. This is a simplified version of the full braking pipeline run cloud-side.
-
-**Battery management:** ADC on GPIO 35 through a 2:1 voltage divider, read at 1Hz. Auto-shutdown at 3.2V. I2C clock is throttled in low-power mode to reduce draw.
-
-**BLE data packet (47 bytes per notification):**
-
-```
-Offset  Size  Type     Field
-0       4     uint32   timestamp_ms
-4-15    12    float32  roll, pitch, yaw (Euler, degrees)
-16-27   12    float32  accel_x, accel_y, accel_z (m/s²)
-28-39   12    float32  gyro_x, gyro_y, gyro_z (rad/s)
-40-42   3     uint8    cal_sys, cal_gyro, cal_accel (BNO055 calibration status, 0–3)
-43-46   4     float32  battery_voltage
-```
+**V2 upload flow:** BLE `CMD_START_SYNC` triggers the device to connect to provisioned WiFi, query the server for files not yet uploaded (`WIFI_CHECK_EXISTING`), obtain a presigned Supabase Storage URL per file (`WIFI_PRESIGN`), PUT the `.vtx` file directly in 16KB streaming chunks (`WIFI_STREAMING`), then call the backend complete endpoint to create the DB record. WiFi credentials and user/API keys are provisioned over BLE and stored in ESP32 NVS.
 
 ---
 
@@ -108,56 +94,22 @@ The metadata section is JSON (device ID, firmware version, mount position, calib
 
 ### Cloud Pipeline
 
-**Ingestion:** The mobile app POSTs `.vtx` files to `/api/upload/device` authenticated with a per-device `X-Device-Key` header and user ID. For rides where a Garmin head unit was also running, a FIT file is uploaded separately and parsed for GPS coordinates, power, cadence, and heart rate.
+`.vtx` files arrive via device WiFi upload (V2) or mobile app (V1), authenticated per-device with `X-Device-Key`. FIT files from a paired Garmin head unit are uploaded separately; `fit-vtx-sync.ts` aligns the two independent timelines so IMU-derived metrics can be correlated against GPS, power, cadence, and grade.
 
-**Timestamp alignment:** VTX and FIT timelines are independent. `lib/sync/fit-vtx-sync.ts` performs cross-stream temporal alignment, enabling the analysis pipeline to correlate IMU-derived metrics (e.g., pedaling stability) with FIT-derived metrics (e.g., power, grade) at a common timestamp axis.
+Inngest background jobs handle all heavy processing asynchronously: merging multi-segment `.vtx` files into a single blob per ride, running the IMU analysis pipeline, and parsing FIT binaries.
 
-**Event-driven background processing (Inngest):**
-- `merge-vtx-recordings` — concatenates multiple `.vtx` segments from a ride into a single binary blob for unified analysis
-- `analyze-ride-imu` — runs the full multi-pass IMU analysis pipeline
-- `parse-fit` — extracts structured data from FIT binary, stores to DB
+**IMU analysis pipeline — four metric streams, one pass over raw samples:**
 
-**IMU analysis pipeline — four metric streams from one pass:**
+The pipeline runs at native sample rate without pre-decimation. Decimating before the bandpass filter folds road vibration energy into the cadence band.
 
-The pipeline operates on raw VTX samples at their native rate (up to 104Hz where available). It does not pre-decimate before filtering, because decimation before the bandpass filter aliases road vibration energy into the cadence band.
+- **Braking pre-pass (zero-phase):** Forward-backward Butterworth on `accel_x/z` (5Hz, `filtfilt`). Pitch from filtered accel; forward-backward EMA baseline (0.2Hz). Braking = pitch deviation from baseline, correlated with `gyro_y`.
+- **Pass 1 — per-sample:** BPF `gyro_x/z`, `accel_x` at 0.3–10.0Hz (stability). HPF `accel_z` at 1.0Hz (roughness). HPF `accel_y` at 1.0Hz (position).
+- **Pass 2 — windowed RMS:** Stability and roughness: 3.0s window, 0.5s hop. Braking: 0.75s window, 0.2s hop.
+- **Pass 3:** Interpolate to 5Hz output. Position detection: `accel_y` amplitude vs. `gyro_z` in 0.75s windows.
 
-*Pass 1 — per-sample filtering:*
-- Bandpass filter gyro_x, gyro_z, accel_x at 0.3–10.0Hz (stability)
-- High-pass filter accel_z at 1.0Hz (surface roughness)
-- High-pass filter accel_y at 1.0Hz (riding position)
+Stability weight: `gyro_roll × 0.5 + gyro_yaw × 0.3 + surge_accel × 0.2`, normalized 0–1. Surface roughness: HPF `accel_z` RMS — smooth < 0.5g, rough > 1.0g.
 
-*Braking pre-pass (zero-phase, whole-array):*
-- Forward-backward Butterworth on accel_x and accel_z (5Hz cutoff, zero phase lag via `filtfilt`)
-- Pitch computed from filtered accel: `pitch = atan2(accel_x, accel_z)`
-- Forward-backward EMA on pitch for lag-free grade baseline (0.2Hz cutoff)
-- Braking deceleration = pitch deviation from baseline, correlated with gyro_y
-
-*Pass 2 — windowed RMS:*
-- Stability: 3.0s window, 0.5s hop → 2Hz intermediate output
-- Braking: 0.75s window, 0.2s hop
-- Roughness: 3.0s window, 0.5s hop
-
-*Pass 3:*
-- Interpolate all metrics to 5Hz output
-- Standing/seated position detection: `accel_y` amplitude (lateral) vs. `gyro_z` (yaw rate) in 0.75s windows
-
-**Stability metric weights:**
-```
-stability = gyro_roll_rms × 0.5 + gyro_yaw_rms × 0.3 + surge_accel_rms × 0.2
-```
-Normalized 0–1. Stable threshold: 0.15. Unstable threshold: 0.35.
-
-**Surface roughness:** HPF `accel_z` RMS over 3s windows. Smooth: < 0.5g RMS. Rough: > 1.0g RMS.
-
-**PostgreSQL time-series schema:** Five core tables with Row Level Security on all user data.
-
-- `recordings` — file metadata, `data_ranges BIGINT[][]` for gap tracking, `gap_info JSONB` with discontinuity statistics
-- `rides` — ride groupings with merged `.vtx` path
-- `ride_recordings` — junction table
-- `ride_analysis` — one row per (ride, analysis_type), stores algorithm version, parameters, and a path to gzipped JSON sample blobs in Supabase Storage
-- `ride_summaries` — denormalized flat metrics for dashboard queries (avoids aggregation on large sample tables)
-
-Analysis sample blobs are stored as gzipped JSON in object storage rather than as individual DB rows. This keeps the relational schema from growing to hundreds of millions of rows and allows arbitrary output sample rates without schema changes.
+**Schema:** Five PostgreSQL tables with RLS on all user data. `ride_analysis` stores one row per (ride, analysis_type) with a pointer to a gzipped JSON sample blob in object storage, keeping the relational schema flat regardless of sample count. `ride_summaries` holds denormalized aggregate metrics for dashboard queries.
 
 ---
 
@@ -173,7 +125,9 @@ I document the physical and software challenges of building Vertex on Substack.
 
 ```
 vertex/
-├── firmware/imu_manager/     # ESP32 C++ — BNO055, BLE, power management
+├── firmware/
+│   ├── imu_manager/          # V1 — ESP32 + BNO055, BLE streaming
+│   └── imu_manager_v2/       # V2 — ESP32-S3 + LSM6DS3, SD + WiFi upload
 ├── packages/
 │   ├── vtx-format/           # .vtx binary format specification (v1.0)
 │   ├── vtx-parser/           # TypeScript encoder/decoder
@@ -211,7 +165,7 @@ cd app && pnpm start
 
 | Layer | Technology |
 |---|---|
-| Firmware | C++ (Arduino/ESP-IDF), Adafruit BNO055, ESP32 BLE |
+| Firmware | C++ (Arduino/ESP-IDF), BNO055 (V1) / LSM6DS3 (V2), ESP32 BLE + WiFi |
 | Binary format | Custom `.vtx` (v1.0), TypeScript + Python parsers |
 | Mobile | React Native, `react-native-ble-plx`, Zustand |
 | API | Next.js 15 (App Router), TypeScript |
