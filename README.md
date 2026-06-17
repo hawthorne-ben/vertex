@@ -23,8 +23,8 @@ The web frontend is a visualization mid-tier for DSP outputs. It does not define
 
 Two hardware generations exist. Both output the same `.vtx` binary format.
 
-**V1 — ESP32 + BNO055 (6DoF)**
-Sensor: Adafruit BNO055 in `OPERATION_MODE_IMUPLUS` — accelerometer + gyroscope only. The magnetometer is explicitly disabled: ferromagnetic interference from the bike frame, passing vehicles, and road infrastructure renders it unreliable. Yaw drift is corrected in post-processing using GPS heading from paired FIT files. Sampling at 25Hz over I2C (400kHz fast mode). BLE streams 47-byte sensor packets directly to the mobile app in real time. On-device brake detection runs a forward-backward Butterworth filter on `accel_x`; threshold 3.0 m/s² with 250ms debounce. Battery ADC on GPIO 35 through a 2:1 voltage divider; auto-shutdown at 3.2V.
+**V1 — ESP32 + BNO055 (6DoF, legacy)**
+The BNO055's magnetometer proved unusable in a cycling environment: ferromagnetic interference from the bike frame, passing vehicles, and road infrastructure corrupted heading data, forcing operation in 6DoF-only mode with yaw drift corrected in post-processing. V2 was built to address the 25Hz sample rate ceiling and the constraints of BLE streaming.
 
 **V2 — ESP32-S3 Mini + LSM6DS3 (6DoF, current)**
 Sensor: ST LSM6DS3 at native 104Hz ODR — `+/−8g` accelerometer, `+/−1000 dps` gyroscope, configured via direct register writes over I2C (400kHz). The FIFO is set to continuous mode with a 60-sample threshold, batched to the MCU every 100ms (~10 samples per read, decoupling SD write latency from sensor timing). Raw 16-bit register values are converted to physical units on-device using fixed sensitivity constants (`0.000244 × 9.80665 m/s²/LSB` for accel, `0.035 deg/s/LSB` for gyro), then mapped from chip axes to a standard body frame before being packed into 28-byte `IMURecord` structs and written to SD card over SPI (16MHz). No BLE data streaming — BLE is a control interface only (start/stop recording, clock sync, trigger upload). CPU runs at 80MHz during recording; scales to 240MHz for WiFi upload. Battery ADC on GPIO 4 through a 100K/100K divider tapping the TP4057 charger output before the Schottky isolation diode; 8-sample averaging with empirical calibration factor.
@@ -107,7 +107,7 @@ The pipeline runs at native sample rate without pre-decimation. Decimating befor
 - **Pass 2 — windowed RMS:** Stability and roughness: 3.0s window, 0.5s hop. Braking: 0.75s window, 0.2s hop.
 - **Pass 3:** Interpolate to 5Hz output. Position detection: `accel_y` amplitude vs. `gyro_z` in 0.75s windows.
 
-Stability weight: `gyro_roll × 0.5 + gyro_yaw × 0.3 + surge_accel × 0.2`, normalized 0–1. Surface roughness: HPF `accel_z` RMS — smooth < 0.5g, rough > 1.0g.
+Stability weight: `gyro_roll × 0.5 + gyro_yaw × 0.3 + surge_accel × 0.2`, normalized 0–1. Coefficients were empirically derived by comparing weighted outputs against labeled ground-truth segments (controlled sprinting, seated climbing, technical descending) until the score correlated with perceived instability. Surface roughness: HPF `accel_z` RMS — smooth < 0.5g, rough > 1.0g.
 
 **Schema:** Five PostgreSQL tables with RLS on all user data. `ride_analysis` stores one row per (ride, analysis_type) with a pointer to a gzipped JSON sample blob in object storage, keeping the relational schema flat regardless of sample count. `ride_summaries` holds denormalized aggregate metrics for dashboard queries.
 
@@ -117,7 +117,7 @@ Stability weight: `gyro_roll × 0.5 + gyro_yaw × 0.3 + surge_accel × 0.2`, nor
 
 I document the physical and software challenges of building Vertex on Substack.
 
-[**Read: Data Without Context is Just High Numbers**](https://lab.ridevertex.com/p/data-without-context-is-just-high) — Detailing the hardware limitations of GPS, the necessity of 6-DOF sensor fusion, and solving for high-frequency road vibration.
+[**Read: Data without context is just high fidelity trivia**](https://lab.ridevertex.com/p/data-without-context-is-just-high) — Detailing the hardware limitations of GPS, the necessity of 6-DOF sensor fusion, and solving for high-frequency road vibration.
 
 ---
 

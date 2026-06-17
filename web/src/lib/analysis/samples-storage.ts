@@ -40,7 +40,17 @@ export async function uploadSamples(
     })
 
   if (error) {
-    throw new Error(`Failed to upload samples to ${path}: ${error.message}`)
+    // On upsert, Supabase JS can return a network-level error even when the
+    // write lands (e.g. connection reset after the server accepted the body).
+    // Verify the object exists before propagating the failure.
+    const { data: existing } = await supabase.storage.from(BUCKET).list(
+      path.substring(0, path.lastIndexOf('/')),
+      { search: path.substring(path.lastIndexOf('/') + 1) }
+    )
+    if (!existing?.length) {
+      throw new Error(`Failed to upload samples to ${path}: ${error.message}`)
+    }
+    console.warn(`uploadSamples: upload returned error but object exists, continuing. Error was: ${error.message}`)
   }
 
   return {

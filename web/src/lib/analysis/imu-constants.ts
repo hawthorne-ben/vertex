@@ -1,22 +1,22 @@
 /**
- * Pedaling Stability & Surface Roughness Algorithm Constants
+ * IMU Analysis Algorithm Constants
  *
- * Centralized configuration for easy tuning without hunting through code.
- * Adjust these values to calibrate algorithm for different riding styles.
+ * Single source of truth for all analysis tuning values.
+ * See CHANGELOG.md in this directory when bumping ALGORITHM_VERSION.
  *
- * v6.0.0: Time-domain RMS stability (BPF'd gyro → windowed RMS → ceiling normalization)
- *         Replaces FFT spectral analysis. FFT constants retained for future use.
+ * Versioning contract:
+ *   patch — tuning constant change (thresholds, weights, window sizes)
+ *   minor — new metric or structural pipeline change
+ *   major — breaking schema or output format change
  */
 
 // ============================================
 // ALGORITHM VERSION
 // ============================================
 
-/**
- * Version string for cache invalidation
- * Bump this when changing any constants or algorithm logic
- */
-export const ALGORITHM_VERSION = '9.2.0'  // BPF on native 104Hz VTX (bypass sync decimation), min-duration gate
+// Bump this + add a CHANGELOG.md entry whenever constants or logic change.
+// Rides with a different stored version are treated as stale and recomputed on next trigger.
+export const ALGORITHM_VERSION = '0.1.0'
 
 // ============================================
 // WINDOWED RMS CONFIGURATION
@@ -92,7 +92,7 @@ export const STABILITY_SURGE_WEIGHT = 0.0  // Accel-x: disabled (incompatible un
  * Units: mixed (gyro deg/s, accel m/s²) weighted sum
  * Calibrate from real data. Start at 5.0, tune with tuning modal.
  */
-export const MAX_STABILITY_RMS = 15.0
+export const MAX_STABILITY_RMS = 20.0
 
 /**
  * Maximum expected weighted RMS per watt for power-normalized stability
@@ -227,7 +227,7 @@ export const MAX_GRADE_PERCENT = 30
  * - 2.0 m/s²: Balanced (default) - filters out seated rocking
  * - 2.5 m/s²: Conservative, only very aggressive standing
  */
-export const Y_AXIS_STANDING_THRESHOLD = 2.0
+export const Y_AXIS_STANDING_THRESHOLD = 3.0
 
 /**
  * Window size for position calculation in seconds
@@ -263,7 +263,7 @@ export const ROLL_BPF_HIGH_HZ = 4.0
  * - 10 deg/s: Balanced (default)
  * - 15 deg/s: Conservative
  */
-export const ROLL_RMS_STANDING_THRESHOLD = 6
+export const ROLL_RMS_STANDING_THRESHOLD = 9
 
 /**
  * Weight for gyro-derived roll signal in position detection (0–1)
@@ -300,7 +300,7 @@ export const YAW_BPF_HIGH_HZ = 4.0
  * - 6 deg/s: Balanced (default, matches roll threshold)
  * - 10 deg/s: Conservative
  */
-export const YAW_RMS_STANDING_THRESHOLD = 6
+export const YAW_RMS_STANDING_THRESHOLD = 9
 
 /**
  * Weight for roll (gyro-x) within the gyro component (0–1)
@@ -312,7 +312,7 @@ export const POSITION_ROLL_WEIGHT = 0.5
 /**
  * Weight for yaw (gyro-z) within the gyro component (0–1)
  */
-export const POSITION_YAW_WEIGHT = 0.5
+export const POSITION_YAW_WEIGHT = 0.7
 
 // ============================================
 // BRAKING DETECTION

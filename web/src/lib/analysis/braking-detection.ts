@@ -1,5 +1,5 @@
 /**
- * Braking Detection (v9.2)
+ * Braking Detection
  *
  * Braking is detected inline in ride-imu-analysis.ts by point-sampling the
  * causal BPF output at 5 Hz. This file provides only the metadata aggregation

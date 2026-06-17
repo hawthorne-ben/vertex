@@ -1,5 +1,5 @@
 /**
- * Ride IMU Analysis (v8.0.0)
+ * Ride IMU Analysis
  *
  * Multi-pass computation of all IMU-derived metrics from VTX + FIT data:
  * stability, surface roughness, riding position, braking detection.
