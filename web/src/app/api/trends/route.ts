@@ -40,6 +40,12 @@ const METRIC_CONFIG: Record<string, {
     unit: '%',
     stableThreshold: 1.0,
   },
+  avg_roughness: {
+    column: 'avg_roughness',
+    versionColumn: 'roughness_version',
+    unit: '',
+    stableThreshold: 0.05,
+  },
   avg_hr: {
     column: 'avg_heart_rate',
     versionColumn: 'efficiency_version',
@@ -62,6 +68,7 @@ const METRIC_CONFIG: Record<string, {
 
 // Valid period values → SQL intervals
 const PERIOD_INTERVALS: Record<string, string> = {
+  '1w': '1 weeks',
   '4w': '4 weeks',
   '8w': '8 weeks',
   '3m': '3 months',
@@ -381,7 +388,7 @@ function getTrendDirection(
   if (absSlope <= threshold) return 'stable'
 
   // For "rough" percent, a negative trend (decreasing roughness) is improving
-  const invertedMetrics = ['rough']
+  const invertedMetrics = ['rough', 'avg_roughness']
   const isInverted = invertedMetrics.includes(metricName)
 
   if (slope > 0) return isInverted ? 'declining' : 'improving'

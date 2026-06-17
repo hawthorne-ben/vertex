@@ -179,7 +179,11 @@ export function UPlotBase({
     }
 
     const date = new Date(timestamp * 1000)
-    const time = `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}`
+    const timestamps = currentData[0] as number[]
+    const spanSeconds = timestamps.length > 1 ? timestamps[timestamps.length - 1] - timestamps[0] : 0
+    const time = spanSeconds > 86400
+      ? date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+      : `${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}:${date.getSeconds().toString().padStart(2, '0')}`
 
     const values: Array<{ label: string; color: string; value: string }> = []
     for (let i = 1; i < currentSeries.length; i++) {
@@ -285,11 +289,11 @@ export function UPlotBase({
       plugins.push(zoomPlugin)
     }
 
-    // Always use the themed x-axis (first entry in defaultAxes).
-    // Custom axes provide only y-axes; we prepend the themed x-axis.
-    const resolvedAxes = axes
-      ? [defaultAxes[0], ...axes]
-      : defaultAxes
+    // If the caller provides axes, use them as-is — the first entry is
+    // expected to be the x-axis with its own formatter (e.g. M/D for trend
+    // charts vs HH:MM:SS for intra-ride charts). Only fall back to the default
+    // axes when none are provided.
+    const resolvedAxes = axes ?? defaultAxes
 
     const opts: uPlot.Options = {
       width: chartRef.current.clientWidth,

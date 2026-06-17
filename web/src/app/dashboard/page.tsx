@@ -4,7 +4,7 @@ import { redirect } from 'next/navigation'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { createClient } from '@/lib/supabase/server'
 import { formatDurationFromTimestamps as formatDurationFromTimestampsUtil, formatDurationFromSeconds } from '@/lib/utils/formatting'
-import { EfficiencyTrendChart } from '@/components/efficiency-trend-chart'
+import { EfficiencyTrendChart, StandingTrendChart, RoughnessTrendChart } from '@/components/efficiency-trend-chart'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -210,18 +210,39 @@ export default async function DashboardPage() {
         </Card>
       </div>
 
-      {/* Efficiency Trend */}
-      <Suspense>
-        <Card className="mb-6 md:mb-8">
-          <CardHeader>
-            <CardTitle className="text-xl font-serif">Pedaling Stability</CardTitle>
-            <p className="text-sm text-muted-foreground">Last 8 weeks</p>
-          </CardHeader>
-          <CardContent>
-            <EfficiencyTrendChart />
-          </CardContent>
-        </Card>
-      </Suspense>
+      {/* Trend Charts */}
+      <div className="flex flex-col gap-6 mb-6 md:mb-8">
+        <Suspense>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-xl font-serif">Pedaling Stability</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <EfficiencyTrendChart />
+            </CardContent>
+          </Card>
+        </Suspense>
+        <Suspense>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-xl font-serif">Standing</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <StandingTrendChart />
+            </CardContent>
+          </Card>
+        </Suspense>
+        <Suspense>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-xl font-serif">Surface Roughness</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <RoughnessTrendChart />
+            </CardContent>
+          </Card>
+        </Suspense>
+      </div>
     </div>
   )
 }
