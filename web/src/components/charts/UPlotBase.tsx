@@ -26,6 +26,7 @@ export interface UPlotBaseProps {
   onZoom?: (start: string, end: string) => void
   className?: string
   stats?: ChartStat[]
+  plugins?: uPlot.Plugin[]
 }
 
 /**
@@ -44,7 +45,8 @@ export function UPlotBase({
   highlightTime,
   onZoom,
   className = '',
-  stats
+  stats,
+  plugins: extraPlugins = [],
 }: UPlotBaseProps) {
   const chartRef = useRef<HTMLDivElement>(null)
   const uplotRef = useRef<uPlot | null>(null)
@@ -225,12 +227,6 @@ export function UPlotBase({
     if (!chartRef.current) return
     if (!data || data.length === 0 || !data[0] || data[0].length === 0) return
 
-    // Check if series configuration changed.
-    // We only consider it a "real" change if the new series array is non-trivial
-    // (more than just the time placeholder). A collapse to series=[{}] during
-    // transient empty data is NOT a meaningful change — it's just the chart
-    // builder's empty-state placeholder. Ignoring it lets us preserve the
-    // existing chart instance and visibility state through zoom/scrub.
     if (series.length <= 1) return
 
     let seriesChanged = !uplotRef.current
@@ -245,7 +241,6 @@ export function UPlotBase({
       }
     }
 
-    // Only recreate if series actually changed
     if (!seriesChanged) return
 
     // Destroy old chart if exists
@@ -284,7 +279,7 @@ export function UPlotBase({
       }
     ]
 
-    const plugins: uPlot.Plugin[] = [highlightPlugin, tooltipPlugin]
+    const plugins: uPlot.Plugin[] = [highlightPlugin, tooltipPlugin, ...extraPlugins]
     if (onZoom) {
       plugins.push(zoomPlugin)
     }

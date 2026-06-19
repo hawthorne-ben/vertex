@@ -9,60 +9,70 @@ const METRIC_CONFIG: Record<string, {
   versionColumn: string
   unit: string
   stableThreshold: number  // Per-week threshold for stable vs improving/declining
+  precision: number        // Decimal places for rounding output values
 }> = {
   stability: {
     column: 'avg_stability_percent',
     versionColumn: 'efficiency_version',
     unit: '%',
     stableThreshold: 0.5,
+    precision: 1,
   },
   stable: {
     column: 'stable_pedaling_percent',
     versionColumn: 'efficiency_version',
     unit: '%',
     stableThreshold: 1.0,
+    precision: 1,
   },
   unstable: {
     column: 'unstable_pedaling_percent',
     versionColumn: 'efficiency_version',
     unit: '%',
     stableThreshold: 1.0,
+    precision: 1,
   },
   pedaling: {
     column: 'pedaling_percent',
     versionColumn: 'efficiency_version',
     unit: '%',
     stableThreshold: 2.0,
+    precision: 1,
   },
   standing: {
     column: 'standing_percent',
     versionColumn: 'position_version',
     unit: '%',
     stableThreshold: 1.0,
+    precision: 1,
   },
   avg_roughness: {
     column: 'avg_roughness',
     versionColumn: 'roughness_version',
     unit: '',
     stableThreshold: 0.05,
+    precision: 4,
   },
   avg_hr: {
     column: 'avg_heart_rate',
     versionColumn: 'efficiency_version',
     unit: 'bpm',
     stableThreshold: 1.0,
+    precision: 1,
   },
   avg_power: {
     column: 'avg_power_watts',
     versionColumn: 'efficiency_version',
     unit: 'W',
     stableThreshold: 3.0,
+    precision: 1,
   },
   avg_cadence: {
     column: 'avg_cadence',
     versionColumn: 'efficiency_version',
     unit: 'rpm',
     stableThreshold: 1.0,
+    precision: 1,
   },
 }
 
@@ -233,18 +243,25 @@ export async function GET(request: NextRequest) {
         const values = points.map(p => p.value)
         const trend = calculateTrendSlope(points)
 
+        const totalDuration = points.reduce((s, p) => s + p.durationSeconds, 0)
+        const periodAvg = totalDuration > 0
+          ? points.reduce((s, p) => s + p.value * p.durationSeconds, 0) / totalDuration
+          : values.reduce((a, b) => a + b, 0) / values.length
+
+        const p10 = Math.pow(10, config.precision)
         metrics[metricName] = {
           points: points.map(p => ({
             date: p.date,
-            value: Math.round(p.value * 10) / 10,
+            value: Math.round(p.value * p10) / p10,
+            durationSeconds: p.durationSeconds,
             rideId: p.rideId,
             rideName: p.rideName,
           })),
           stats: {
-            current: Math.round(values[values.length - 1] * 10) / 10,
-            periodAvg: Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 10) / 10,
-            periodMin: Math.round(Math.min(...values) * 10) / 10,
-            periodMax: Math.round(Math.max(...values) * 10) / 10,
+            current: Math.round(values[values.length - 1] * p10) / p10,
+            periodAvg: Math.round(periodAvg * p10) / p10,
+            periodMin: Math.round(Math.min(...values) * p10) / p10,
+            periodMax: Math.round(Math.max(...values) * p10) / p10,
             trend: Math.round(trend * 100) / 100,
             trendDirection: getTrendDirection(trend, config.stableThreshold, metricName),
           },
@@ -316,14 +333,12 @@ async function fetchMetricPoints(
   userId: string,
   config: typeof METRIC_CONFIG[string],
   periodInterval: string | null,
-): Promise<Array<{ date: string; value: number; rideId: string; rideName: string; version: string }>> {
-  // Build query — select specific columns
-  // We need: ride_started_at, metric column, version column, ride_id
-  // Plus join to rides for name
+): Promise<Array<{ date: string; value: number; durationSeconds: number; rideId: string; rideName: string; version: string }>> {
   let query = supabase
     .from('ride_summaries')
     .select(`
       ride_started_at,
+      duration_seconds,
       ${config.column},
       ${config.versionColumn},
       ride_id,
@@ -357,6 +372,7 @@ async function fetchMetricPoints(
   return (data || []).map((row: any) => ({
     date: row.ride_started_at,
     value: row[config.column],
+    durationSeconds: row.duration_seconds || 0,
     rideId: row.ride_id,
     rideName: row.rides?.name || 'Untitled Ride',
     version: row[config.versionColumn] || '',

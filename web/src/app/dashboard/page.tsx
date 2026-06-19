@@ -211,7 +211,7 @@ export default async function DashboardPage() {
       </div>
 
       {/* Trend Charts */}
-      <div className="flex flex-col gap-6 mb-6 md:mb-8">
+      <div className="grid md:grid-cols-3 gap-6 mb-6 md:mb-8">
         <Suspense>
           <Card>
             <CardHeader>

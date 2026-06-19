@@ -14,6 +14,7 @@ const UPlotBase = dynamic(
 interface TrendPoint {
   date: string
   value: number
+  durationSeconds: number
   rideId: string
   rideName: string
 }
@@ -64,9 +65,10 @@ export function MetricTrendChart({
 
   useEffect(() => {
     let cancelled = false
+    setData(null)
+    setLoading(true)
 
     async function load() {
-      setLoading(true)
       try {
         const res = await authFetch(`/api/trends?metric=${metric}&period=${period}`)
         if (!res.ok || cancelled) return
@@ -90,7 +92,8 @@ export function MetricTrendChart({
 
     const timestamps = data.points.map(p => new Date(p.date).getTime() / 1000)
     const values = data.points.map(p => p.value)
-    const chartData: uPlot.AlignedData = [timestamps, values]
+    const durations = data.points.map(p => p.durationSeconds)
+    const chartData: uPlot.AlignedData = [timestamps, values, durations]
 
     const isDark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
     const gridColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'
@@ -105,6 +108,17 @@ export function MetricTrendChart({
         fill: `${lineColor}14`,
         points: { show: true, size: 5, fill: lineColor, stroke: lineColor },
         value: (_u, v) => v == null ? '-' : fmt(v),
+      },
+      {
+        label: 'Duration',
+        show: false,
+        scale: 'dur',
+        value: (_u, v) => {
+          if (v == null) return '-'
+          const h = Math.floor(v / 3600)
+          const m = Math.floor((v % 3600) / 60)
+          return h > 0 ? `${h}h ${m}m` : `${m}m`
+        },
       },
     ]
 
@@ -137,6 +151,7 @@ export function MetricTrendChart({
 
     const scales: Record<string, uPlot.Scale> = {
       x: {},
+      dur: { auto: true },
       y: {
         auto: true,
         range: (_u, min, max) => {
@@ -146,7 +161,7 @@ export function MetricTrendChart({
       },
     }
 
-    return { data: chartData, series, axes, scales }
+    return { data: chartData, series, axes, scales, plugins: [] }
   }, [data, lineColor, metric, fmt])
 
   const stats = data?.stats ?? null
@@ -215,16 +230,13 @@ export function MetricTrendChart({
     <div>
       <div className="flex items-baseline justify-between mb-3">
         <div>
-          <span className="text-2xl font-bold text-primary">{fmt(stats.current)}</span>
+          <span className="text-2xl font-bold text-primary">{fmt(stats.periodAvg)}</span>
           <span className={`inline-flex items-center gap-1 ml-2 text-sm ${trendColor}`}>
             {trendIcon}
             {stats.trend > 0 ? '+' : ''}{stats.trend.toFixed(2)}/wk
           </span>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-muted-foreground">
-            avg: {fmt(stats.periodAvg)}
-          </span>
           {periodSelector}
         </div>
       </div>
@@ -233,6 +245,7 @@ export function MetricTrendChart({
         series={chartConfig.series}
         axes={chartConfig.axes}
         scales={chartConfig.scales}
+        plugins={chartConfig.plugins}
         height={180}
       />
     </div>
@@ -267,7 +280,7 @@ export function RoughnessTrendChart() {
     <MetricTrendChart
       metric="avg_roughness"
       lineColor="#ef4444"
-      formatValue={v => v.toFixed(2)}
+      formatValue={v => `${(v * 100).toFixed(1)}%`}
     />
   )
 }
