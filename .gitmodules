@@ -1,0 +1,3 @@
+[submodule "web/src/lib/analysis"]
+	path = web/src/lib/analysis
+	url = https://github.com/hawthorne-ben/vertex-analysis.git
