@@ -11,7 +11,7 @@ export function Header() {
   const pathname = usePathname()
 
   // Hide header on public pages
-  const publicPaths = ['/', '/login', '/signup', '/auth/callback', '/coming-soon']
+  const publicPaths = ['/', '/login', '/signup', '/auth/callback', '/coming-soon', '/about']
   if (publicPaths.includes(pathname)) {
     return null
   }
