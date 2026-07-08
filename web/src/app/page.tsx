@@ -7,7 +7,7 @@ export default function Home() {
   const router = useRouter()
 
   useEffect(() => {
-    router.push('/coming-soon')
+    router.push('/about')
   }, [router])
 
   return (
