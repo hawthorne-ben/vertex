@@ -134,12 +134,26 @@ vertex/
 │   └── vtx-constants/        # Shared format constants
 ├── app/                      # React Native companion app (BLE recording)
 ├── web/                      # Next.js web platform
-│   ├── src/lib/analysis/     # IMU analysis pipeline
+│   ├── src/lib/analysis/     # IMU analysis pipeline (private submodule — see below)
 │   ├── src/lib/imu/          # Signal processing primitives
 │   ├── src/lib/sync/         # FIT-VTX timestamp alignment
 │   └── src/app/api/          # 38 API routes
 ├── analysis/                 # Python scripts, sample data
 └── docs/                     # Format specs, compatibility matrix
+```
+
+---
+
+## Submodule: IMU Analysis Pipeline
+
+`web/src/lib/analysis/` is a private Git submodule (`hawthorne-ben/vertex-analysis`). It contains the DSP implementation, filter coefficients, and calibration methodology. The pipeline architecture is documented in the [Cloud Pipeline](#cloud-pipeline) section above; the implementation is not public.
+
+Cloning this repo without access to the private submodule will leave `web/src/lib/analysis/` empty. The web platform will not build in that state. If you have access:
+
+```bash
+git clone --recurse-submodules git@github.com:hawthorne-ben/vertex.git
+# or, after a plain clone:
+git submodule update --init
 ```
 
 ---
