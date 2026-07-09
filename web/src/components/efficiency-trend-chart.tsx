@@ -11,7 +11,7 @@ const UPlotBase = dynamic(
   { ssr: false, loading: () => <div className="h-[180px] bg-muted rounded-lg animate-pulse" /> }
 )
 
-interface TrendPoint {
+export interface TrendPoint {
   date: string
   value: number
   durationSeconds: number
@@ -19,7 +19,7 @@ interface TrendPoint {
   rideName: string
 }
 
-interface TrendStats {
+export interface TrendStats {
   current: number
   periodAvg: number
   periodMin: number
@@ -28,12 +28,12 @@ interface TrendStats {
   trendDirection: 'improving' | 'declining' | 'stable'
 }
 
-interface TrendData {
+export interface TrendData {
   points: TrendPoint[]
   stats: TrendStats | null
 }
 
-const PERIODS = [
+export const PERIODS = [
   { label: '1W', value: '1w' },
   { label: '1M', value: '4w' },
   { label: '3M', value: '3m' },
@@ -41,7 +41,7 @@ const PERIODS = [
   { label: 'All', value: 'all' },
 ] as const
 
-type PeriodValue = typeof PERIODS[number]['value']
+export type PeriodValue = typeof PERIODS[number]['value']
 
 interface MetricTrendChartProps {
   metric: string
@@ -49,6 +49,15 @@ interface MetricTrendChartProps {
   lineColor?: string
   formatValue?: (v: number) => string
   defaultPeriod?: PeriodValue
+  // Controlled mode: when `data` is provided the chart renders from props and
+  // does NOT self-fetch. `period`/`onPeriodChange` let a parent own the period
+  // selector (e.g. the dashboard, which fetches all metrics in one request).
+  data?: TrendData | null
+  loading?: boolean
+  period?: PeriodValue
+  onPeriodChange?: (p: PeriodValue) => void
+  // Fires with the ride id of the clicked data point (for navigation).
+  onPointClick?: (rideId: string) => void
 }
 
 export function MetricTrendChart({
@@ -57,33 +66,45 @@ export function MetricTrendChart({
   lineColor = '#22c55e',
   formatValue,
   defaultPeriod = '3m',
+  data: controlledData,
+  loading: controlledLoading,
+  period: controlledPeriod,
+  onPeriodChange,
+  onPointClick,
 }: MetricTrendChartProps) {
+  const isControlled = controlledData !== undefined
   const { authFetch } = useAuthFetch()
-  const [data, setData] = useState<TrendData | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [period, setPeriod] = useState<PeriodValue>(defaultPeriod)
+  const [internalData, setInternalData] = useState<TrendData | null>(null)
+  const [internalLoading, setInternalLoading] = useState(true)
+  const [internalPeriod, setInternalPeriod] = useState<PeriodValue>(defaultPeriod)
+
+  const data = isControlled ? controlledData : internalData
+  const loading = isControlled ? (controlledLoading ?? false) : internalLoading
+  const period = controlledPeriod ?? internalPeriod
+  const setPeriod = onPeriodChange ?? setInternalPeriod
 
   useEffect(() => {
+    if (isControlled) return
     let cancelled = false
-    setData(null)
-    setLoading(true)
+    setInternalData(null)
+    setInternalLoading(true)
 
     async function load() {
       try {
         const res = await authFetch(`/api/trends?metric=${metric}&period=${period}`)
         if (!res.ok || cancelled) return
         const json = await res.json()
-        if (!cancelled) setData(json.metrics?.[metric] || null)
+        if (!cancelled) setInternalData(json.metrics?.[metric] || null)
       } catch {
         // non-critical
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) setInternalLoading(false)
       }
     }
 
     load()
     return () => { cancelled = true }
-  }, [authFetch, metric, period])
+  }, [authFetch, metric, period, isControlled])
 
   const fmt = formatValue ?? ((v: number) => unit ? `${v.toFixed(1)}${unit}` : v.toFixed(2))
 
@@ -247,40 +268,11 @@ export function MetricTrendChart({
         scales={chartConfig.scales}
         plugins={chartConfig.plugins}
         height={180}
+        onPointClick={onPointClick ? (idx) => {
+          const rideId = data?.points?.[idx]?.rideId
+          if (rideId) onPointClick(rideId)
+        } : undefined}
       />
     </div>
-  )
-}
-
-// Named exports for each dashboard chart
-export function EfficiencyTrendChart() {
-  return (
-    <MetricTrendChart
-      metric="stability"
-      unit="%"
-      lineColor="#22c55e"
-      formatValue={v => `${v.toFixed(1)}%`}
-    />
-  )
-}
-
-export function StandingTrendChart() {
-  return (
-    <MetricTrendChart
-      metric="standing"
-      unit="%"
-      lineColor="#f59e0b"
-      formatValue={v => `${v.toFixed(1)}%`}
-    />
-  )
-}
-
-export function RoughnessTrendChart() {
-  return (
-    <MetricTrendChart
-      metric="avg_roughness"
-      lineColor="#ef4444"
-      formatValue={v => `${(v * 100).toFixed(1)}%`}
-    />
   )
 }

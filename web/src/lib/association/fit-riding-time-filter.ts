@@ -118,17 +118,18 @@ export class FitRidingTimeFilter {
       }
     }
 
-    // Calculate total riding time from riding data points
-    if (ridingDataPoints.length > 1) {
-      const firstRidingPoint = new Date(ridingDataPoints[0].timestamp)
-      const lastRidingPoint = new Date(ridingDataPoints[ridingDataPoints.length - 1].timestamp)
-      totalRidingTime = lastRidingPoint.getTime() - firstRidingPoint.getTime()
-    }
-
     // Calculate total time from first to last data point
     const firstPoint = new Date(sortedDataPoints[0].timestamp)
     const lastPoint = new Date(sortedDataPoints[sortedDataPoints.length - 1].timestamp)
     const totalTime = lastPoint.getTime() - firstPoint.getTime()
+
+    // Riding (moving) time = total elapsed − time spent in stationary periods.
+    // NOTE: we must subtract the *summed* stationary periods, not the span of
+    // the moving points. Using (lastMovingPoint − firstMovingPoint) counts every
+    // mid-ride stop as riding time — it only trims stops at the very start/end,
+    // so the result is ~elapsed time. Subtracting totalStationaryTime is what
+    // makes this match head-unit "moving time" (e.g. Strava).
+    totalRidingTime = Math.max(0, totalTime - totalStationaryTime)
 
     const totalTimeSeconds = totalTime / 1000
     const ridingTimeSeconds = totalRidingTime / 1000

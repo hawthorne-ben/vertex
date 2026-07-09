@@ -365,9 +365,60 @@ export const parseFitFile = inngest.createFunction(
         }
       })
 
-      // Step 3: Automatically create ride entry
+      // Step 3: Create or update the ride entry (idempotent).
+      //
+      // Re-parsing a FIT file (e.g. to backfill a corrected metric) must NOT
+      // create a duplicate ride. If this recording is already linked to a ride
+      // via ride_recordings, we UPDATE that ride's derived fields in place and
+      // reuse its id. Only a first-time parse inserts a new ride. The ride name
+      // is left untouched on update so any user rename survives a re-parse.
       const rideId = await step.run('create-ride-entry', async () => {
-        // Generate ride name from filename and date
+        const rideStartTime = extractedData.metadata.start_time
+        const rideEndTime = extractedData.metadata.end_time
+        const rideDurationSeconds = extractedData.metadata.duration_seconds || 0
+        const distanceMeters = extractedData.metadata.distance_meters || null
+        const elevationGainMeters = extractedData.metadata.elevation_gain_meters || null
+
+        // Derived fields refreshed on both insert and update.
+        const derivedFields = {
+          start_time: rideStartTime,
+          end_time: rideEndTime,
+          duration_seconds: rideDurationSeconds,
+          distance_meters: distanceMeters,
+          elevation_gain_meters: elevationGainMeters,
+        }
+
+        // Is this recording already linked to a ride? Use limit(1) rather than
+        // maybeSingle() so a recording linked to more than one ride (e.g. an
+        // unusual multi-ride association) doesn't hard-error the re-parse — we
+        // just refresh the first linked ride.
+        const { data: existingLinks, error: linkError } = await supabase
+          .from('ride_recordings')
+          .select('ride_id')
+          .eq('recording_id', fileId)
+          .limit(1)
+
+        if (linkError) {
+          throw new Error(`Failed to look up existing ride link: ${linkError.message}`)
+        }
+
+        const existingLink = existingLinks?.[0]
+        if (existingLink?.ride_id) {
+          // Re-parse: update the existing ride's derived fields in place.
+          const { error: updateError } = await supabase
+            .from('rides')
+            .update(derivedFields)
+            .eq('id', existingLink.ride_id)
+
+          if (updateError) {
+            throw new Error(`Failed to update existing ride: ${updateError.message}`)
+          }
+
+          console.log('Ride updated (re-parse):', existingLink.ride_id)
+          return existingLink.ride_id
+        }
+
+        // First-time parse: generate a name from the filename and insert.
         const { data: recording } = await supabase
           .from('recordings')
           .select('filename, start_time')
@@ -375,23 +426,13 @@ export const parseFitFile = inngest.createFunction(
           .single()
 
         const rideName = recording?.filename.replace(/\.fit$/i, '') || 'Unnamed Ride'
-        const rideStartTime = extractedData.metadata.start_time
-        const rideEndTime = extractedData.metadata.end_time
-        const rideDurationSeconds = extractedData.metadata.duration_seconds || 0
-        const distanceMeters = extractedData.metadata.distance_meters || null
-        const elevationGainMeters = extractedData.metadata.elevation_gain_meters || null
 
-        // Create ride entry
         const { data: ride, error: rideError } = await supabase
           .from('rides')
           .insert({
             user_id: userId,
             name: rideName,
-            start_time: rideStartTime,
-            end_time: rideEndTime,
-            duration_seconds: rideDurationSeconds,
-            distance_meters: distanceMeters,
-            elevation_gain_meters: elevationGainMeters
+            ...derivedFields,
           })
           .select()
           .single()

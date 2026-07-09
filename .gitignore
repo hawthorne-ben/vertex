@@ -103,3 +103,6 @@ firmware/**/credentials.h
 
 # Hardware assets (STL, etc.)
 assets/
+
+# Local context for AI assistants (project summary + portable memories)
+context/

@@ -182,6 +182,22 @@
   .active-bg:active { background-color: hsl(var(--active-bg)); }
   .active-border:active { border-color: hsl(var(--active-border)); }
   
+  /* Dashboard KPI: fade the sparkline in on resolve, gently draw the trend
+     icon. Both are suppressed under prefers-reduced-motion. */
+  .kpi-sparkline-fade {
+    animation: kpi-fade-in 0.35s ease-out both;
+  }
+  .kpi-trend-icon {
+    animation: kpi-fade-in 0.5s ease-out both;
+  }
+  @keyframes kpi-fade-in {
+    from { opacity: 0; transform: translateY(2px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .kpi-sparkline-fade, .kpi-trend-icon { animation: none; }
+  }
+
   /* Common Patterns */
   .card-interactive {
     @apply bg-card/80 backdrop-blur-sm border border-border hover-bg hover-border transition-all duration-300;

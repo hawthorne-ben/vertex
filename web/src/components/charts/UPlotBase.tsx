@@ -24,6 +24,7 @@ export interface UPlotBaseProps {
   height?: number
   highlightTime?: number | null // Unix timestamp in seconds
   onZoom?: (start: string, end: string) => void
+  onPointClick?: (dataIndex: number) => void // Fires with nearest data index on click
   className?: string
   stats?: ChartStat[]
   plugins?: uPlot.Plugin[]
@@ -44,6 +45,7 @@ export function UPlotBase({
   height = 400,
   highlightTime,
   onZoom,
+  onPointClick,
   className = '',
   stats,
   plugins: extraPlugins = [],
@@ -51,6 +53,11 @@ export function UPlotBase({
   const chartRef = useRef<HTMLDivElement>(null)
   const uplotRef = useRef<uPlot | null>(null)
   const highlightTimeRef = useRef<number | null>(highlightTime ?? null)
+  // Keep the latest click handler in a ref so the uPlot init hook (bound once
+  // at chart creation) always calls the current callback without recreating
+  // the chart when the handler identity changes.
+  const onPointClickRef = useRef(onPointClick)
+  onPointClickRef.current = onPointClick
   const tooltipRef = useRef<HTMLDivElement>(null)
   const [tooltipData, setTooltipData] = useState<{
     left: number
@@ -149,6 +156,24 @@ export function UPlotBase({
           u.setSelect({ left: 0, top: 0, width: 0, height: 0 })
 
           onZoom?.(start, end)
+        }
+      ]
+    }
+  }
+
+  // Click plugin - fires onPointClick with the nearest data index. Bound once
+  // in init; reads the handler from a ref so it stays current. A click that
+  // ends a drag-zoom is ignored (cursor has no discrete idx during selection).
+  const clickPlugin: uPlot.Plugin = {
+    hooks: {
+      init: [
+        (u: uPlot) => {
+          u.over.addEventListener('click', () => {
+            if (!onPointClickRef.current) return
+            const idx = u.cursor.idx
+            if (idx == null) return
+            onPointClickRef.current(idx)
+          })
         }
       ]
     }
@@ -279,7 +304,7 @@ export function UPlotBase({
       }
     ]
 
-    const plugins: uPlot.Plugin[] = [highlightPlugin, tooltipPlugin, ...extraPlugins]
+    const plugins: uPlot.Plugin[] = [highlightPlugin, tooltipPlugin, clickPlugin, ...extraPlugins]
     if (onZoom) {
       plugins.push(zoomPlugin)
     }
@@ -418,7 +443,11 @@ export function UPlotBase({
           {title} {unit && <span className="text-sm text-muted-foreground">({unit})</span>}
         </h3>
       )}
-      <div ref={chartRef} className="w-full relative" style={{ minHeight: height }}>
+      <div
+        ref={chartRef}
+        className={`w-full relative ${onPointClick ? '[&_.u-over]:cursor-pointer' : ''}`}
+        style={{ minHeight: height }}
+      >
         {!hasData && (
           <div
             className="absolute inset-0 bg-muted rounded-lg flex items-center justify-center pointer-events-none"

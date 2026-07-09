@@ -3,8 +3,10 @@ import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { createClient } from '@/lib/supabase/server'
-import { formatDurationFromTimestamps as formatDurationFromTimestampsUtil, formatDurationFromSeconds } from '@/lib/utils/formatting'
-import { EfficiencyTrendChart, StandingTrendChart, RoughnessTrendChart } from '@/components/efficiency-trend-chart'
+import { resolveRideDuration } from '@/lib/utils/formatting'
+import { DashboardMetrics } from '@/components/dashboard-metrics'
+import { LatestRideHero } from '@/components/latest-ride-hero'
+import { computeHeroInsights } from '@/lib/dashboard/hero-insights'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -15,12 +17,29 @@ export default async function DashboardPage() {
     redirect('/login')
   }
 
-  // Fetch rides data
-  const { data: rides, error: ridesError } = await supabase
+  // Fetch rides data, joining each ride's FIT recording analysis_results so we
+  // can surface computed riding (moving) time alongside elapsed duration.
+  const { data: ridesRaw, error: ridesError } = await supabase
     .from('rides')
-    .select('*')
+    .select(`
+      *,
+      ride_recordings (
+        recordings ( file_type, analysis_results )
+      )
+    `)
     .eq('user_id', user.id)
     .order('start_time', { ascending: false })
+
+  // Flatten: attach riding_time_seconds from the FIT recording onto each ride.
+  const rides = ridesRaw?.map((ride: any) => {
+    const fit = ride.ride_recordings?.find(
+      (rr: any) => rr.recordings?.file_type === 'fit'
+    )?.recordings
+    return {
+      ...ride,
+      riding_time_seconds: fit?.analysis_results?.riding_time_seconds ?? null,
+    }
+  })
 
   if (ridesError) {
     console.error('Error fetching rides:', ridesError)
@@ -37,40 +56,53 @@ export default async function DashboardPage() {
     console.error('Error fetching recordings:', recordingsError)
   }
 
-  // Split by type for display
   const recordings = allRecordings?.filter(r => r.file_type === 'vtx') || []
 
   // Calculate statistics
   const totalRides = rides?.length || 0
 
-  // Total hours from rides (duration_seconds in rides table)
   const totalSeconds = rides?.reduce((sum, ride) => sum + (ride.duration_seconds || 0), 0) || 0
   const totalHours = (totalSeconds / 3600).toFixed(1)
 
-  // Total storage used (sum of all recordings file sizes — FIT + VTX)
   const totalBytes = allRecordings?.reduce((sum, rec) => sum + (rec.file_size_bytes || 0), 0) || 0
   const storageGB = (totalBytes / (1024 * 1024 * 1024)).toFixed(2)
 
-  // Total recordings length (duration in hours, duration_ms in recordings table)
   const totalRecordingMs = recordings?.reduce((sum, rec) => sum + (rec.duration_ms || 0), 0) || 0
   const totalRecordingHours = (totalRecordingMs / (1000 * 60 * 60)).toFixed(1)
 
-  // Recent rides (up to 3)
-  const recentRides = rides?.slice(0, 3) || []
+  // Latest ride + its analysis summary for the hero
+  const latestRide = rides?.[0] ?? null
+  let latestSummary = null
+  let heroInsights = { summary: null as string | null, streak: null as string | null }
+  if (latestRide) {
+    const { data: summary } = await supabase
+      .from('ride_summaries')
+      .select('avg_stability_percent, standing_percent, avg_roughness, avg_power_watts')
+      .eq('ride_id', latestRide.id)
+      .maybeSingle()
+    latestSummary = summary
 
-  // Recent recordings (up to 3)
-  const recentRecordings = recordings?.slice(0, 3) || []
+    // Recent stability/roughness history for the hero's human summary + streak.
+    // Ordered ascending so the last row is the latest ride.
+    const { data: history } = await supabase
+      .from('ride_summaries')
+      .select('ride_started_at, avg_stability_percent, avg_roughness')
+      .eq('user_id', user.id)
+      .not('avg_stability_percent', 'is', null)
+      .order('ride_started_at', { ascending: true })
+      .limit(30)
+    heroInsights = computeHeroInsights(history ?? [])
+  }
 
-  // Helper functions
+  // Recent rides (up to 5) for the secondary list
+  const recentRides = rides?.slice(0, 5) || []
+
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('en-US', {
       month: 'short',
       day: 'numeric'
     })
   }
-
-  const formatDurationFromTimestamps = formatDurationFromTimestampsUtil
-  const formatDurationSeconds = formatDurationFromSeconds
 
   const formatDistance = (meters: number) => {
     const miles = (meters / 1609.34).toFixed(1)
@@ -81,168 +113,90 @@ export default async function DashboardPage() {
     <div className="container mx-auto p-4 md:p-6">
       <h1 className="text-2xl md:text-3xl font-serif font-normal mb-6 md:mb-8">Dashboard</h1>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6 mb-6 md:mb-8">
+      {totalRides === 0 ? (
         <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium text-secondary">Total Rides</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-primary">{totalRides}</div>
+          <CardContent className="py-16 text-center text-secondary">
+            <p className="mb-2 text-lg text-primary font-serif">No rides yet</p>
+            <p>
+              Upload a FIT file or VTX recording to see your riding dynamics.{' '}
+              <Link href="/upload" className="text-primary underline underline-offset-2">
+                Upload data
+              </Link>
+            </p>
           </CardContent>
         </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium text-secondary">Total Hours</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-primary">{totalHours}h</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium text-secondary">Total Recordings</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-primary">{totalRecordingHours}h</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm font-medium text-secondary">Storage Used</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-primary">{storageGB} GB</div>
-          </CardContent>
-        </Card>
-      </div>
+      ) : (
+        <>
+          {/* Latest ride hero — the primary entry point */}
+          {latestRide && (
+            <LatestRideHero
+              ride={latestRide}
+              summary={latestSummary}
+              insights={heroInsights}
+            />
+          )}
 
-      {/* Two Column Layout */}
-      <div className="grid md:grid-cols-2 gap-6 mb-8">
-        {/* Recent Rides - Left Column */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-xl font-serif">Recent Rides</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {recentRides.length === 0 ? (
-              <div className="text-center py-8 text-secondary">
-                <p>No rides yet. Upload a FIT file to get started!</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
+          {/* Riding KPIs + switchable trend chart */}
+          <div className="mb-8">
+            <Suspense>
+              <DashboardMetrics />
+            </Suspense>
+          </div>
+
+          {/* Recent rides — secondary list */}
+          <Card className="mb-8">
+            <CardHeader className="flex-row items-center justify-between">
+              <CardTitle className="text-xl font-serif">Recent Rides</CardTitle>
+              <Link href="/rides" className="text-sm text-secondary hover:text-primary transition-colors">
+                View all
+              </Link>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-2">
                 {recentRides.map((ride) => (
                   <Link
                     key={ride.id}
                     href={`/rides/${ride.id}`}
-                    className="card-interactive block p-3 rounded-md"
+                    className="card-interactive flex items-center justify-between gap-4 p-3 rounded-md"
                   >
-                    <div className="flex justify-between gap-4 mb-2">
-                      <h3 className="font-medium text-base text-primary">
+                    <div className="min-w-0">
+                      <h3 className="font-medium text-base text-primary truncate">
                         {ride.name || 'Unnamed Ride'}
                       </h3>
-                      <span className="text-sm text-secondary flex-shrink-0">
-                        {formatDate(ride.start_time)}
-                      </span>
+                      <span className="text-sm text-secondary">{formatDate(ride.start_time)}</span>
                     </div>
-
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                      {ride.distance_meters && (
-                        <div className="flex justify-between">
-                          <span className="text-secondary">Distance</span>
-                          <span className="font-medium text-primary">{formatDistance(ride.distance_meters)}</span>
+                    <div className="flex gap-6 text-sm flex-shrink-0">
+                      {ride.distance_meters != null && (
+                        <div className="text-right">
+                          <div className="text-secondary text-xs">Distance</div>
+                          <div className="font-medium text-primary">{formatDistance(ride.distance_meters)}</div>
                         </div>
                       )}
-                      <div className="flex justify-between">
-                        <span className="text-secondary">Duration</span>
-                        <span className="font-medium text-primary">{formatDurationSeconds(ride.duration_seconds)}</span>
-                      </div>
+                      {(() => {
+                        const d = resolveRideDuration(ride.duration_seconds, ride.riding_time_seconds)
+                        return (
+                          <div className="text-right">
+                            <div className="text-secondary text-xs">{d.label}</div>
+                            <div className="font-medium text-primary">{d.primary}</div>
+                          </div>
+                        )
+                      })()}
                     </div>
                   </Link>
                 ))}
               </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Recent Recordings - Right Column */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-xl font-serif">Recent Recordings</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {recentRecordings.length === 0 ? (
-              <div className="text-center py-8 text-secondary">
-                <p>No recordings yet. Upload VTX data to get started!</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {recentRecordings.map((recording) => (
-                  <Link
-                    key={recording.id}
-                    href={`/recordings/${recording.id}`}
-                    className="card-interactive block p-3 rounded-md"
-                  >
-                    <div className="flex justify-between gap-4 mb-2">
-                      <h3 className="font-medium text-base text-primary">
-                        {recording.filename}
-                      </h3>
-                      <span className="text-sm text-secondary flex-shrink-0">
-                        {formatDate(recording.start_time)}
-                      </span>
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-sm">
-                      <div className="flex justify-between">
-                        <span className="text-secondary">Duration</span>
-                        <span className="font-medium text-primary">{formatDurationFromTimestamps(recording.start_time, recording.end_time)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-secondary">Samples</span>
-                        <span className="font-medium text-primary">{recording.sample_count?.toLocaleString() || 'N/A'}</span>
-                      </div>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Trend Charts */}
-      <div className="grid md:grid-cols-3 gap-6 mb-6 md:mb-8">
-        <Suspense>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-xl font-serif">Pedaling Stability</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <EfficiencyTrendChart />
             </CardContent>
           </Card>
-        </Suspense>
-        <Suspense>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-xl font-serif">Standing</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <StandingTrendChart />
-            </CardContent>
-          </Card>
-        </Suspense>
-        <Suspense>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-xl font-serif">Surface Roughness</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <RoughnessTrendChart />
-            </CardContent>
-          </Card>
-        </Suspense>
-      </div>
+
+          {/* Account / storage metadata — demoted to a footer strip */}
+          <div className="flex flex-wrap gap-x-8 gap-y-2 text-sm text-secondary border-t border-border pt-4">
+            <span><span className="text-primary font-medium">{totalRides}</span> rides</span>
+            <span><span className="text-primary font-medium">{totalHours}h</span> ridden</span>
+            <span><span className="text-primary font-medium">{totalRecordingHours}h</span> recorded</span>
+            <span><span className="text-primary font-medium">{storageGB} GB</span> stored</span>
+          </div>
+        </>
+      )}
     </div>
   )
 }

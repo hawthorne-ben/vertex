@@ -166,6 +166,41 @@ export function formatDurationFromMilliseconds(ms: number): string {
 }
 
 /**
+ * Resolve how to present a ride's duration, preferring computed *riding time*
+ * (moving time, stops excluded — from FIT `analysis_results.riding_time_seconds`)
+ * as the headline, with *elapsed* time as a secondary value.
+ *
+ * Falls back to elapsed-only when riding time is unavailable (e.g. old rides
+ * not re-parsed, or VTX-only rides with no FIT), so callers never render an
+ * empty state. Elapsed is only shown as a secondary line when it meaningfully
+ * differs from riding time (stops present).
+ *
+ * @param elapsedSeconds - Wall-clock elapsed duration (rides.duration_seconds)
+ * @param ridingTimeSeconds - Computed moving time, or null/undefined if absent
+ */
+export function resolveRideDuration(
+  elapsedSeconds: number | null | undefined,
+  ridingTimeSeconds: number | null | undefined,
+): { label: string; primary: string; secondary: string | null } {
+  const elapsed = elapsedSeconds ?? 0
+  const hasRiding = ridingTimeSeconds != null && ridingTimeSeconds > 0
+
+  if (!hasRiding) {
+    return { label: 'Duration', primary: formatDurationFromSeconds(elapsed), secondary: null }
+  }
+
+  const riding = ridingTimeSeconds as number
+  // Only surface elapsed separately when stops make it meaningfully longer
+  // (>60s difference), so a stop-free ride doesn't show a redundant subtitle.
+  const showElapsed = elapsed - riding > 60
+  return {
+    label: 'Riding time',
+    primary: formatDurationFromSeconds(riding),
+    secondary: showElapsed ? `${formatDurationFromSeconds(elapsed)} elapsed` : null,
+  }
+}
+
+/**
  * Format duration from two timestamps
  * Calculates the difference between timestamps and formats as duration
  *
@@ -269,6 +304,30 @@ export function formatElapsedTime(elapsedMs: number, format: 'short' | 'long' | 
  * formatTimeRange('2024-10-24T19:02:00Z', '2024-10-24T19:06:00Z')
  * // "Oct 24, 7:02 PM → 7:06 PM"
  */
+/**
+ * Translate a 0–100 stability percentage into plain-language language
+ * for the consumer-facing dashboard. Higher is steadier.
+ */
+export function describeStability(percent: number | null | undefined): string {
+  if (percent == null) return 'No data'
+  if (percent >= 80) return 'Very steady'
+  if (percent >= 65) return 'Steady'
+  if (percent >= 50) return 'Somewhat unsteady'
+  return 'Unsteady'
+}
+
+/**
+ * Translate a raw roughness value (0–1, HPF accel_z RMS normalized) into
+ * plain-language road-surface language. Lower is smoother.
+ */
+export function describeRoughness(value: number | null | undefined): string {
+  if (value == null) return 'No data'
+  if (value < 0.3) return 'Smooth roads'
+  if (value < 0.55) return 'Mixed surface'
+  if (value < 0.8) return 'Rough roads'
+  return 'Very rough'
+}
+
 export function formatTimeRange(startTime: string, endTime: string): string {
   try {
     const startDate = new Date(startTime)

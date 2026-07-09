@@ -11,10 +11,15 @@
   fill: hsl(var(--foreground)) !important;
 }
 
-/* Zoom selection box styling - visible in both light and dark mode */
+/* Zoom selection box styling - visible in both light and dark mode.
+   uPlot always renders a .u-select div and sizes it to 0x0 when no drag is
+   active. A `border` renders on a 0x0 box (a ~4px square parked at the plot
+   origin — visible as a stray dot, especially on short sparklines), so the
+   edge is drawn with an inset box-shadow instead, which collapses to nothing
+   at 0x0. */
 .uplot .u-select {
   background: hsl(var(--primary) / 0.15) !important;
-  border: 2px solid hsl(var(--primary)) !important;
+  box-shadow: inset 0 0 0 2px hsl(var(--primary)) !important;
 }
 
 /* Tooltip styling */

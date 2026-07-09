@@ -29,6 +29,8 @@ export interface RideAnalysis {
   has_cadence?: boolean
   has_elevation?: boolean
   total_gps_points?: number
+  riding_time_seconds?: number // Computed moving time (stops excluded)
+  stationary_time_seconds?: number
   [key: string]: unknown // Allow additional analysis fields
 }
 

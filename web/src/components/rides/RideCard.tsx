@@ -4,7 +4,7 @@ import { memo, useCallback } from 'react'
 import { Bike, Clock, MapPin, TrendingUp, Check } from 'lucide-react'
 import Link from 'next/link'
 import { Ride } from '@/types/rides'
-import { formatDate, formatDistance, formatElevation, formatDurationSeconds } from '@/lib/utils/formatting'
+import { formatDate, formatDistance, formatElevation, resolveRideDuration } from '@/lib/utils/formatting'
 
 interface RideCardProps {
   ride: Ride & {
@@ -41,6 +41,12 @@ export const RideCard = memo(function RideCard({
       e.preventDefault()
     }
   }, [inSelectionMode])
+
+  // Prefer computed riding (moving) time; fall back to elapsed.
+  const rideDuration = resolveRideDuration(
+    ride.duration_seconds,
+    ride.analysis_results?.riding_time_seconds,
+  )
 
   return (
     <div className="relative group">
@@ -93,8 +99,11 @@ export const RideCard = memo(function RideCard({
           <div className="flex items-center">
             <Clock className="h-4 w-4 mr-2 text-secondary" />
             <div>
-              <div className="text-sm text-secondary">Duration</div>
-              <div className="font-semibold text-primary">{formatDurationSeconds(ride.duration_seconds)}</div>
+              <div className="text-sm text-secondary">{rideDuration.label}</div>
+              <div className="font-semibold text-primary">{rideDuration.primary}</div>
+              {rideDuration.secondary && (
+                <div className="text-xs text-secondary">{rideDuration.secondary}</div>
+              )}
             </div>
           </div>
           {ride.analysis_results?.avg_speed_mph && (

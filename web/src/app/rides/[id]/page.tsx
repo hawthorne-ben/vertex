@@ -4,7 +4,7 @@ import { notFound, redirect } from 'next/navigation'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { RideVisualizationsClient } from '@/components/ride-visualizations-client'
 import { RideImuManager } from '@/components/ride-imu-manager'
-import { formatDurationFromSeconds } from '@/lib/utils/formatting'
+import { resolveRideDuration } from '@/lib/utils/formatting'
 
 export default async function RideDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -62,6 +62,10 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
 
   const analysis = fitRecording?.analysis_results || {}
 
+  // Prefer computed riding (moving) time from the FIT analysis; fall back to
+  // elapsed. See resolveRideDuration.
+  const rideDuration = resolveRideDuration(ride.duration_seconds, analysis.riding_time_seconds)
+
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleString('en-US', {
       weekday: 'long',
@@ -72,8 +76,6 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
       minute: '2-digit'
     })
   }
-
-  const formatDuration = formatDurationFromSeconds
 
   const formatDistance = (meters: number | null) => {
     if (!meters) return 'N/A'
@@ -119,8 +121,11 @@ export default async function RideDetailPage({ params }: { params: Promise<{ id:
         </Card>
         <Card>
           <CardContent className="pt-4 md:pt-6">
-            <div className="text-xs md:text-sm text-secondary mb-1">Duration</div>
-            <div className="text-xl md:text-2xl font-bold text-primary">{formatDuration(ride.duration_seconds)}</div>
+            <div className="text-xs md:text-sm text-secondary mb-1">{rideDuration.label}</div>
+            <div className="text-xl md:text-2xl font-bold text-primary">{rideDuration.primary}</div>
+            {rideDuration.secondary && (
+              <div className="text-xs text-secondary mt-0.5">{rideDuration.secondary}</div>
+            )}
           </CardContent>
         </Card>
         <Card>
