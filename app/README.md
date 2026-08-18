@@ -230,9 +230,9 @@ See [CHANGELOG.md](./CHANGELOG.md) for version history.
 ## Documentation
 
 - **[SETUP.md](./SETUP.md)** - Detailed setup instructions
+- **[ENV_SETUP.md](./ENV_SETUP.md)** - Environment configuration
 - **[CHANGELOG.md](./CHANGELOG.md)** - Version history
 - **[../docs/](../docs/)** - Monorepo documentation
-- **[../docs/VERSION_COMPATIBILITY.md](../docs/VERSION_COMPATIBILITY.md)** - Component compatibility
 
 ## Future Enhancements
 

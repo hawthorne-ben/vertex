@@ -106,3 +106,6 @@ assets/
 
 # Local context for AI assistants (project summary + portable memories)
 context/
+
+# Local engineering notes: lab notebooks, superseded explorations, testing scratch
+notes/

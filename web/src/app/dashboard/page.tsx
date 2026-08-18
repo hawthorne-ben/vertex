@@ -91,7 +91,17 @@ export default async function DashboardPage() {
       .not('avg_stability_percent', 'is', null)
       .order('ride_started_at', { ascending: true })
       .limit(30)
-    heroInsights = computeHeroInsights(history ?? [])
+
+    // The latest ride may lack IMU analysis (e.g. FIT-only, no sensor). In that
+    // case the stability history describes an OLDER ride, so pass the latest
+    // ride's FIT facts to fall back to a sensor-free summary sentence.
+    heroInsights = computeHeroInsights(history ?? [], {
+      distance_meters: latestRide.distance_meters ?? null,
+      elevation_gain_meters: latestRide.elevation_gain_meters ?? null,
+      duration_seconds: latestRide.duration_seconds ?? null,
+      riding_time_seconds: latestRide.riding_time_seconds ?? null,
+      hasImuData: latestSummary?.avg_stability_percent != null,
+    })
   }
 
   // Recent rides (up to 5) for the secondary list

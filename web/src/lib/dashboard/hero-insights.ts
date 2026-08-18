@@ -14,16 +14,39 @@ interface SummaryRow {
 }
 
 /**
+ * FIT-derived facts about the latest ride, used to build a reasonable summary
+ * sentence when the latest ride has no IMU (stability/roughness) analysis.
+ */
+export interface LatestRideFacts {
+  distance_meters: number | null
+  elevation_gain_meters: number | null
+  duration_seconds: number | null
+  riding_time_seconds: number | null
+  /** True when this ride has an IMU analysis summary (stability available). */
+  hasImuData: boolean
+}
+
+/**
  * Compute the dashboard hero's human summary sentence (D1) and streak
  * highlight (D4) from the user's recent ride summaries. Pure function over
  * rows so it is trivially testable; the caller supplies the query result.
  *
- * `rows` must be ordered by ride_started_at ASCENDING.
+ * `rows` must be ordered by ride_started_at ASCENDING and contain only rides
+ * that HAVE IMU stability data. When the latest ride lacks IMU data, pass
+ * `latest` so the sentence falls back to FIT-only facts instead of describing
+ * an older ride as if it were the latest.
  */
-export function computeHeroInsights(rows: SummaryRow[]): HeroInsights {
+export function computeHeroInsights(rows: SummaryRow[], latestFacts?: LatestRideFacts): HeroInsights {
+  // If the latest ride has no IMU data, the stability history (which excludes
+  // it) describes an older ride — that's misleading. Fall back to a FIT-only
+  // sentence about the latest ride instead.
+  if (latestFacts && !latestFacts.hasImuData) {
+    return { summary: describeFitOnlyRide(latestFacts), streak: null }
+  }
+
   const stabilityRows = rows.filter(r => r.avg_stability_percent != null)
   if (stabilityRows.length === 0) {
-    return { summary: null, streak: null }
+    return { summary: latestFacts ? describeFitOnlyRide(latestFacts) : null, streak: null }
   }
 
   const latest = stabilityRows[stabilityRows.length - 1]
@@ -89,4 +112,39 @@ function computeStreak(stabilityRows: SummaryRow[]): string | null {
   if (streak < 2) return null
   // streak counts improving *transitions*; +1 for the ride count reads naturally.
   return `${streak + 1} rides improving in a row`
+}
+
+/**
+ * Build a summary sentence for a ride with no IMU analysis, using only FIT
+ * facts (distance / elevation / moving time). Keeps the hero informative
+ * without implying stability/road data that doesn't exist.
+ */
+function describeFitOnlyRide(latest: LatestRideFacts): string | null {
+  const clauses: string[] = []
+
+  if (latest.distance_meters != null && latest.distance_meters > 0) {
+    const miles = latest.distance_meters * 0.000621371
+    clauses.push(`covered ${miles.toFixed(1)} mi`)
+  }
+
+  const moving = latest.riding_time_seconds ?? latest.duration_seconds
+  if (moving != null && moving > 0) {
+    const mins = Math.round(moving / 60)
+    const timeStr = mins >= 60
+      ? `${Math.floor(mins / 60)}h ${mins % 60}m`
+      : `${mins}m`
+    clauses.push(`in ${timeStr}`)
+  }
+
+  if (latest.elevation_gain_meters != null && latest.elevation_gain_meters > 0) {
+    const feet = Math.round(latest.elevation_gain_meters * 3.28084)
+    clauses.push(`with ${feet.toLocaleString()} ft of climbing`)
+  }
+
+  if (clauses.length === 0) {
+    return 'Ride recorded — connect an IMU sensor to see stability and road data.'
+  }
+
+  const sentence = `You ${clauses.join(' ')}`
+  return sentence.charAt(0).toUpperCase() + sentence.slice(1) + '.'
 }

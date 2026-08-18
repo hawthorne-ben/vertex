@@ -1,9 +1,3 @@
----
-layout: default
-title: System Design
-description: Overall system architecture and design decisions for Vertex platform
----
-
 # System Design
 
 ## Project Vision
@@ -204,5 +198,5 @@ graph TB
 
 ## Related Documentation
 
-- [Database Schema]({{ site.baseurl }}/architecture/database.html) - Detailed database design
-- [Development Guide]({{ site.baseurl }}/development/) - Setup and deployment procedures
+- [Database Schema](database.md) - Detailed database design
+- [Deployment Guide](../development/DEPLOYMENT.md) - Setup and deployment procedures

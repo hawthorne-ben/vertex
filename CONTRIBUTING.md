@@ -16,7 +16,7 @@ Thank you for your interest in contributing to Vertex! This document provides gu
 - Android Studio with Android SDK
 - Java Development Kit (JDK) 17 or later
 - React Native development environment setup
-- See [android/README.md](./android/README.md) for detailed setup
+- See [app/README.md](./app/README.md) for detailed setup
 
 **For Firmware Development:**
 - Arduino IDE or Arduino CLI
@@ -64,7 +64,7 @@ vertex/
 │   ├── vtx-format/   # VTX binary format specification
 │   └── vtx-constants/# Shared format constants
 ├── web/              # Next.js web platform
-├── android/          # React Native Android app
+├── app/              # React Native companion app
 ├── firmware/         # ESP32 IMU firmware
 └── docs/             # Documentation
 ```
@@ -211,12 +211,13 @@ This project uses independent versioning with Lerna:
 ## Need Help?
 
 - Check existing [documentation](./docs/)
-- Review [open issues](https://github.com/your-org/vertex/issues)
+- Review [open issues](https://github.com/hawthorne-ben/vertex/issues)
 - Create a new issue for questions or bugs
 
 ## Code of Conduct
 
-Please note that this project follows our [Code of Conduct](./CODE_OF_CONDUCT.md). By participating, you agree to uphold this code.
+Be respectful and constructive in all project interactions. Harassment or abusive
+behavior is not tolerated.
 
 ## License
 

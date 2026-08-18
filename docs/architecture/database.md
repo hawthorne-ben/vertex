@@ -1,9 +1,3 @@
----
-layout: default
-title: Database Schema
-description: PostgreSQL database design and schema for Vertex platform
----
-
 # Database Schema
 
 ## Overview
@@ -269,5 +263,5 @@ GROUP BY u.id, df.id;
 
 ## Related Documentation
 
-- [System Design]({{ site.baseurl }}/architecture/system-design.html) - Overall architecture
-- [Development Guide]({{ site.baseurl }}/development/) - Database setup procedures
+- [System Design](system-design.md) - Overall architecture
+- [Deployment Guide](../development/DEPLOYMENT.md) - Database setup procedures

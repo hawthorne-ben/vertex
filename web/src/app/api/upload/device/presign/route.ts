@@ -8,6 +8,12 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 )
 
+// Matches the `recordings` bucket file_size_limit AND the project-wide global
+// upload limit (both 500MB). Guarding here lets an oversized upload fail fast
+// with a clear message instead of a raw storage 413 after the full PUT.
+// See memory: supabase-global-upload-limit.
+const MAX_UPLOAD_BYTES = 500 * 1024 * 1024
+
 /**
  * Generate a presigned upload URL for direct-to-Supabase upload from ESP32.
  *
@@ -35,6 +41,18 @@ export async function POST(request: NextRequest) {
 
     if (!filename || !filename.endsWith('.vtx')) {
       return NextResponse.json({ error: 'Invalid filename' }, { status: 400 })
+    }
+
+    if (typeof fileSize === 'number' && fileSize > MAX_UPLOAD_BYTES) {
+      const mb = (bytes: number) => Math.round(bytes / (1024 * 1024))
+      return NextResponse.json(
+        {
+          error: 'File too large',
+          message: `File is ${mb(fileSize)}MB, exceeding the ${mb(MAX_UPLOAD_BYTES)}MB upload limit.`,
+          maxBytes: MAX_UPLOAD_BYTES,
+        },
+        { status: 413 }
+      )
     }
 
     const timestamp = Date.now()

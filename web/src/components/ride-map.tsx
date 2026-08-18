@@ -632,6 +632,13 @@ export function RideMap({
         style={{ height: 400, width: '100%', borderRadius: '0.5rem', position: 'relative', zIndex: 1 }}
         scrollWheelZoom={false}
         zoomControl={false}
+        // Rasterize all polylines onto ONE canvas instead of emitting hundreds
+        // of individual SVG <path> layers. A colored overlay on a 2-hour ride
+        // (~6000 pts) can produce hundreds of segments; with SVG, Leaflet
+        // reprojects/repaints every path synchronously inside the pan/zoom
+        // handler, blocking the main thread (INP regression). Canvas reprojects
+        // in one pass. See INP issue on .leaflet-container.
+        preferCanvas
       >
         {/* Minimal theme-aware tiles (no labels, just roads and topo) */}
         <TileLayer

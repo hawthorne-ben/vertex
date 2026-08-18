@@ -41,6 +41,7 @@ function formatDate(dateString: string): string {
 
 export function LatestRideHero({ ride, summary, insights }: LatestRideHeroProps) {
   const stability = summary?.avg_stability_percent ?? null
+  const roughness = summary?.avg_roughness ?? null
   const rideDuration = resolveRideDuration(ride.duration_seconds, ride.riding_time_seconds)
 
   return (
@@ -88,11 +89,12 @@ export function LatestRideHero({ ride, summary, insights }: LatestRideHeroProps)
             <HeroStat
               label="Stability"
               value={stability != null ? `${stability.toFixed(0)}%` : '—'}
-              sub={describeStability(stability)}
+              sub={stability != null ? describeStability(stability) : 'No data'}
             />
             <HeroStat
               label="Road"
-              value={describeRoughness(summary?.avg_roughness)}
+              value={roughness != null ? describeRoughness(roughness) : '—'}
+              sub={roughness != null ? undefined : 'No data'}
             />
             {summary?.avg_power_watts != null && (
               <HeroStat label="Avg Power" value={`${summary.avg_power_watts.toFixed(0)} W`} />

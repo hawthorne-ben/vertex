@@ -559,7 +559,7 @@ Zoom to 10% of ride:
 
 ## References
 
-- [VTX Format Specification](../packages/vtx-parser/README.md)
+- [VTX Format Specification](../../../packages/vtx-parser/README.md)
 - [RFC 003: Ride Data API Optimization](./003-ride-data-api-optimization.md)
 - [B-tree indexing patterns](https://en.wikipedia.org/wiki/B-tree)
 - [HTTP Range Requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/Range_requests)

@@ -173,6 +173,9 @@ cd web && pnpm dev
 cd app && pnpm start
 ```
 
+**Building the V2 hardware:** [`docs/development/BUILD.md`](docs/development/BUILD.md) covers the
+enclosure, wiring, and assembly for the ESP32-S3 + LSM6DS3 puck.
+
 ---
 
 ## Technology Stack (abbreviated)

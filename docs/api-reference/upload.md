@@ -1,9 +1,3 @@
----
-layout: default
-title: Data Upload API
-description: File upload endpoints and chunked upload API for Vertex platform
----
-
 # Data Upload API
 
 ## Overview
@@ -159,4 +153,4 @@ const subscription = supabase
 
 ## Related Documentation
 
-- [Development Guide]({{ site.baseurl }}/development/) - Setup and deployment procedures
+- [Deployment Guide](../development/DEPLOYMENT.md) - Setup and deployment procedures
