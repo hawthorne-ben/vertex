@@ -93,7 +93,7 @@ def load_vtx_file(filepath: str) -> Dict:
                 - timestamp (ms)
                 - time_sec (seconds, computed)
                 - accel_x, accel_y, accel_z (m/s²)
-                - gyro_x, gyro_y, gyro_z (rad/s)
+                - gyro_x, gyro_y, gyro_z (deg/s)
                 - (other fields from VTX format)
         }
     """
@@ -378,7 +378,7 @@ def calculate_lean_angle_from_gyro(gyro_roll: np.ndarray,
     Calculate lean angle by integrating gyroscope roll rate
     
     Args:
-        gyro_roll: Roll angular velocity (rad/s)
+        gyro_roll: Roll angular velocity (deg/s)
         timestamps: Timestamps in seconds
         initial_lean: Initial lean angle (rad)
     

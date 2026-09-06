@@ -62,7 +62,7 @@ for i, record in enumerate(vtx_file.records[:5]):
     print(f"Record {i}:")
     print(f"  Time: {record.timestamp} ms")
     print(f"  Accel: ({record.accel_x:.3f}, {record.accel_y:.3f}, {record.accel_z:.3f}) m/s²")
-    print(f"  Gyro: ({record.gyro_x:.3f}, {record.gyro_y:.3f}, {record.gyro_z:.3f}) rad/s")
+    print(f"  Gyro: ({record.gyro_x:.3f}, {record.gyro_y:.3f}, {record.gyro_z:.3f}) deg/s")
     if record.mag_x is not None:
         print(f"  Mag: ({record.mag_x:.3f}, {record.mag_y:.3f}, {record.mag_z:.3f}) µT")
 

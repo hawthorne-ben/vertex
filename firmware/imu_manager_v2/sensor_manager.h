@@ -2,7 +2,7 @@
  * Sensor Manager V2 - LSM6DS3 IMU interface
  * Handles initialization, ODR/FIFO configuration, and batch reads.
  *
- * Outputs physical units (m/s², rad/s) as float32 to match the VTX binary
+ * Outputs physical units (m/s², deg/s) as float32 to match the VTX binary
  * format expected by packages/vtx-parser.
  */
 
@@ -12,6 +12,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include "config.h"
+#include "vtx_format.h"
 
 // VTX IMU record — matches vtx-parser MINIMAL format (28 bytes)
 // timestamp (uint32) + accel xyz (float32x3) + gyro xyz (float32x3)
@@ -20,9 +21,9 @@ struct __attribute__((packed)) IMURecord {
   float accel_x;          // m/s²
   float accel_y;          // m/s²
   float accel_z;          // m/s²
-  float gyro_x;           // rad/s
-  float gyro_y;           // rad/s
-  float gyro_z;           // rad/s
+  float gyro_x;           // deg/s
+  float gyro_y;           // deg/s
+  float gyro_z;           // deg/s
 };
 static_assert(sizeof(IMURecord) == VTX_IMU_RECORD_SIZE, "IMURecord must be 28 bytes");
 

@@ -285,9 +285,9 @@ interface IMURecord {
   accelX: number;        // Acceleration X (m/s²)
   accelY: number;        // Acceleration Y (m/s²)
   accelZ: number;        // Acceleration Z (m/s²)
-  gyroX: number;         // Gyroscope X (rad/s)
-  gyroY: number;         // Gyroscope Y (rad/s)
-  gyroZ: number;         // Gyroscope Z (rad/s)
+  gyroX: number;         // Gyroscope X (deg/s)
+  gyroY: number;         // Gyroscope Y (deg/s)
+  gyroZ: number;         // Gyroscope Z (deg/s)
   magX?: number;         // Magnetometer X (µT) - optional
   magY?: number;         // Magnetometer Y (µT) - optional
   magZ?: number;         // Magnetometer Z (µT) - optional

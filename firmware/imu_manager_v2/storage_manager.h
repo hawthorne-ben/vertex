@@ -16,6 +16,7 @@
 #include <SPI.h>
 #include "config.h"
 #include "sensor_manager.h"
+#include "vtx_format.h"
 
 // VTX clock sync record — matches vtx-parser v1.2 layout (24 bytes).
 // Device timestamps are raw millis(), NOT offsets from recording start: a

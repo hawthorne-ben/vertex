@@ -95,7 +95,7 @@ See [`docs/architecture/clock-drift.md`](docs/architecture/clock-drift.md).
 |--------|------|---------|--------------|
 | 0      | 4    | uint32  | timestamp_ms (offset from start) |
 | 4–15   | 12   | float32 | accel_x, accel_y, accel_z (m/s²) |
-| 16–27  | 12   | float32 | gyro_x, gyro_y, gyro_z (rad/s)   |
+| 16–27  | 12   | float32 | gyro_x, gyro_y, gyro_z (deg/s)   |
 
 **Size advantage vs. CSV (10-minute recording @ 10Hz, 6,000 samples):**
 

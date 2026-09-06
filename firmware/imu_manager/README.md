@@ -199,7 +199,7 @@ Binary packet (47 bytes, little-endian):
 - **Timestamp** (4 bytes) - uint32_t milliseconds since boot
 - **Euler Angles** (12 bytes) - 3× float (roll, pitch, yaw in degrees)
 - **Acceleration** (12 bytes) - 3× float (x, y, z in m/s²)
-- **Gyroscope** (12 bytes) - 3× float (x, y, z in rad/s)
+- **Gyroscope** (12 bytes) - 3× float (x, y, z in deg/s)
 - **Calibration** (3 bytes) - 3× uint8_t (sys, gyro, accel: 0-3)
 - **Battery Voltage** (4 bytes) - float (voltage in V)
 

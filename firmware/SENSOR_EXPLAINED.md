@@ -126,13 +126,13 @@ Values typically range from **-2 to +2 m/s²** for normal riding:
 
 ### Gyroscope (X/Y/Z) - Rotation Rates
 
-Values in **rad/s** (radians per second):
+Values in **deg/s** (degrees per second):
 
 **Not rotating**: All near 0
 **Cornering**: Rotation around Z-axis
 **Wobble**: Oscillation in X/Y axes
 
-Typical values: **-1 to +1 rad/s** for normal riding
+Typical values: **~8 deg/s median, ~40 deg/s p99** (measured across 355k V1 samples)
 
 ### Calibration Status
 
@@ -190,7 +190,7 @@ To calibrate to "level":
 | Linear Accel X | -2 to +2 m/s² | Braking/acceleration |
 | Linear Accel Y | -1 to +1 m/s² | Lateral forces |
 | Linear Accel Z | -0.5 to +0.5 m/s² | Bumps/vibrations |
-| Gyro Z | -1 to +1 rad/s | Turning rate |
+| Gyro Z | ~8-40 deg/s typical | Turning rate |
 
 ### Events to Watch For
 

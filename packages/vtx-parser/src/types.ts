@@ -141,11 +141,11 @@ export interface IMURecord {
   accelY: number;
   /** Acceleration Z (m/s²) */
   accelZ: number;
-  /** Gyroscope X (rad/s) */
+  /** Gyroscope X (deg/s) */
   gyroX: number;
-  /** Gyroscope Y (rad/s) */
+  /** Gyroscope Y (deg/s) */
   gyroY: number;
-  /** Gyroscope Z (rad/s) */
+  /** Gyroscope Z (deg/s) */
   gyroZ: number;
   /** Magnetometer X (µT) - optional */
   magX?: number;

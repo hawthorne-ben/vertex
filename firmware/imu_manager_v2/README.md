@@ -194,9 +194,9 @@ Files are written in the VTX binary format defined by `packages/vtx-parser`. Fil
 | 4 | 4 | float32 | accel_x | m/s² |
 | 8 | 4 | float32 | accel_y | m/s² |
 | 12 | 4 | float32 | accel_z | m/s² |
-| 16 | 4 | float32 | gyro_x | rad/s |
-| 20 | 4 | float32 | gyro_y | rad/s |
-| 24 | 4 | float32 | gyro_z | rad/s |
+| 16 | 4 | float32 | gyro_x | deg/s |
+| 20 | 4 | float32 | gyro_y | deg/s |
+| 24 | 4 | float32 | gyro_z | deg/s |
 
 ### Data Volume
 
@@ -265,7 +265,7 @@ No ACK needed — BLE GATT notifications are reliable (link-layer retransmit). I
 ### Working
 
 - [x] LSM6DS3 direct register polling at 104Hz (WHO_AM_I with 3x retry)
-- [x] Raw int16 → float32 conversion (m/s², rad/s) with verified scale factors
+- [x] Raw int16 → float32 conversion (m/s², deg/s) with verified scale factors
 - [x] SD card VTX binary writing (header + metadata + records + header patching on close)
 - [x] BOOT button start/stop recording
 - [x] NeoPixel LED states (blue breathe / red solid / green blink)

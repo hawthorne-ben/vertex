@@ -37,7 +37,7 @@ DeviceState state = STATE_IDLE;
 // ===== Wall clock =====
 // Synced from phone via CMD_SYNC_CLOCK. Stored as offset from millis().
 // wallClockMs() returns unix ms, or 0 if not yet synced.
-// Default offset: 2026-02-28 21:30:00 PST (2026-03-01 05:30:00 UTC)
+// Default offset: 2026-02-28 23:10:00 PST (2026-03-01 07:10:00 UTC)
 // Used until phone syncs real time via BLE. Gives files reasonable timestamps.
 static int64_t _clockOffsetMs = 1772349000000LL;
 static bool _clockSynced = false;
@@ -57,39 +57,14 @@ bool isClockSynced() {
 }
 
 // ===== Button handling =====
-static unsigned long _buttonDownTime = 0;
-static bool _buttonWasPressed = false;
+// State machine lives in vtx_format.h (vtxButtonUpdate) so the host tests can
+// drive it deterministically. Only the pin read and the clock stay here.
+static ButtonState _button = {0, false, false};
 
 // Returns: 0 = no press, 1 = short press, 2 = long press
-static bool _longPressHandled = false;
-
 int checkButtonPress() {
   bool pressed = (digitalRead(USER_BUTTON_PIN) == LOW);
-
-  if (pressed && !_buttonWasPressed) {
-    _buttonDownTime = millis();
-    _buttonWasPressed = true;
-    _longPressHandled = false;
-  }
-
-  // Fire long press immediately while still held
-  if (pressed && _buttonWasPressed && !_longPressHandled) {
-    if (millis() - _buttonDownTime >= BUTTON_LONG_PRESS_MS) {
-      _longPressHandled = true;
-      return 2;
-    }
-  }
-
-  if (!pressed && _buttonWasPressed) {
-    _buttonWasPressed = false;
-    if (_longPressHandled) return 0;  // Already handled as long press
-    unsigned long held = millis() - _buttonDownTime;
-    if (held >= BUTTON_DEBOUNCE_MS) {
-      return 1;  // Short press — toggle recording
-    }
-  }
-
-  return 0;
+  return vtxButtonUpdate(&_button, pressed, millis());
 }
 
 // ===== Periodic clock sync (VTX v1.2) =====

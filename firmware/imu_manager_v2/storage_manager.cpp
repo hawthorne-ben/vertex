@@ -43,15 +43,8 @@ bool StorageManager::init() {
 bool StorageManager::openNewFile(int64_t wallClockMs) {
   if (!_sdReady) return false;
 
-  // Convert unix ms to PST (UTC-8) date components for readable filename
-  time_t secs = (time_t)(wallClockMs / 1000) - (8 * 3600);  // UTC to PST
-  struct tm t;
-  gmtime_r(&secs, &t);
-  // Format: /vtx/3_1_2026_12345.vtx (month_day_year_millisInDay)
-  uint32_t msInDay = (uint32_t)(((secs % 86400) * 1000) + (wallClockMs % 1000));
-  snprintf(_currentFileName, sizeof(_currentFileName),
-           "%s/%d_%d_%d_%lu.vtx", LOG_DIR,
-           t.tm_mon + 1, t.tm_mday, t.tm_year + 1900, (unsigned long)msInDay);
+  // Format: /vtx/3_1_2026_12345.vtx (month_day_year_millisInDay), PST
+  vtxBuildFilename(_currentFileName, sizeof(_currentFileName), wallClockMs);
 
   _writeFile = SD.open(_currentFileName, FILE_WRITE);
   if (!_writeFile) {
@@ -68,75 +61,16 @@ bool StorageManager::openNewFile(int64_t wallClockMs) {
 }
 
 void StorageManager::writeVTXHeader(int64_t startTimestampMs) {
-  // --- 64-byte fixed header ---
-  // All multi-byte values are little-endian (ESP32 native)
-  uint8_t header[VTX_HEADER_SIZE];
-  memset(header, 0, VTX_HEADER_SIZE);
-
-  int off = 0;
-
-  // Magic "VTX\0" (4 bytes)
-  header[off++] = 'V';
-  header[off++] = 'T';
-  header[off++] = 'X';
-  header[off++] = '\0';
-
-  // Version major (uint16) + minor (uint16)
-  uint16_t vMajor = VTX_FORMAT_MAJOR;
-  uint16_t vMinor = VTX_FORMAT_MINOR;
-  memcpy(header + off, &vMajor, 2); off += 2;
-  memcpy(header + off, &vMinor, 2); off += 2;
-
-  // Metadata length (uint32) — placeholder, patched on close
-  // We'll build metadata JSON now so we know the length
+  // Header layout and byte order live in vtx_format.h so the host test suite
+  // exercises the same code the device runs.
   char metaJson[256];
-  int metaLen = snprintf(metaJson, sizeof(metaJson),
-    "{\"device\":{\"name\":\"%s\",\"firmwareVersion\":\"%s\",\"hardwareRevision\":\"v2\"},"
-    "\"session\":{\"position\":\"Seatpost\"}}",
-    BLE_DEVICE_NAME, FIRMWARE_VERSION);
+  int metaLen = vtxBuildMetadata(metaJson, sizeof(metaJson));
 
-  uint32_t metadataLength = (uint32_t)metaLen;
-  memcpy(header + off, &metadataLength, 4); off += 4;
+  uint8_t header[VTX_HEADER_SIZE];
+  vtxWriteHeader(header, (uint32_t)metaLen, startTimestampMs);
 
-  // Data offset (uint32) = header + metadata
-  uint32_t dataOffset = VTX_HEADER_SIZE + metadataLength;
-  memcpy(header + off, &dataOffset, 4); off += 4;
-
-  // Record count (uint64) — placeholder 0, patched on close
-  uint64_t recordCount = 0;
-  memcpy(header + off, &recordCount, 8); off += 8;
-
-  // Sample rate (float32)
-  float sampleRate = (float)IMU_ODR_HZ;
-  memcpy(header + off, &sampleRate, 4); off += 4;
-
-  // Start timestamp (int64, unix ms)
-  memcpy(header + off, &startTimestampMs, 8); off += 8;
-
-  // End timestamp (int64) — placeholder, patched on close
-  int64_t endTs = 0;
-  memcpy(header + off, &endTs, 8); off += 8;
-
-  // Record format (uint8)
-  header[off++] = VTX_RECORD_FORMAT;
-
-  // Compression (uint8)
-  header[off++] = VTX_COMPRESSION_NONE;
-
-  // Reserved region, all zeroed by memset above:
-  //   offset 46: GPS record count (uint64) — 0, no GPS on device
-  //   offset 54: GPS data offset (uint32)  — 0
-  //   offset 58: sync data offset (uint32) — patched by writeSyncSection()
-  //   offset 62: sync record count (uint16) — patched by writeSyncSection()
-  // Writing zeros here is what makes a recording with no sync records
-  // (BLE disconnected the whole ride) read back as "no sync stream".
-
-  // Write header
   _writeFile.write(header, VTX_HEADER_SIZE);
-
-  // Write metadata JSON
   _writeFile.write((const uint8_t*)metaJson, metaLen);
-
   _writeFile.flush();
 }
 
@@ -197,9 +131,9 @@ void StorageManager::writeSyncSection() {
   _writeFile.flush();
 
   // Patch sync data offset (uint32 @ 58) and record count (uint16 @ 62)
-  _writeFile.seek(58);
+  _writeFile.seek(VTX_OFF_SYNC_DATA_OFFSET);
   _writeFile.write((const uint8_t*)&syncOffset, 4);
-  _writeFile.seek(62);
+  _writeFile.seek(VTX_OFF_SYNC_RECORD_COUNT);
   _writeFile.write((const uint8_t*)&_syncCount, 2);
   _writeFile.flush();
 
@@ -222,14 +156,17 @@ void StorageManager::closeFile(int64_t wallClockMs) {
 }
 
 void StorageManager::patchHeader(int64_t endTimestampMs) {
+  uint8_t buf[8];
+
   // Patch recordCount at offset 16 (uint64)
-  _writeFile.seek(16);
-  uint64_t rc = (uint64_t)_recordCount;
-  _writeFile.write((const uint8_t*)&rc, 8);
+  vtxPatchRecordCount(buf, (uint64_t)_recordCount);
+  _writeFile.seek(VTX_OFF_RECORD_COUNT);
+  _writeFile.write(buf, 8);
 
   // Patch endTimestamp at offset 36 (int64)
-  _writeFile.seek(36);
-  _writeFile.write((const uint8_t*)&endTimestampMs, 8);
+  vtxPatchEndTimestamp(buf, endTimestampMs);
+  _writeFile.seek(VTX_OFF_END_TIMESTAMP);
+  _writeFile.write(buf, 8);
 
   _writeFile.flush();
 }

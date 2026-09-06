@@ -1,3 +1,5 @@
+# UNITS: gyro is deg/s in BOTH V1 (BNO055, raw/16.0) and V2 (LSM6DS3).
+# The 'rad/s' axis labels below are wrong — relabel before reuse.
 #!/usr/bin/env python3
 """
 Validate test_with_euler.vtx file

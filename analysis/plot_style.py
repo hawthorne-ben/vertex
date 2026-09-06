@@ -257,10 +257,11 @@ def load(path: str):
     Returns the dict that load_vtx_file produces:
         {'header': {...}, 'metadata': {...}, 'samples': DataFrame}
 
-    NOTE: the loader's docstring labels gyro columns as rad/s. Verify before
-    putting units on any gyro axis — firmware applies GYRO_SCALE = 0.035,
-    which is the datasheet deg/s-per-LSB figure for +/-1000dps. See
-    notes/firmware-deep-dive.md open question #1.
+    UNITS: gyro columns are **deg/s** in BOTH hardware generations.
+    V2 (LSM6DS3): GYRO_SCALE = 0.035 deg/s per LSB, no radian conversion.
+    V1 (BNO055): Adafruit VECTOR_GYROSCOPE returns raw/16.0, also deg/s.
+    Older docs labeled these rad/s; that was always wrong. Never apply a
+    180/pi conversion to gyro data from either generation.
     """
     import sys
 

@@ -1,3 +1,24 @@
+"""
+check_gyro_saturation.py
+
+!! UNITS WARNING -- READ BEFORE TRUSTING OUTPUT !!
+
+BOTH V1 and V2 recordings store gyro in **deg/s**. This script labels the raw
+values rad/s and multiplies by 180/pi to produce a "deg/s" column that is
+57.3x too large. The rad/s labels and the converted column are BOTH wrong,
+for every file.
+
+- V1 (BNO055): Adafruit VECTOR_GYROSCOPE returns raw/16.0 = deg/s
+- V2 (LSM6DS3): GYRO_SCALE = 0.035 deg/s per LSB
+
+Measured reality: V1 peak 209 dps (10% of its 2000 dps rail), V2 peak 935 dps
+(94% of its 1000 dps rail). Neither generation ever clipped.
+
+Treat the raw printed values as deg/s and ignore every converted figure.
+
+See firmware/test/README.md and notes/firmware-deep-dive.md.
+"""
+
 #!/usr/bin/env python3
 """
 Analyze gyro data from VTX file to check for saturation

@@ -116,7 +116,7 @@ def create_minimal_vtx_file(
         file_data.extend(struct.pack("<f", float(i) * 0.2))  # accel_y
         file_data.extend(struct.pack("<f", 9.8 + float(i) * 0.05))  # accel_z
 
-        # Gyroscope (rad/s)
+        # Gyroscope (deg/s)
         file_data.extend(struct.pack("<f", float(i) * 0.01))  # gyro_x
         file_data.extend(struct.pack("<f", float(i) * 0.02))  # gyro_y
         file_data.extend(struct.pack("<f", float(i) * 0.03))  # gyro_z

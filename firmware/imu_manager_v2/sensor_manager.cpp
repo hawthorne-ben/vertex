@@ -1,7 +1,7 @@
 /*
  * Sensor Manager V2 Implementation
  * LSM6DS3 initialization and direct register reads over I2C.
- * Converts raw register values to physical units (m/s², rad/s).
+ * Converts raw register values to physical units (m/s², deg/s).
  */
 
 #include "sensor_manager.h"
@@ -119,16 +119,10 @@ int SensorManager::readFIFO() {
     int16_t az = (int16_t)(p[10] | (p[11] << 8));
 
     _buffer[i].timestamp_ms = now - _recordingStartMs;
-    // Remap LSM6DS3 chip axes to standard body frame:
-    //   Standard X (forward/roll)  = chip Z
-    //   Standard Y (lateral/pitch) = chip X
-    //   Standard Z (vertical/yaw)  = chip Y (gravity axis)
-    _buffer[i].accel_x = (float)az * ACCEL_SCALE;
-    _buffer[i].accel_y = (float)ax * ACCEL_SCALE;
-    _buffer[i].accel_z = (float)ay * ACCEL_SCALE;
-    _buffer[i].gyro_x = (float)gz * GYRO_SCALE;
-    _buffer[i].gyro_y = (float)gx * GYRO_SCALE;
-    _buffer[i].gyro_z = (float)gy * GYRO_SCALE;
+    // Axis remap (chip -> body) and scale conversion live in vtx_format.h so
+    // the host tests exercise the same arithmetic the device runs.
+    vtxConvertSample(gx, gy, gz, ax, ay, az,
+                     &_buffer[i].accel_x, &_buffer[i].gyro_x);
   }
 
   return numSamples;

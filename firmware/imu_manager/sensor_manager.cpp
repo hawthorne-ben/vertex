@@ -105,7 +105,8 @@ bool SensorManager::update() {
   sensorData.accel_y = accel.y();
   sensorData.accel_z = accel.z();
 
-  // Angular velocity (rad/s)
+  // Angular velocity (deg/s — Adafruit VECTOR_GYROSCOPE returns raw/16.0, the
+  // BNO055 deg/s LSB. NOT radians, despite older comments.)
   sensorData.gyro_x = gyro.x();
   sensorData.gyro_y = gyro.y();
   sensorData.gyro_z = gyro.z();
