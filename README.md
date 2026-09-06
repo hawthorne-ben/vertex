@@ -3,7 +3,7 @@
 **End-to-end telemetry system for capturing physical riding dynamics — cornering Gs, braking deceleration, and road vibration — from custom ESP32 C++ firmware through a cloud analytics engine.**
 
 ![Version](https://img.shields.io/badge/firmware-v0.3.0-blue?style=flat-square)
-![Format](https://img.shields.io/badge/VTX_format-v1.0-green?style=flat-square)
+![Format](https://img.shields.io/badge/VTX_format-v1.2-green?style=flat-square)
 
 ---
 
@@ -50,9 +50,22 @@ The `.vtx` format is a custom binary container designed for constrained embedded
 │   DATA RECORDS  (28 or 56 bytes ea)  │
 │         ...                          │
 ├──────────────────────────────────────┤
+│   SYNC RECORDS  (24 bytes ea, v1.2+) │
+├──────────────────────────────────────┤
 │   FOOTER  (optional, 32 bytes)       │
 └──────────────────────────────────────┘
 ```
+
+**Clock sync stream (v1.2+):** the ESP32's `millis()` runs off a crystal with
+tens-of-ppm tolerance, which diverges measurably from the phone's NTP-backed
+clock over a multi-hour ride (~108 ms/hour at 30 ppm). Every 60 s of recording
+the device performs an NTP-style four-timestamp exchange with the phone over
+BLE and appends a 24-byte record. These are **measurements, not corrections** —
+`millis()` remains the sole time base for sample timestamps, and drift is
+resolved offline by `computeClockDrift()` in the parsers, which returns a drift
+rate in ppm, a correction function, and a quality metric. A ride recorded with
+BLE disconnected simply carries no sync records, which is not an error.
+See [`docs/architecture/clock-drift.md`](docs/architecture/clock-drift.md).
 
 **Header (64 bytes fixed):**
 
@@ -69,6 +82,10 @@ The `.vtx` format is a custom binary container designed for constrained embedded
 | 36     | 8    | int64    | end_timestamp    |
 | 44     | 1    | uint8    | record_format    |
 | 45     | 1    | uint8    | compression      |
+| 46     | 8    | uint64   | gps_record_count (v1.1+)  |
+| 54     | 4    | uint32   | gps_data_offset (v1.1+)   |
+| 58     | 4    | uint32   | sync_data_offset (v1.2+)  |
+| 62     | 2    | uint16   | sync_record_count (v1.2+) |
 
 **Record format bitmask** (`record_format` field): bits 0–1 are always set (accel + gyro). Bit 2 = magnetometer (deprecated). Bit 3 = quaternion (optional). The bitmask determines per-record byte width, enabling the parser to seek directly to any sample index without a full file scan.
 
@@ -129,7 +146,7 @@ vertex/
 │   ├── imu_manager/          # V1 — ESP32 + BNO055, BLE streaming
 │   └── imu_manager_v2/       # V2 — ESP32-S3 + LSM6DS3, SD + WiFi upload
 ├── packages/
-│   ├── vtx-format/           # .vtx binary format specification (v1.0)
+│   ├── vtx-format/           # .vtx binary format specification (v1.2)
 │   ├── vtx-parser/           # TypeScript encoder/decoder
 │   └── vtx-constants/        # Shared format constants
 ├── app/                      # React Native companion app (BLE recording)

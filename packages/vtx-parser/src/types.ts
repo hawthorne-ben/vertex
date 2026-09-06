@@ -33,6 +33,10 @@ export interface VTXHeader {
   gpsRecordCount?: bigint;
   /** Byte offset where GPS records start (v1.1+) */
   gpsDataOffset?: number;
+  /** Number of clock sync records (v1.2+) */
+  syncRecordCount?: number;
+  /** Byte offset where clock sync records start (v1.2+) */
+  syncDataOffset?: number;
 }
 
 /**
@@ -187,6 +191,25 @@ export interface GPSRecord {
 }
 
 /**
+ * Single clock sync record (v1.2+)
+ * Fixed size: 24 bytes
+ *
+ * An NTP-style four-timestamp exchange between the device and the phone,
+ * recorded as an observation of the device time base. These are never
+ * applied as a correction on-device — see packages/vtx-format/spec/v1.2-clock-sync.md.
+ */
+export interface ClockSyncRecord {
+  /** Device millis() when the request was sent */
+  t1DeviceMs: number;
+  /** Device millis() when the response was received */
+  t4DeviceMs: number;
+  /** Phone Date.now() when the request was received (unix ms) */
+  t2PhoneUnixMs: number;
+  /** Phone Date.now() when the response was sent (unix ms) */
+  t3PhoneUnixMs: number;
+}
+
+/**
  * Complete VTX file data structure
  */
 export interface VTXFile {
@@ -198,6 +221,8 @@ export interface VTXFile {
   records: IMURecord[];
   /** Array of GPS data records (v1.1+) */
   gpsRecords?: GPSRecord[];
+  /** Array of clock sync records (v1.2+) */
+  syncRecords?: ClockSyncRecord[];
 }
 
 /**
@@ -214,6 +239,8 @@ export interface VTXEncoderOptions {
   includeEuler?: boolean;
   /** Include GPS data stream (v1.1+) */
   includeGPS?: boolean;
+  /** Include clock sync stream (v1.2+) */
+  includeSync?: boolean;
   /** Metadata to include in file */
   metadata?: VTXMetadata;
 }
@@ -241,7 +268,7 @@ export const VTX_CONSTANTS = {
   /** Current format version major */
   VERSION_MAJOR: 1,
   /** Current format version minor */
-  VERSION_MINOR: 1,
+  VERSION_MINOR: 2,
   /** Fixed header size in bytes */
   HEADER_SIZE: 64,
   /** Footer size in bytes (optional) */
@@ -252,6 +279,8 @@ export const VTX_CONSTANTS = {
   RECORD_SIZE_FULL: 56,
   /** GPS record size (v1.1+) */
   GPS_RECORD_SIZE: 44,
+  /** Clock sync record size (v1.2+) */
+  SYNC_RECORD_SIZE: 24,
   /** Default compression (none) */
   COMPRESSION_NONE: 0,
   /** Zstd compression */

@@ -32,6 +32,10 @@ class ServerCallbacks : public BLEServerCallbacks {
   void onDisconnect(BLEServer* server) {
     if (g_ble) {
       g_ble->_connected = false;
+      // Drop any in-flight time request: its reply can never arrive, and a
+      // stale t1 would produce a bogus RTT if the phone reconnects.
+      g_ble->_timeReqPending = false;
+      g_ble->_timeRespReady = false;
       Serial.println("[BLE] Client disconnected");
     }
     BLEDevice::startAdvertising();
@@ -41,10 +45,32 @@ class ServerCallbacks : public BLEServerCallbacks {
 class ConfigCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic* pChar) {
     if (!g_ble) return;
+    // Stamp t4 first: anything done before this read — including dispatching
+    // through processCommands() on a later loop() — would be charged to the
+    // BLE round trip and inflate the measured RTT.
+    uint32_t rxMs = millis();
     String value = pChar->getValue();
     if (value.length() < 1) return;
 
     const uint8_t* data = (const uint8_t*)value.c_str();
+
+    // CMD_TIME_RESPONSE is handled inline rather than queued: it carries a
+    // timestamp whose value depends on when it was received, and the single
+    // _pendingCmd slot can be overwritten before processCommands() runs.
+    if (data[0] == CMD_TIME_RESPONSE) {
+      if (value.length() >= 17 && g_ble->_timeReqPending) {
+        int64_t t2, t3;
+        memcpy(&t2, data + 1, 8);
+        memcpy(&t3, data + 9, 8);
+        g_ble->_timeRespT2 = t2;
+        g_ble->_timeRespT3 = t3;
+        g_ble->_timeRespT4 = rxMs;
+        g_ble->_timeReqPending = false;
+        g_ble->_timeRespReady = true;
+      }
+      return;
+    }
+
     g_ble->_pendingCmd = data[0];
     g_ble->_cmdPayloadLen = min((int)value.length() - 1, 255);
     if (g_ble->_cmdPayloadLen > 0) {
@@ -61,6 +87,12 @@ BLEManager::BLEManager()
     _fileDataChar(nullptr),
     _connected(false),
     _connectionTime(0),
+    _timeReqPending(false),
+    _timeRespReady(false),
+    _timeReqT1(0),
+    _timeRespT4(0),
+    _timeRespT2(0),
+    _timeRespT3(0),
     _pendingCmd(0),
     _cmdPayloadLen(0) {
   g_ble = this;
@@ -296,6 +328,54 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
       Serial.printf("[BLE] Unknown command: 0x%02X\n", cmd);
       break;
   }
+}
+
+// ===== Periodic clock sync exchange (VTX v1.2) =====
+
+bool BLEManager::requestPhoneTime() {
+  if (!_connected) return false;
+  if (_timeReqPending || _timeRespReady) return false;  // one in flight at a time
+
+  // [0xF0][t1 uint32] on the file-list characteristic. t1 is echoed to the
+  // phone only for debugging; the device keeps the authoritative copy.
+  uint8_t buf[5];
+  buf[0] = NOTIFY_TIME_REQUEST;
+
+  // Stamp t1 as late as possible — immediately before handing the packet to
+  // the stack — so stack-side queuing lands inside the measured RTT rather
+  // than before it.
+  _timeReqT1 = millis();
+  memcpy(buf + 1, &_timeReqT1, 4);
+  _timeReqPending = true;
+
+  _fileListChar->setValue(buf, sizeof(buf));
+  _fileListChar->notify();
+  return true;
+}
+
+bool BLEManager::isTimeRequestPending() const {
+  return _timeReqPending;
+}
+
+bool BLEManager::pollTimeResponse(uint32_t& t1, uint32_t& t4, int64_t& t2, int64_t& t3) {
+  if (!_timeRespReady) return false;
+
+  t1 = _timeReqT1;
+  t4 = _timeRespT4;
+  t2 = _timeRespT2;
+  t3 = _timeRespT3;
+
+  _timeRespReady = false;
+  return true;
+}
+
+bool BLEManager::expireStaleTimeRequest() {
+  if (!_timeReqPending) return false;
+  if (millis() - _timeReqT1 < CLOCK_SYNC_TIMEOUT_MS) return false;
+
+  // A missed sync is not an error — the phone is usually away during a ride.
+  _timeReqPending = false;
+  return true;
 }
 
 void BLEManager::sendStatus(DeviceState state, float batteryVoltage, uint32_t fileCount, uint16_t freeMb,

@@ -161,7 +161,10 @@ class TestVTXDecoder:
 
         assert header.magic == VTX_CONSTANTS.MAGIC
         assert header.version_major == 1
-        assert header.version_minor == 0
+        # Track the current format version rather than a literal: the file is
+        # built from VTX_CONSTANTS above, so a hardcoded value here breaks on
+        # every format bump without testing anything.
+        assert header.version_minor == VTX_CONSTANTS.VERSION_MINOR
         assert header.record_count == 100
         assert header.sample_rate == 50.0
         assert header.start_timestamp == 1234567890000

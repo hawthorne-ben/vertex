@@ -10,9 +10,11 @@ class VTX_CONSTANTS:
     """Constants for VTX file format"""
     MAGIC = "VTX\0"
     VERSION_MAJOR = 1
-    VERSION_MINOR = 0
+    VERSION_MINOR = 2
     HEADER_SIZE = 64
     COMPRESSION_NONE = 0
+    GPS_RECORD_SIZE = 44   # v1.1+
+    SYNC_RECORD_SIZE = 24  # v1.2+
 
 
 class RecordFormatFlags:
@@ -40,6 +42,8 @@ class VTXHeader:
     compression: int
     gps_record_count: Optional[int] = None  # v1.1+ only
     gps_data_offset: Optional[int] = None   # v1.1+ only
+    sync_record_count: Optional[int] = None  # v1.2+ only
+    sync_data_offset: Optional[int] = None   # v1.2+ only
 
 
 @dataclass
@@ -64,6 +68,21 @@ class IMURecord:
     yaw: Optional[float] = None  # Euler angle: yaw (degrees)
 
 
+@dataclass
+class ClockSyncRecord:
+    """
+    Single clock sync record (v1.2+), 24 bytes.
+
+    An NTP-style four-timestamp exchange between device and phone, recorded
+    as an observation of the device time base. Never applied as a correction
+    on-device — see packages/vtx-format/spec/v1.2-clock-sync.md.
+    """
+    t1_device_ms: int   # device millis() when request was sent
+    t4_device_ms: int   # device millis() when response was received
+    t2_phone_unix_ms: int  # phone Date.now() at receipt of request
+    t3_phone_unix_ms: int  # phone Date.now() at send of response
+
+
 VTXMetadata = Dict[str, Any]
 
 
@@ -73,3 +92,4 @@ class VTXFile:
     header: VTXHeader
     metadata: VTXMetadata
     records: List[IMURecord]
+    sync_records: Optional[List[ClockSyncRecord]] = None  # v1.2+

@@ -8,6 +8,7 @@ import {
   VTXMetadata,
   IMURecord,
   GPSRecord,
+  ClockSyncRecord,
   VTXFile,
   VTXDecoderOptions,
   VTX_CONSTANTS,
@@ -108,7 +109,17 @@ export class VTXDecoder {
       // Recovery mode: calculate actual record count from file size
       // Don't trust header.recordCount (may be wrong in corrupted files)
       this.recordSize = this.calculateRecordSize(this.header.recordFormat);
-      const dataSize = this.buffer.byteLength - Number(this.header.dataOffset);
+      // Trailing sections (GPS v1.1+, sync v1.2+) sit after the IMU array and
+      // would otherwise be miscounted as IMU records. Bound the scan at the
+      // first trailing section we know about.
+      const trailingStarts = [
+        this.header.gpsDataOffset,
+        this.header.syncDataOffset,
+      ].filter((o): o is number => typeof o === 'number' && o > 0);
+      const imuEnd = trailingStarts.length
+        ? Math.min(...trailingStarts)
+        : this.buffer.byteLength;
+      const dataSize = imuEnd - Number(this.header.dataOffset);
       const actualRecordCount = Math.floor(dataSize / this.recordSize);
 
       console.log('[VTXDecoder] Recovery mode: scanning for actual records');
@@ -136,11 +147,19 @@ export class VTXDecoder {
       gpsRecords = this.readGPSRecords(0, actualGPSCount);
     }
 
+    // Parse clock sync records (if available in v1.2+).
+    // Absence is normal — BLE is usually disconnected during a ride.
+    let syncRecords: ClockSyncRecord[] | undefined;
+    if (this.header.syncRecordCount && this.header.syncRecordCount > 0) {
+      syncRecords = this.readSyncRecords(0, this.header.syncRecordCount);
+    }
+
     return {
       header: this.header,
       metadata: this.metadata,
       records,
       gpsRecords,
+      syncRecords,
     };
   }
 
@@ -236,11 +255,25 @@ export class VTXDecoder {
         gpsDataOffset = gpsOffset;
       }
 
-      // Skip remaining reserved fields (6 bytes)
-      // offset += 6; // Not needed as we're done with header
-    } else {
-      // Skip all reserved fields (18 bytes) for v1.0
-      // offset += 18; // Not needed as we're done with header
+    }
+
+    // Clock sync section (6 bytes at offset 58, v1.2+)
+    // Gated on version_minor, not on value: bytes 58-63 are reserved space in
+    // v1.0/v1.1 and must not be interpreted there.
+    let syncRecordCount: number | undefined;
+    let syncDataOffset: number | undefined;
+
+    if (versionMinor >= 2) {
+      const syncOffset = this.view.getUint32(offset, true);
+      offset += 4;
+
+      const syncCount = this.view.getUint16(offset, true);
+      offset += 2;
+
+      if (syncCount > 0 && syncOffset > 0) {
+        syncRecordCount = syncCount;
+        syncDataOffset = syncOffset;
+      }
     }
 
     const header: VTXHeader = {
@@ -257,6 +290,8 @@ export class VTXDecoder {
       compression,
       gpsRecordCount,
       gpsDataOffset,
+      syncRecordCount,
+      syncDataOffset,
     };
 
     this.header = header;
@@ -539,6 +574,83 @@ export class VTXDecoder {
       bearing,
       accuracy,
     };
+  }
+
+  /**
+   * Read a range of clock sync records (v1.2+)
+   */
+  readSyncRecords(startIndex: number, count: number): ClockSyncRecord[] {
+    if (!this.header) {
+      throw new Error('Must read header before sync records');
+    }
+
+    if (!this.header.syncRecordCount || !this.header.syncDataOffset) {
+      return [];
+    }
+
+    const total = this.header.syncRecordCount;
+    if (startIndex < 0 || startIndex >= total) {
+      throw new Error(
+        `Invalid sync start index: ${startIndex} (file has ${total} sync records)`
+      );
+    }
+
+    const actualCount = Math.min(count, total - startIndex);
+    const out: ClockSyncRecord[] = [];
+    for (let i = 0; i < actualCount; i++) {
+      out.push(this.readSyncRecord(startIndex + i));
+    }
+    return out;
+  }
+
+  /**
+   * Read a single clock sync record by index (24 bytes)
+   */
+  readSyncRecord(index: number): ClockSyncRecord {
+    if (!this.header) {
+      throw new Error('Must read header before sync records');
+    }
+
+    if (!this.header.syncRecordCount || !this.header.syncDataOffset) {
+      throw new Error('No clock sync data available in this file');
+    }
+
+    const total = this.header.syncRecordCount;
+    if (index < 0 || index >= total) {
+      throw new Error(
+        `Invalid sync record index: ${index} (file has ${total} sync records)`
+      );
+    }
+
+    let offset =
+      this.header.syncDataOffset + index * VTX_CONSTANTS.SYNC_RECORD_SIZE;
+
+    if (this.buffer.byteLength < offset + VTX_CONSTANTS.SYNC_RECORD_SIZE) {
+      throw new Error(`File truncated: sync record ${index} incomplete`);
+    }
+
+    // Device timestamps are raw millis(), not offsets from recording start —
+    // a sync record characterizes the millis() base itself.
+    const t1DeviceMs = this.view.getUint32(offset, true);
+    offset += 4;
+    const t4DeviceMs = this.view.getUint32(offset, true);
+    offset += 4;
+    const t2PhoneUnixMs = Number(this.view.getBigInt64(offset, true));
+    offset += 8;
+    const t3PhoneUnixMs = Number(this.view.getBigInt64(offset, true));
+    offset += 8;
+
+    return { t1DeviceMs, t4DeviceMs, t2PhoneUnixMs, t3PhoneUnixMs };
+  }
+
+  /**
+   * Get total clock sync record count
+   */
+  getSyncRecordCount(): number {
+    if (!this.header) {
+      this.readHeader();
+    }
+    return this.header!.syncRecordCount ?? 0;
   }
 
   /**

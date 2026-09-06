@@ -35,6 +35,10 @@ const CMD_V2_SYNC_CLOCK = 0x09;
 const CMD_V2_SET_USER = 0x0B;
 const CMD_V2_START_SYNC = 0x0C;
 const CMD_V2_CANCEL_SYNC = 0x0D;
+const CMD_V2_TIME_RESPONSE = 0x0E;
+
+// Device → phone notification opcodes on the file-list characteristic
+const NOTIFY_TIME_REQUEST = 0xf0;
 
 export interface V2SyncProgress {
   currentFile: number;
@@ -333,6 +337,18 @@ class BleService {
           console.log('[BLE] V2 clock synced on connect');
         } catch (syncError: any) {
           console.warn('[BLE] V2 clock sync failed:', syncError?.message);
+        }
+
+        // Answer periodic clock-sync requests for as long as we stay
+        // connected (VTX v1.2). Registered here rather than on-demand so a
+        // recording started from the device button is still covered.
+        try {
+          const unsubscribeTime = this.subscribeToTimeRequests();
+          this.activeSubscriptions.push({ remove: unsubscribeTime });
+          console.log('[BLE] V2 time-request responder active');
+        } catch (timeError: any) {
+          // Non-fatal: the device treats an unanswered request as a miss.
+          console.warn('[BLE] Time responder setup failed:', timeError?.message);
         }
       }
 
@@ -993,6 +1009,57 @@ class BleService {
     view.setBigInt64(1, now, true); // little-endian int64
 
     await this.writeConfigCommand(command);
+  }
+
+  /**
+   * Respond to periodic clock-sync requests from a V2 device (VTX v1.2).
+   *
+   * The device notifies [0xF0][t1 uint32] every 60s while recording; we reply
+   * with [0x0E][t2 int64][t3 int64] where t2 is the moment the request was
+   * observed and t3 the moment the reply is handed to the BLE stack. The
+   * device pairs these with its own t1/t4 to cancel transport delay.
+   *
+   * Timing is the whole point of this handler, so it does as little as
+   * possible between the two stamps and never awaits anything before t3.
+   * Returns an unsubscribe function.
+   */
+  subscribeToTimeRequests(): () => void {
+    if (!this.connectedDevice) return () => {};
+
+    const subscription = this.connectedDevice.monitorCharacteristicForService(
+      IMU_SERVICE_UUID,
+      V2_FILE_LIST_CHARACTERISTIC_UUID,
+      (error, characteristic) => {
+        // t2 first — before base64 decode, before any branching. Anything
+        // done ahead of this is charged to the device's measured RTT.
+        const t2 = Date.now();
+        if (error || !characteristic?.value) return;
+
+        const data = this.base64ToUint8Array(characteristic.value);
+        // Not a time request — this characteristic also carries file listings.
+        if (data.length < 1 || data[0] !== NOTIFY_TIME_REQUEST) return;
+
+        // Build the reply, stamp t3 as late as possible, and fire. We do not
+        // await the write before stamping: awaiting would put the BLE write
+        // latency inside the phone's own reported processing window, which is
+        // exactly the quantity t3 - t2 is supposed to exclude.
+        const reply = new Uint8Array(17);
+        reply[0] = CMD_V2_TIME_RESPONSE;
+        const view = new DataView(reply.buffer);
+        view.setBigInt64(1, BigInt(t2), true);
+
+        const t3 = Date.now();
+        view.setBigInt64(9, BigInt(t3), true);
+
+        this.writeConfigCommand(reply).catch((err) => {
+          // A dropped reply just means the device records a miss, which it
+          // treats as normal. Nothing to recover here.
+          console.warn('[BLE] Time response write failed:', err?.message);
+        });
+      }
+    );
+
+    return () => subscription?.remove();
   }
 
   /**

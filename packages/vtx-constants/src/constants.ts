@@ -12,7 +12,7 @@
  */
 export const VTX_FORMAT_VERSION = {
   MAJOR: 1,
-  MINOR: 0,
+  MINOR: 2,
 } as const;
 
 /**
@@ -56,6 +56,10 @@ export const VTX_RECORD_SIZE = {
   MINIMAL: 28,
   /** Full record size (timestamp + accel + gyro + mag + quat) */
   FULL: 56,
+  /** GPS record size (v1.1+) */
+  GPS: 44,
+  /** Clock sync record size (v1.2+) */
+  SYNC: 24,
 } as const;
 
 /**

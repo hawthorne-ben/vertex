@@ -8,6 +8,7 @@ import {
   VTXMetadata,
   IMURecord,
   GPSRecord,
+  ClockSyncRecord,
   VTXEncoderOptions,
   VTX_CONSTANTS,
   RecordFormatFlags,
@@ -19,9 +20,11 @@ export class VTXEncoder {
   private includeQuat: boolean;
   private includeEuler: boolean;
   private includeGPS: boolean;
+  private includeSync: boolean;
   private metadata: VTXMetadata;
   private records: IMURecord[] = [];
   private gpsRecords: GPSRecord[] = [];
+  private syncRecords: ClockSyncRecord[] = [];
   private recordSize: number;
   private recordFormat: number;
 
@@ -31,6 +34,7 @@ export class VTXEncoder {
     this.includeQuat = options.includeQuat ?? false;
     this.includeEuler = options.includeEuler ?? false;
     this.includeGPS = options.includeGPS ?? false;
+    this.includeSync = options.includeSync ?? false;
     this.metadata = options.metadata ?? {};
 
     // Calculate record format bitmask
@@ -158,6 +162,35 @@ export class VTXEncoder {
   }
 
   /**
+   * Add a single clock sync record (v1.2+)
+   */
+  addSyncRecord(record: ClockSyncRecord): void {
+    if (!this.includeSync) {
+      throw new Error('Clock sync recording is not enabled in encoder options');
+    }
+
+    if (
+      record.t1DeviceMs === undefined ||
+      record.t4DeviceMs === undefined ||
+      record.t2PhoneUnixMs === undefined ||
+      record.t3PhoneUnixMs === undefined
+    ) {
+      throw new Error('Sync record missing one of t1/t2/t3/t4');
+    }
+
+    this.syncRecords.push(record);
+  }
+
+  /**
+   * Add multiple clock sync records at once
+   */
+  addSyncRecords(records: ClockSyncRecord[]): void {
+    for (const record of records) {
+      this.addSyncRecord(record);
+    }
+  }
+
+  /**
    * Encode all data to a binary buffer
    */
   encode(): ArrayBuffer {
@@ -190,7 +223,16 @@ export class VTXEncoder {
       gpsDataSize = VTX_CONSTANTS.GPS_RECORD_SIZE * this.gpsRecords.length;
     }
 
-    const totalSize = dataOffset + imuDataSize + gpsDataSize;
+    // Sync section trails everything else (v1.2+)
+    let syncDataOffset = 0;
+    let syncDataSize = 0;
+    if (this.includeSync && this.syncRecords.length > 0) {
+      this.syncRecords.sort((a, b) => a.t1DeviceMs - b.t1DeviceMs);
+      syncDataOffset = dataOffset + imuDataSize + gpsDataSize;
+      syncDataSize = VTX_CONSTANTS.SYNC_RECORD_SIZE * this.syncRecords.length;
+    }
+
+    const totalSize = dataOffset + imuDataSize + gpsDataSize + syncDataSize;
 
     // Create buffer for entire file
     const buffer = new ArrayBuffer(totalSize);
@@ -212,6 +254,9 @@ export class VTXEncoder {
       compression: VTX_CONSTANTS.COMPRESSION_NONE,
       gpsRecordCount: this.includeGPS ? BigInt(this.gpsRecords.length) : undefined,
       gpsDataOffset: this.includeGPS && this.gpsRecords.length > 0 ? gpsDataOffset : undefined,
+      syncRecordCount: this.includeSync ? this.syncRecords.length : undefined,
+      syncDataOffset:
+        this.includeSync && this.syncRecords.length > 0 ? syncDataOffset : undefined,
     };
 
     offset = this.writeHeader(view, offset, header);
@@ -225,6 +270,11 @@ export class VTXEncoder {
     // Write GPS data records (if enabled)
     if (this.includeGPS && this.gpsRecords.length > 0) {
       offset = this.writeGPSRecords(view, offset, startTimestamp);
+    }
+
+    // Write clock sync records (if enabled)
+    if (this.includeSync && this.syncRecords.length > 0) {
+      offset = this.writeSyncRecords(view, offset);
     }
 
     return buffer;
@@ -292,11 +342,33 @@ export class VTXEncoder {
     }
     offset += 4;
 
-    // Reserved fields (6 bytes remaining) - fill with zeros
-    for (let i = 0; i < 6; i++) {
-      view.setUint8(offset++, 0);
-    }
+    // Sync data offset (4 bytes, v1.2+)
+    view.setUint32(offset, header.syncDataOffset ?? 0, true);
+    offset += 4;
 
+    // Sync record count (2 bytes, v1.2+)
+    view.setUint16(offset, header.syncRecordCount ?? 0, true);
+    offset += 2;
+
+    // Reserved region is now fully consumed (see spec/v1.2-clock-sync.md)
+    return offset;
+  }
+
+  /**
+   * Write all clock sync records to buffer (24 bytes each)
+   */
+  private writeSyncRecords(view: DataView, offset: number): number {
+    for (const r of this.syncRecords) {
+      // Device timestamps are raw millis(), stored as-is
+      view.setUint32(offset, r.t1DeviceMs, true);
+      offset += 4;
+      view.setUint32(offset, r.t4DeviceMs, true);
+      offset += 4;
+      view.setBigInt64(offset, BigInt(Math.trunc(r.t2PhoneUnixMs)), true);
+      offset += 8;
+      view.setBigInt64(offset, BigInt(Math.trunc(r.t3PhoneUnixMs)), true);
+      offset += 8;
+    }
     return offset;
   }
 

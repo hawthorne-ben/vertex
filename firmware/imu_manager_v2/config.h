@@ -11,12 +11,13 @@
 
 // ===== VTX Format (must match packages/vtx-parser) =====
 #define VTX_FORMAT_MAJOR 1
-#define VTX_FORMAT_MINOR 1
+#define VTX_FORMAT_MINOR 2
 #define VTX_MAGIC "VTX"                // 3 bytes + null terminator
 #define VTX_HEADER_SIZE 64
 #define VTX_RECORD_FORMAT 0x03         // HAS_ACCEL (0x01) | HAS_GYRO (0x02)
 #define VTX_COMPRESSION_NONE 0
 #define VTX_IMU_RECORD_SIZE 28         // 4 (timestamp) + 12 (accel float32x3) + 12 (gyro float32x3)
+#define VTX_SYNC_RECORD_SIZE 24        // 4 (t1) + 4 (t4) + 8 (t2) + 8 (t3) — v1.2 clock sync
 
 // ===== BLE Configuration =====
 #define BLE_DEVICE_NAME "Vertex-V2"
@@ -39,7 +40,14 @@
 #define CMD_SET_USER        0x0B  // [0x0B][userId\0apiKey\0serverUrl] — provision user/API credentials
 #define CMD_START_SYNC      0x0C  // Trigger WiFi upload of all files
 #define CMD_CANCEL_SYNC     0x0D  // Abort current WiFi upload
+#define CMD_TIME_RESPONSE   0x0E  // Phone's reply to a periodic time request (16 bytes: t2 int64, t3 int64)
 #define CMD_QUERY_CONFIG    0xFF  // Query current configuration
+
+// ===== BLE Notification Opcodes (device → phone, on FILE_LIST characteristic) =====
+// Distinguished from file listings by a leading opcode byte. File listings
+// never begin with 0xF0 (first byte is a file count <= 255 but the packet is
+// only emitted in response to CMD_LIST_FILES).
+#define NOTIFY_TIME_REQUEST 0xF0  // [0xF0][t1 uint32] — device asks phone for the time
 
 // ===== Hardware Pin Assignments (ESP32-S3 Mini) =====
 // Buttons
@@ -96,6 +104,15 @@
 // ===== Button Configuration =====
 #define BUTTON_DEBOUNCE_MS 50
 #define BUTTON_LONG_PRESS_MS 2000  // Long press = shutdown (future)
+
+// ===== Clock Sync Sampling (VTX v1.2) =====
+// Every CLOCK_SYNC_INTERVAL_MS of recording, ask the phone for its wall clock
+// and store the four-timestamp exchange as a sync record. These are recorded
+// as DATA, never applied as a correction — millis() remains the sole time base
+// for IMU sample timestamps. See packages/vtx-format/spec/v1.2-clock-sync.md.
+#define CLOCK_SYNC_INTERVAL_MS 60000   // Request phone time every 60s while recording
+#define CLOCK_SYNC_TIMEOUT_MS 2000     // Give up on a response after 2s; skip the sample
+#define MAX_SYNC_RECORDS 512           // RAM buffer: 512 * 24B = 12KB, ~8.5h at 60s cadence
 
 // ===== Timing =====
 #define FIFO_POLL_INTERVAL_MS 100  // Read FIFO every 100ms (~10 samples per batch)

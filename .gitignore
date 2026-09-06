@@ -109,3 +109,6 @@ context/
 
 # Local engineering notes: lab notebooks, superseded explorations, testing scratch
 notes/
+
+# Substack
+substack/

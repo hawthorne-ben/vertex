@@ -10,6 +10,7 @@ from .types import (
     VTXHeader,
     VTXMetadata,
     IMURecord,
+    ClockSyncRecord,
     VTXFile,
     VTX_CONSTANTS,
     RecordFormatFlags,
@@ -59,7 +60,12 @@ class VTXDecoder:
 
         # Return early if header only
         if header_only:
-            return VTXFile(header=self.header, metadata=self.metadata, records=[])
+            return VTXFile(
+                header=self.header,
+                metadata=self.metadata,
+                records=[],
+                sync_records=self.read_sync_records(),
+            )
 
         # Parse data records
         record_count = self.header.record_count
@@ -68,7 +74,14 @@ class VTXDecoder:
 
         records = self.read_records(0, record_count)
 
-        return VTXFile(header=self.header, metadata=self.metadata, records=records)
+        # Clock sync records (v1.2+). Absence is normal — BLE is usually
+        # disconnected during a ride.
+        return VTXFile(
+            header=self.header,
+            metadata=self.metadata,
+            records=records,
+            sync_records=self.read_sync_records(),
+        )
 
     def read_header(self) -> VTXHeader:
         """
@@ -170,13 +183,22 @@ class VTXDecoder:
                 gps_record_count = gps_count
                 gps_data_offset = gps_offset
 
-            # Skip remaining reserved fields (6 bytes)
-            # offset += 6  # Not needed as we're done with header
-        else:
-            # v1.0 has no GPS fields
-            # Skip all reserved fields (18 bytes)
-            # offset += 18  # Not needed as we're done with header
-            pass
+        # Clock sync section (6 bytes at offset 58, v1.2+).
+        # Gated on version_minor, not on value: bytes 58-63 are reserved
+        # space in v1.0/v1.1 and must not be interpreted there.
+        sync_record_count = None
+        sync_data_offset = None
+
+        if version_minor >= 2:
+            sync_offset = struct.unpack("<I", self.data[offset : offset + 4])[0]
+            offset += 4
+
+            sync_count = struct.unpack("<H", self.data[offset : offset + 2])[0]
+            offset += 2
+
+            if sync_count > 0 and sync_offset > 0:
+                sync_record_count = sync_count
+                sync_data_offset = sync_offset
 
         header = VTXHeader(
             magic=magic,
@@ -192,6 +214,8 @@ class VTXDecoder:
             compression=compression,
             gps_record_count=gps_record_count,
             gps_data_offset=gps_data_offset,
+            sync_record_count=sync_record_count,
+            sync_data_offset=sync_data_offset,
         )
 
         self.header = header
@@ -212,6 +236,54 @@ class VTXDecoder:
             size += 12  # euler (3 * float32: roll, pitch, yaw)
 
         return size
+
+    def read_sync_records(self) -> Optional[List[ClockSyncRecord]]:
+        """
+        Read all clock sync records (v1.2+)
+
+        Returns:
+            List of sync records, or None if the file carries no sync stream.
+            None (not an exception) is the normal case for a ride recorded
+            with BLE disconnected.
+        """
+        if self.header is None:
+            raise ValueError("Must read header before sync records")
+
+        count = self.header.sync_record_count
+        start = self.header.sync_data_offset
+        if not count or not start:
+            return None
+
+        size = VTX_CONSTANTS.SYNC_RECORD_SIZE
+        needed = start + count * size
+        if len(self.data) < needed:
+            raise ValueError(
+                f"File truncated: sync section needs {needed} bytes, "
+                f"file has {len(self.data)}"
+            )
+
+        records: List[ClockSyncRecord] = []
+        for i in range(count):
+            offset = start + i * size
+            # Device timestamps are raw millis(), not offsets from recording
+            # start — a sync record characterizes the millis() base itself.
+            t1, t4 = struct.unpack("<II", self.data[offset : offset + 8])
+            t2, t3 = struct.unpack("<qq", self.data[offset + 8 : offset + 24])
+            records.append(
+                ClockSyncRecord(
+                    t1_device_ms=t1,
+                    t4_device_ms=t4,
+                    t2_phone_unix_ms=t2,
+                    t3_phone_unix_ms=t3,
+                )
+            )
+        return records
+
+    def get_sync_record_count(self) -> int:
+        """Number of clock sync records in the file (0 if none)"""
+        if self.header is None:
+            self.read_header()
+        return self.header.sync_record_count or 0
 
     def read_metadata(self) -> VTXMetadata:
         """

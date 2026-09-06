@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-09-05
+
+### Added
+- **Clock sync stream support (VTX format v1.2)** in both the TypeScript and
+  Python parsers. Sync records are 24-byte NTP-style four-timestamp exchanges
+  written as a trailing section; they are observations of the device time base,
+  never corrections applied to sample timestamps.
+- `VTXDecoder.readSyncRecords()` / `readSyncRecord()` / `getSyncRecordCount()`
+  (TS) and `VTXDecoder.read_sync_records()` / `get_sync_record_count()` (Python).
+- `VTXEncoder.addSyncRecord()` / `addSyncRecords()` with the `includeSync`
+  option.
+- **Drift-fit helper**: `computeClockDrift()` (TS) / `compute_clock_drift()`
+  (Python) returns drift rate in ppm, a `correct()` function mapping device
+  `millis()` to estimated true unix ms, residual RMS/max as a quality metric,
+  and a `trustworthy` flag with human-readable warnings. RTT outliers are
+  rejected by both an absolute cap and a median-relative rule.
+- `detectClockSteps()` / `detect_clock_steps()` flags phone-side clock steps
+  (an NTP correction mid-ride), which a single linear fit would otherwise
+  absorb as slope error.
+
+### Fixed
+- `recoveryMode` no longer miscounts trailing GPS/sync sections as IMU
+  records; the scan is bounded at the first trailing section offset.
+- Stale `versionMinor === 0` assertions in the TS and Python decoder tests now
+  track `VTX_CONSTANTS.VERSION_MINOR`. The TS assertion had been failing since
+  the v1.1 GPS bump.
+
+### Notes
+- Degenerate inputs never throw: zero sync records yields an identity
+  correction, one record yields a constant offset — both reported as
+  untrustworthy.
+- Verified backward compatible against all 42 `.vtx` files in
+  `analysis/data/sample-recordings/`.
+
 ## [0.6.1] - 2026-01-25
 
 ### Fixed

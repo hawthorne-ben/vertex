@@ -1,8 +1,8 @@
 {
   "name": "@vertex/vtx-format",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "VTX binary format specification for IMU sensor data",
-  "main": "spec/v1.0.md",
+  "main": "spec/v1.2-clock-sync.md",
   "keywords": ["vtx", "vertex", "imu", "binary-format", "specification"],
   "author": "Vertex Team",
   "license": "MIT",

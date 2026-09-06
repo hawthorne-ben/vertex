@@ -1,0 +1,88 @@
+# Vertex presentation plot style
+# Derived from the web app theme (web/tailwind.config.ts + src/app/globals.css)
+# so slides, charts, and the live dashboard read as one system.
+#
+# Usage:  plt.style.use('/path/to/analysis/vertex.mplstyle')
+# or via: from plot_style import setup; setup()
+
+# ---- Typography -------------------------------------------------------
+# Web app pairs Crimson Pro (serif) with JetBrains Mono. Crimson Pro is a
+# text face and reads thin when projected, so charts use the mono for tick
+# labels/annotations and a clean sans for titles. Falls back gracefully if
+# the fonts are not installed locally.
+font.family:        sans-serif
+font.sans-serif:    Inter, Helvetica Neue, Arial, DejaVu Sans
+font.monospace:     JetBrains Mono, SF Mono, Menlo, DejaVu Sans Mono
+font.size:          12
+
+axes.titlesize:     15
+axes.titleweight:   600
+axes.titlepad:      12
+axes.labelsize:     12
+axes.labelpad:      8
+xtick.labelsize:    10.5
+ytick.labelsize:    10.5
+legend.fontsize:    11
+figure.titlesize:   16
+
+# ---- Color ------------------------------------------------------------
+# chart-1..5 from globals.css, converted HSL -> hex.
+# chart-1 #E76E50 (warm red)   chart-2 #2A9D90 (teal)
+# chart-3 #274754 (deep slate) chart-4 #E8C468 (sand)
+# chart-5 #F4A462 (orange)
+# Order reshuffled so the first two series have maximum separation both in
+# hue and in luminance (survives grayscale printing and washed-out projectors).
+axes.prop_cycle: cycler('color', ['274754', 'E76E50', '2A9D90', 'F4A462', 'E8C468', '737373'])
+
+figure.facecolor:   none
+axes.facecolor:     none
+savefig.facecolor:  none
+savefig.transparent: True
+
+text.color:         0A0A0A
+axes.labelcolor:    0A0A0A
+axes.edgecolor:     A3A3A3
+xtick.color:        737373
+ytick.color:        737373
+xtick.labelcolor:   0A0A0A
+ytick.labelcolor:   0A0A0A
+
+# ---- Spines and grid --------------------------------------------------
+axes.spines.top:    False
+axes.spines.right:  False
+axes.spines.left:   True
+axes.spines.bottom: True
+axes.linewidth:     1.0
+
+axes.grid:          True
+axes.grid.axis:     both
+grid.color:         E5E5E5
+grid.linewidth:     0.8
+grid.alpha:         0.9
+axes.axisbelow:     True
+
+# ---- Lines and markers ------------------------------------------------
+# 2.0 minimum: thinner lines disappear on a conference-room projector.
+lines.linewidth:    2.0
+lines.markersize:   5
+lines.solid_capstyle: round
+patch.linewidth:    1.0
+
+# ---- Legend -----------------------------------------------------------
+legend.frameon:     True
+legend.framealpha:  0.92
+legend.facecolor:   FFFFFF
+legend.edgecolor:   E5E5E5
+legend.borderpad:   0.6
+legend.labelspacing: 0.4
+
+# ---- Figure and output ------------------------------------------------
+# 10 x 5.5in @ 200dpi = 2000 x 1100 px. Sharp when scaled to full-slide
+# width on a 1080p or 4K projector.
+figure.figsize:     10, 5.5
+figure.dpi:         110
+savefig.dpi:        200
+figure.autolayout:  False
+figure.constrained_layout.use: True
+savefig.bbox:       standard
+savefig.format:     png

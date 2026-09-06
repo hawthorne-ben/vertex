@@ -3,6 +3,7 @@
  */
 
 import { VTXEncoder, VTXDecoder, IMURecord } from '../src';
+import { VTX_CONSTANTS } from '../src/types';
 
 describe('VTXDecoder', () => {
   function createSampleFile(recordCount: number = 10): ArrayBuffer {
@@ -44,7 +45,11 @@ describe('VTXDecoder', () => {
 
     expect(header.magic).toBe('VTX\0');
     expect(header.versionMajor).toBe(1);
-    expect(header.versionMinor).toBe(0);
+    // Track the current format version rather than a literal: the file is
+    // produced by VTXEncoder, so a hardcoded value breaks on every format
+    // bump without testing anything. (Was already stale from the v1.1 GPS
+    // bump before v1.2 landed.)
+    expect(header.versionMinor).toBe(VTX_CONSTANTS.VERSION_MINOR);
     expect(header.recordCount).toBe(BigInt(10));
     expect(header.sampleRate).toBe(100);
     expect(header.compression).toBe(0);

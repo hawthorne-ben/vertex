@@ -92,6 +92,55 @@ int checkButtonPress() {
   return 0;
 }
 
+// ===== Periodic clock sync (VTX v1.2) =====
+// Every CLOCK_SYNC_INTERVAL_MS while recording, ask the phone for its wall
+// clock and store the four-timestamp exchange as a sync record in the .vtx
+// file. This is a MEASUREMENT, not a correction: _clockOffsetMs is never
+// touched here, and IMU sample timestamps keep running off millis() alone.
+// Resolving device-vs-phone disagreement happens offline in the parser
+// (computeClockDrift). See packages/vtx-format/spec/v1.2-clock-sync.md.
+static unsigned long _lastSyncRequestMs = 0;
+static uint16_t _syncMissCount = 0;
+
+// Non-blocking: issues at most one BLE notify and one buffer append per call.
+// No busy-wait, no delay() — the FIFO service path in loop() is never stalled.
+static void serviceClockSync() {
+  // 1. Collect a completed exchange, if one landed since the last iteration.
+  uint32_t t1, t4;
+  int64_t t2, t3;
+  if (ble.pollTimeResponse(t1, t4, t2, t3)) {
+    ClockSyncRecord rec;
+    rec.t1_device_ms = t1;
+    rec.t4_device_ms = t4;
+    rec.t2_phone_unix_ms = t2;
+    rec.t3_phone_unix_ms = t3;
+    if (!storage.addSyncRecord(rec)) {
+      Serial.println("[CLK] Sync buffer full — no further samples this recording");
+    } else {
+      int32_t rtt = (int32_t)(t4 - t1) - (int32_t)(t3 - t2);
+      Serial.printf("[CLK] Sync #%u — rtt=%ldms\n",
+                    (unsigned)storage.getSyncRecordCount(), (long)rtt);
+    }
+  }
+
+  // 2. Expire a request the phone never answered. Not an error: BLE is
+  //    disconnected for most of a typical ride.
+  if (ble.expireStaleTimeRequest()) {
+    _syncMissCount++;
+    Serial.printf("[CLK] Sync request timed out (%u missed)\n", (unsigned)_syncMissCount);
+  }
+
+  // 3. Issue the next request on cadence.
+  if (millis() - _lastSyncRequestMs >= CLOCK_SYNC_INTERVAL_MS) {
+    // Advance the schedule even when the request cannot be sent, so a long
+    // disconnection does not queue up a burst of requests on reconnect.
+    _lastSyncRequestMs = millis();
+    if (!ble.requestPhoneTime()) {
+      _syncMissCount++;
+    }
+  }
+}
+
 // ===== Recording control =====
 static unsigned long _recordingStartMs = 0;
 
@@ -110,6 +159,10 @@ void startRecording() {
   sensor.resetTimestamp();
   if (storage.openNewFile(wallClockMs())) {
     _recordingStartMs = millis();
+    // First periodic sync fires one full interval in. The connect-time
+    // CMD_SYNC_CLOCK already established the initial offset.
+    _lastSyncRequestMs = millis();
+    _syncMissCount = 0;
     state = STATE_RECORDING;
     Serial.println("[REC] Started");
   } else {
@@ -209,6 +262,10 @@ void loop() {
 
     case STATE_RECORDING: {
       power.updateLED(LED_BLINK_RECORDING);
+
+      // Periodic clock sync sampling. Runs after the FIFO read above so a
+      // sample batch is never delayed behind it.
+      serviceClockSync();
 
       if (samplesRead > 0) {
         if (!storage.writeSamples(sensor.getSampleBuffer(), samplesRead)) {

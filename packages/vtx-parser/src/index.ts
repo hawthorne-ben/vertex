@@ -12,11 +12,24 @@ export { VTXDecoder } from './decoder';
 export { VTXMerger } from './merger';
 export type { MergeResult } from './merger';
 
+// Clock drift analysis (v1.2+)
+export {
+  computeClockDrift,
+  detectClockSteps,
+  toObservation,
+} from './clock-drift';
+export type {
+  ClockDriftFit,
+  ClockDriftOptions,
+  ClockSyncObservation,
+} from './clock-drift';
+
 // Export types
 export type {
   VTXHeader,
   IMURecord,
   GPSRecord,
+  ClockSyncRecord,
   VTXFile,
   VTXMetadata,
   VTXEncoderOptions,
