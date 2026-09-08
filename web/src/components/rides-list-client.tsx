@@ -5,6 +5,9 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Bike } from 'lucide-react'
 import Link from 'next/link'
 import { useSelection } from '@/hooks/useSelection'
+import { useAuthFetch } from '@/hooks/useAuthFetch'
+import { useServerPagination } from '@/hooks/useServerPagination'
+import { PaginationControls } from '@/components/pagination-controls'
 import { ridesApi } from '@/lib/api/rides'
 import { useToast } from '@/components/ui/toast-context'
 import { BatchOperationModal } from '@/components/ui/batch-operation-modal'
@@ -19,14 +22,34 @@ interface RideWithFitFile extends Ride {
 }
 
 interface RidesListClientProps {
+  /** First page, rendered on the server. Later pages are fetched. */
   rides: RideWithFitFile[]
+  /** Total rides for this user, across all pages. */
+  totalCount: number
 }
 
-export function RidesListClient({ rides: initialRides }: RidesListClientProps) {
+export function RidesListClient({ rides: initialRides, totalCount }: RidesListClientProps) {
   const { addToast } = useToast()
-  const [rides, setRides] = useState(initialRides)
+  // /api/rides/list is behind withAuth, which requires a Bearer token — a plain
+  // fetch() carrying only the session cookie gets a 401.
+  const { authFetch } = useAuthFetch()
 
-  // Use selection hook
+  // Each page is its own request — the whole list is never in memory. Selection
+  // is therefore scoped to the visible page: batch actions apply to what is on
+  // screen, which is the tradeoff for not shipping every ride to the browser.
+  const pagination = useServerPagination<RideWithFitFile>({
+    initialItems: initialRides,
+    initialTotal: totalCount,
+    storageKey: 'rides-list-page-size',
+    fetchPage: async (page, pageSize) => {
+      const res = await authFetch(`/api/rides/list?page=${page}&pageSize=${pageSize}`)
+      if (!res.ok) throw new Error('Failed to fetch rides')
+      const json = await res.json()
+      return { items: json.rides as RideWithFitFile[], total: json.total as number }
+    },
+  })
+
+  const rides = pagination.pageItems
   const selection = useSelection(rides)
 
   // Operation states
@@ -42,7 +65,7 @@ export function RidesListClient({ rides: initialRides }: RidesListClientProps) {
     try {
       const result = await ridesApi.batchDelete(Array.from(selection.selectedIds))
 
-      setRides(prev => prev.filter(r => !selection.selectedIds.has(r.id)))
+      pagination.removeItems(new Set(selection.selectedIds))
       selection.clear()
 
       addToast({
@@ -61,7 +84,7 @@ export function RidesListClient({ rides: initialRides }: RidesListClientProps) {
       setBatchOperating(false)
       setShowDeleteModal(false)
     }
-  }, [selection, batchOperating, addToast])
+  }, [selection, batchOperating, addToast, pagination])
 
   // Batch download handler
   const handleBatchDownload = useCallback(async () => {
@@ -100,8 +123,8 @@ export function RidesListClient({ rides: initialRides }: RidesListClientProps) {
     }
   }, [selection, batchOperating, addToast])
 
-  // Empty state
-  if (rides.length === 0) {
+  // Empty state — keyed on the true total, not the current page.
+  if (pagination.totalItems === 0) {
     return (
       <Card>
         <CardContent className="text-center py-12">
@@ -130,9 +153,16 @@ export function RidesListClient({ rides: initialRides }: RidesListClientProps) {
         onBatchDelete={() => setShowDeleteModal(true)}
       />
 
-      {/* Grid of ride cards */}
-      <div className="grid gap-6">
-        {rides.map((ride) => (
+      {/* Grid of ride cards. While a page is in flight a frosted overlay
+          covers the list: the rows stay put and stay legible underneath, so it
+          reads as momentarily stale rather than gone, and the list keeps its
+          height so the page does not jump. */}
+      <div
+        ref={pagination.listRef as React.RefObject<HTMLDivElement>}
+        className={`paged-list grid gap-6 ${pagination.loading ? 'glass-busy pointer-events-none' : ''}`}
+        aria-busy={pagination.loading}
+      >
+        {pagination.pageItems.map((ride) => (
           <ErrorBoundary key={ride.id} fallback={<RideCardError />}>
             <RideCard
               ride={ride}
@@ -143,6 +173,19 @@ export function RidesListClient({ rides: initialRides }: RidesListClientProps) {
           </ErrorBoundary>
         ))}
       </div>
+
+      <PaginationControls
+        page={pagination.page}
+        totalPages={pagination.totalPages}
+        pageSize={pagination.pageSize}
+        totalItems={pagination.totalItems}
+        rangeStart={pagination.rangeStart}
+        rangeEnd={pagination.rangeEnd}
+        onPageChange={pagination.setPage}
+        onPageSizeChange={pagination.setPageSize}
+        loading={pagination.loading}
+        itemLabel="rides"
+      />
 
       {/* Batch Operation Modal */}
       <BatchOperationModal

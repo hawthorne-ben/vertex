@@ -1,10 +1,12 @@
-'use client'
-
-import { useEffect, useState } from 'react'
-import { useAuthFetch } from '@/hooks/useAuthFetch'
+import { ROUTE_PATH_VIEWBOX } from '@/lib/utils/route-path'
 
 interface RouteThumbnailProps {
-  rideId: string
+  /**
+   * Prerendered path from rides.route_path — a normalized SVG path in a
+   * 0..1000 viewBox. Null/undefined means the ride has no drawable GPS track
+   * (or predates the backfill), and the component renders nothing.
+   */
+  routePath?: string | null
   color?: string
   width?: number
   height?: number
@@ -12,91 +14,45 @@ interface RouteThumbnailProps {
 }
 
 /**
- * Lightweight route-shape thumbnail for the dashboard hero. Fetches only the
- * ride's GPS lat/lon (via the samples endpoint's `fields` filter), downsamples,
- * and renders an inline SVG polyline — no Leaflet, no tiles. Renders nothing if
- * the ride has no GPS track.
+ * Route-shape thumbnail.
+ *
+ * Pure presentation: it takes the path straight off the ride row and draws it.
+ * There is deliberately no fetch here — this component used to pull the ride's
+ * GPS through /api/rides/[id]/samples, which downloads and parses the entire
+ * FIT file server-side on every call. On an unpaginated rides list that was one
+ * full FIT parse per card. The shape is now computed once at parse time
+ * (migration 011, buildRoutePath) and stored on the row, so a thumbnail costs
+ * nothing beyond data the list already has.
+ *
+ * The stored path is normalized into a square viewBox with aspect ratio already
+ * applied, so rendering at any size is just a viewBox mapping.
  */
 export function RouteThumbnail({
-  rideId,
+  routePath,
   color = 'hsl(var(--primary))',
   width = 120,
   height = 72,
   className = '',
 }: RouteThumbnailProps) {
-  const { authFetch } = useAuthFetch()
-  const [path, setPath] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    async function load() {
-      try {
-        const res = await authFetch(`/api/rides/${rideId}/samples?fields=latitude,longitude`)
-        if (!res.ok || cancelled) return
-        const json = await res.json()
-        const raw: Array<{ latitude?: number | null; longitude?: number | null }> = json.samples ?? []
-        const coords = raw
-          .filter(s => s.latitude != null && s.longitude != null)
-          .map(s => [s.longitude as number, s.latitude as number] as [number, number])
-        if (coords.length < 2) return
-
-        // Downsample to at most ~150 points for a clean, cheap path.
-        const stride = Math.max(1, Math.floor(coords.length / 150))
-        const sampled = coords.filter((_, i) => i % stride === 0)
-
-        // Project to the SVG box, preserving aspect ratio, with padding.
-        const lons = sampled.map(c => c[0])
-        const lats = sampled.map(c => c[1])
-        const minLon = Math.min(...lons), maxLon = Math.max(...lons)
-        const minLat = Math.min(...lats), maxLat = Math.max(...lats)
-        const pad = 6
-        const w = width - pad * 2
-        const h = height - pad * 2
-        const spanLon = maxLon - minLon || 1e-6
-        const spanLat = maxLat - minLat || 1e-6
-        // Correct longitude for latitude compression so shapes aren't stretched.
-        const latRad = ((minLat + maxLat) / 2) * (Math.PI / 180)
-        const geoW = spanLon * Math.cos(latRad)
-        const geoH = spanLat
-        const scale = Math.min(w / geoW, h / geoH)
-        const drawW = geoW * scale
-        const drawH = geoH * scale
-        const offX = pad + (w - drawW) / 2
-        const offY = pad + (h - drawH) / 2
-
-        const d = sampled
-          .map((c, i) => {
-            const x = offX + (c[0] - minLon) * Math.cos(latRad) * scale
-            // SVG y grows downward; invert latitude.
-            const y = offY + (maxLat - c[1]) * scale
-            return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)} ${y.toFixed(1)}`
-          })
-          .join(' ')
-
-        if (!cancelled) setPath(d)
-      } catch {
-        // non-critical — hero renders fine without the thumbnail
-      }
-    }
-    load()
-    return () => { cancelled = true }
-  }, [authFetch, rideId, width, height])
-
-  if (!path) return null
+  if (!routePath) return null
 
   return (
     <svg
       width={width}
       height={height}
-      viewBox={`0 0 ${width} ${height}`}
+      viewBox={`0 0 ${ROUTE_PATH_VIEWBOX} ${ROUTE_PATH_VIEWBOX}`}
+      // The path is normalized into a square; letterbox it into the requested
+      // box rather than stretching the route out of shape.
+      preserveAspectRatio="xMidYMid meet"
       className={className}
       aria-hidden="true"
     >
       <path
-        d={path}
+        d={routePath}
         fill="none"
         stroke={color}
         strokeWidth={2}
+        vectorEffect="non-scaling-stroke"
         strokeLinejoin="round"
         strokeLinecap="round"
       />

@@ -13,6 +13,8 @@ export interface LatestRideHeroProps {
     duration_seconds: number | null
     riding_time_seconds?: number | null
     elevation_gain_meters: number | null
+    /** Prerendered route shape (migration 011); null when there is no track. */
+    route_path?: string | null
   }
   summary: {
     avg_stability_percent: number | null
@@ -70,7 +72,7 @@ export function LatestRideHero({ ride, summary, insights }: LatestRideHeroProps)
             </div>
             <div className="flex items-start gap-4 flex-shrink-0">
               <RouteThumbnail
-                rideId={ride.id}
+                routePath={ride.route_path}
                 className="hidden sm:block opacity-80 group-hover:opacity-100 transition-opacity"
               />
               <ArrowRight className="w-5 h-5 text-secondary opacity-0 group-hover:opacity-100 transition-opacity mt-1" />

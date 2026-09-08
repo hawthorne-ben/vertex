@@ -1,6 +1,10 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { DataTabs } from '@/components/data-tabs'
+import {
+  RECORDING_LIST_SELECT,
+  RECORDING_LIST_PAGE_SIZE,
+} from '@/lib/api/recording-list-fields'
 
 export default async function RecordingsPage() {
   const supabase = await createClient()
@@ -11,13 +15,16 @@ export default async function RecordingsPage() {
     redirect('/login')
   }
 
-  // Fetch user's VTX recordings only (FIT files are rides and shown on /rides)
-  const { data: recordings, error: recordingsError } = await supabase
+  // First page only — later pages come from /api/recordings/list. VTX only;
+  // FIT files are surfaced as rides on /rides. `count: 'exact'` gives the
+  // client the page count without it having to hold every row.
+  const { data: recordings, error: recordingsError, count } = await supabase
     .from('recordings')
-    .select('id, filename, status, file_size_bytes, start_time, end_time, sample_count, sample_rate, error_message, uploaded_at')
+    .select(RECORDING_LIST_SELECT, { count: 'exact' })
     .eq('user_id', user.id)
     .eq('file_type', 'vtx')
     .order('start_time', { ascending: false })
+    .range(0, RECORDING_LIST_PAGE_SIZE - 1)
 
   if (recordingsError) {
     console.error('Error fetching recordings:', recordingsError)
@@ -25,7 +32,7 @@ export default async function RecordingsPage() {
 
   return (
     <div className="container mx-auto px-4 md:px-6 max-w-6xl">
-      <DataTabs imuFiles={recordings || []} />
+      <DataTabs imuFiles={recordings || []} totalCount={count ?? 0} />
     </div>
   )
 }

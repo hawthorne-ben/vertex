@@ -5,6 +5,9 @@ import { FileText } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { Recording } from '@/types/recordings'
 import { useSelection } from '@/hooks/useSelection'
+import { useServerPagination } from '@/hooks/useServerPagination'
+import { PaginationControls } from '@/components/pagination-controls'
+import { useAuthFetch } from '@/hooks/useAuthFetch'
 import { useRecordingsPolling } from '@/hooks/useRecordingsPolling'
 import { recordingsApi } from '@/lib/api/recordings'
 import { useToast } from '@/components/ui/toast-context'
@@ -16,18 +19,39 @@ import { generateMergedFilename } from '@/lib/vtx/filename-utils'
 import { ErrorBoundary, RecordingCardError } from '@/components/ui/error-boundary'
 
 interface DataFilesListProps {
+  /** First page, rendered on the server. Later pages are fetched. */
   files: Recording[]
-  onDataChange?: () => void
+  /** Total VTX recordings for this user, across all pages. */
+  totalCount: number
 }
 
-export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesListProps) {
+export function DataFilesList({ files: initialFiles, totalCount }: DataFilesListProps) {
   const router = useRouter()
   const { addToast } = useToast()
+  // /api/recordings/list is behind withAuth, which requires a Bearer token — a
+  // plain fetch() carrying only the session cookie gets a 401.
+  const { authFetch } = useAuthFetch()
 
-  // Use polling hook to keep processing files updated
-  const files = useRecordingsPolling(initialFiles)
+  // Each page is its own request; the whole list is never in memory. Selection
+  // is therefore scoped to the visible page, so batch delete/download/merge
+  // apply to what is on screen.
+  const pagination = useServerPagination<Recording>({
+    initialItems: initialFiles,
+    initialTotal: totalCount,
+    storageKey: 'recordings-list-page-size',
+    fetchPage: async (page, pageSize) => {
+      const res = await authFetch(`/api/recordings/list?page=${page}&pageSize=${pageSize}`)
+      if (!res.ok) throw new Error('Failed to fetch recordings')
+      const json = await res.json()
+      return { items: json.recordings as Recording[], total: json.total as number }
+    },
+  })
 
-  // Use selection hook
+  // Status polling covers the current page only. A recording processing on
+  // another page still shows its true status when navigated to; it just does
+  // not live-update while off screen.
+  const files = useRecordingsPolling(pagination.pageItems)
+
   const selection = useSelection(files)
 
   // Operation states
@@ -59,9 +83,7 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
         message: result.message
       })
 
-      if (onDataChange) {
-        onDataChange()
-      }
+      pagination.removeItems(new Set(selection.selectedIds))
     } catch (err) {
       console.error('Batch delete error:', err)
       addToast({
@@ -73,7 +95,7 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
       setBatchOperating(false)
       setShowDeleteModal(false)
     }
-  }, [selection, batchOperating, addToast, onDataChange])
+  }, [selection, batchOperating, addToast, pagination])
 
   // Batch download handler
   const handleBatchDownload = useCallback(async () => {
@@ -138,9 +160,7 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
 
       // Start polling for completion (every 3 seconds)
       const pollInterval = setInterval(async () => {
-        if (onDataChange) {
-          onDataChange()
-        }
+        pagination.refresh()
 
         // Check if merge is complete
         const isComplete = await recordingsApi.checkMergeComplete(result.filename)
@@ -187,7 +207,7 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
       setMerging(false)
       setShowMergeModal(false)
     }
-  }, [selection, mergeFilename, merging, addToast, onDataChange])
+  }, [selection, mergeFilename, merging, addToast, pagination])
 
   // Show merge modal with auto-generated filename
   const showMergeModalHandler = useCallback(() => {
@@ -217,7 +237,7 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
     selection.selected.every(f => f.status === 'ready')
 
   // Empty state
-  if (files.length === 0) {
+  if (pagination.totalItems === 0) {
     return (
       <div className="text-center py-12 border-2 border-dashed border-border rounded-lg">
         <FileText className="w-12 h-12 mx-auto mb-4 text-secondary" />
@@ -247,8 +267,15 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
         onMerge={showMergeModalHandler}
       />
 
-      {/* List of recording cards */}
-      <div className="space-y-4">
+      {/* List of recording cards. While a page is in flight a frosted overlay
+          covers the list: the rows stay put and stay legible underneath, so it
+          reads as momentarily stale rather than gone, and the list keeps its
+          height so the page does not jump. */}
+      <div
+        ref={pagination.listRef as React.RefObject<HTMLDivElement>}
+        className={`paged-list space-y-4 ${pagination.loading ? 'glass-busy pointer-events-none' : ''}`}
+        aria-busy={pagination.loading}
+      >
         {files.map((file) => (
           <ErrorBoundary key={file.id} fallback={<RecordingCardError />}>
             <RecordingCard
@@ -261,6 +288,19 @@ export function DataFilesList({ files: initialFiles, onDataChange }: DataFilesLi
           </ErrorBoundary>
         ))}
       </div>
+
+      <PaginationControls
+        page={pagination.page}
+        totalPages={pagination.totalPages}
+        pageSize={pagination.pageSize}
+        totalItems={pagination.totalItems}
+        rangeStart={pagination.rangeStart}
+        rangeEnd={pagination.rangeEnd}
+        onPageChange={pagination.setPage}
+        onPageSizeChange={pagination.setPageSize}
+        loading={pagination.loading}
+        itemLabel="recordings"
+      />
 
       {/* Batch Operation Modals */}
       <BatchOperationModal

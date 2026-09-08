@@ -37,6 +37,9 @@ interface Sample {
   temperature?: number | null
 }
 
+// Stable identity so memos downstream don't recompute when no samples are passed
+const EMPTY_SAMPLES: Sample[] = []
+
 export function RideChartsClient({
   rideId,
   fitRecordingId,
@@ -46,7 +49,7 @@ export function RideChartsClient({
   zoomRange,
   onZoomChange
 }: RideChartsClientProps) {
-  const samples = propSamples ?? []
+  const samples = propSamples ?? EMPTY_SAMPLES
   const loading = propLoading ?? false
   const error = propError ?? null
 

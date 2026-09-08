@@ -577,10 +577,21 @@ export function RideMap({
     )
   }
 
-  // Theme-aware tile layer
-  const tileUrl = isDark
-    ? 'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png'  // Minimal dark
-    : 'https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png'  // Minimal light
+  // Theme-aware tile layer.
+  //
+  // CARTO basemaps now require an API key; without one the tiles render with a
+  // repeating "API key required" watermark. The key is domain-scoped by CARTO
+  // and travels in the tile URL, so it is public by construction — it is not a
+  // secret, and NEXT_PUBLIC_ is the honest place for it.
+  //
+  // Missing key: fall back to the unkeyed URL rather than rendering no map at
+  // all. The watermark is ugly but the route is still readable, which is the
+  // better failure for a local dev checkout with no key configured.
+  const cartoKey = process.env.NEXT_PUBLIC_CARTO_API_KEY
+  const cartoStyle = isDark ? 'dark_nolabels' : 'light_nolabels'
+  const tileUrl =
+    `https://{s}.basemaps.cartocdn.com/${cartoStyle}/{z}/{x}/{y}{r}.png` +
+    (cartoKey ? `?key=${cartoKey}` : '')
 
   const tileAttribution = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/attributions">CARTO</a>'
 

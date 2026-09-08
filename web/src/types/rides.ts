@@ -18,6 +18,13 @@ export interface Ride {
   conditions: string | null
   notes: string | null
   analysis_results: RideAnalysis | null
+  /**
+   * Prerendered route shape (migration 011): a normalized SVG path in a
+   * 0..1000 viewBox. Null when the ride has no drawable GPS track or predates
+   * the backfill. Rendered by <RouteThumbnail>.
+   */
+  route_path?: string | null
+  route_bounds?: { minLat: number; maxLat: number; minLon: number; maxLon: number } | null
 }
 
 export interface RideAnalysis {

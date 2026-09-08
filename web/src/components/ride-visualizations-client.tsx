@@ -313,7 +313,7 @@ export function RideVisualizationsClient({
       addToast({ type: 'error', title: 'Rerun failed', message: err.message || 'Failed to trigger reanalysis' })
       setRerunning(false)
     }
-  }, [authFetch, rideId])
+  }, [authFetch, rideId, addToast])
 
   // Fetch ride samples once - shared between map and charts
   const { samples, loading, error } = useRideSamples(rideId, fitRecordingId)
@@ -436,7 +436,7 @@ export function RideVisualizationsClient({
       const value = raw !== null && chartStatsConfig.convert ? chartStatsConfig.convert(raw) : raw
       return { timestamp: s.timestamp, value }
     })
-  }, [samples, chartStatsMetric, chartStatsConfig, sharedZoomRange])
+  }, [samples, chartStatsConfig, sharedZoomRange])
 
   // Chart config — dispatches to the right builder based on tab type
   const chartConfig = useMemo(() => {

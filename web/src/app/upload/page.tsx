@@ -261,7 +261,7 @@ export default function UploadPage() {
       setUploadPhase('error')
       setUploadError(err instanceof Error ? err.message : 'Unknown error occurred during upload')
     }
-  }, [selectedFiles, router, uploadFile, lastProgress, addToast])
+  }, [selectedFiles, router, uploadFile, lastProgress])
 
   const handleCancelUpload = useCallback(() => {
     setShowConfirmation(false)

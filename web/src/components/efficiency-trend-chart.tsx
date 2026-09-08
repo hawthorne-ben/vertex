@@ -106,7 +106,10 @@ export function MetricTrendChart({
     return () => { cancelled = true }
   }, [authFetch, metric, period, isControlled])
 
-  const fmt = formatValue ?? ((v: number) => unit ? `${v.toFixed(1)}${unit}` : v.toFixed(2))
+  const fmt = useMemo(
+    () => formatValue ?? ((v: number) => unit ? `${v.toFixed(1)}${unit}` : v.toFixed(2)),
+    [formatValue, unit]
+  )
 
   const chartConfig = useMemo(() => {
     if (!data?.points || data.points.length < 1) return null

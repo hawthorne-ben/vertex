@@ -1,43 +1,22 @@
 "use client"
 
-import { useState } from 'react'
 import { DataFilesList } from '@/components/data-files-list'
-import { createClient } from '@/lib/supabase/client'
 
 interface DataTabsProps {
+  /** First page, rendered on the server. Later pages are fetched. */
   imuFiles: any[]
+  /** Total VTX recordings for this user, across all pages. */
+  totalCount: number
 }
 
-export function DataTabs({ imuFiles: initialImuFiles }: DataTabsProps) {
-  const [imuFiles, setImuFiles] = useState(initialImuFiles)
-
-  // Refresh data function
-  const refreshData = async () => {
-    try {
-      const supabase = createClient()
-      const { data: { user } } = await supabase.auth.getUser()
-
-      if (user) {
-        // Fetch VTX recordings only
-        const { data: recordings } = await supabase
-          .from('recordings')
-          .select('id, filename, status, file_size_bytes, start_time, end_time, sample_count, sample_rate, error_message, uploaded_at')
-          .eq('user_id', user.id)
-          .eq('file_type', 'vtx')
-          .order('uploaded_at', { ascending: false })
-
-        if (recordings) {
-          setImuFiles(recordings)
-        }
-      }
-    } catch (error) {
-      console.error('Error refreshing data:', error)
-    }
-  }
-
+export function DataTabs({ imuFiles, totalCount }: DataTabsProps) {
+  // Paging and refresh now live in DataFilesList, which owns the fetch. This
+  // used to hold a refreshData() that re-queried every recording; with the list
+  // server-paged that would fight the pagination state and re-introduce the
+  // fetch-everything cost this change removes.
   return (
     <div className="w-full">
-      <DataFilesList files={imuFiles || []} onDataChange={refreshData} />
+      <DataFilesList files={imuFiles || []} totalCount={totalCount} />
     </div>
   )
 }

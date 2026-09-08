@@ -79,6 +79,13 @@ CREATE TABLE IF NOT EXISTS rides (
   merged_vtx_file_size_bytes BIGINT,
   merged_at TIMESTAMPTZ,
 
+  -- Prerendered route shape (migration 011). Normalized SVG path in a fixed
+  -- 0..1000 viewBox, aspect preserved, ~150 points; NULL when there is no
+  -- drawable GPS track. Generated at FIT parse time so list thumbnails do not
+  -- have to download and parse the FIT file per card.
+  route_path TEXT,
+  route_bounds JSONB,
+
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

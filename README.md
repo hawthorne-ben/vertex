@@ -11,7 +11,7 @@
 
 Vertex is a full-stack telemetry platform built around a custom ESP32 IMU device. The system captures 6-DOF inertial data (accelerometer + gyroscope) at up to 104Hz, serializes it into a compact custom binary format (`.vtx`), stores it onboard or streams it via BLE, and uploads to a cloud pipeline that performs multi-pass digital signal processing and persists results to a time-series PostgreSQL schema.
 
-The primary engineering challenge is **physical signal quality**: road vibration occupies 40–100Hz, IMU gyroscopes saturate under prolonged mechanical noise, and the magnetometer is unreliable near bike frames and vehicle infrastructure. Sensor mode selection, firmware filtering, and cloud-side DSP each address a different layer of this constraint.
+The primary engineering challenge is **physical signal quality**: road vibration occupies 40–100Hz, and gyro bias drifts enough that integrated orientation is unusable without an absolute reference to correct against. Sensor mode selection, firmware filtering, and cloud-side DSP each address a different layer of this constraint.
 
 The web frontend is a visualization mid-tier for DSP outputs. It does not define the system.
 
@@ -24,7 +24,7 @@ The web frontend is a visualization mid-tier for DSP outputs. It does not define
 Two hardware generations exist. Both output the same `.vtx` binary format.
 
 **V1 — ESP32 + BNO055 (6DoF, legacy)**
-The BNO055's magnetometer proved unusable in a cycling environment: ferromagnetic interference from the bike frame, passing vehicles, and road infrastructure corrupted heading data, forcing operation in 6DoF-only mode with yaw drift corrected in post-processing. V2 was built to address the 25Hz sample rate ceiling and the constraints of BLE streaming.
+The BNO055's fused orientation output proved unreliable in a cycling environment: heading was consistently wrong and pitch drifted substantially over a ride. The device was run in 6DoF mode (accel + gyro, no magnetometer). The root cause of the heading error was never independently diagnosed — magnetometer data was not checked in isolation. V2 was built to address the 25Hz sample rate ceiling and the constraints of BLE streaming, and dropped onboard fusion entirely once orientation stopped being a requirement.
 
 **V2 — ESP32-S3 Mini + LSM6DS3 (6DoF, current)**
 Sensor: ST LSM6DS3 at native 104Hz ODR — `+/−8g` accelerometer, `+/−1000 dps` gyroscope, configured via direct register writes over I2C (400kHz). The FIFO is set to continuous mode with a 60-sample threshold, batched to the MCU every 100ms (~10 samples per read, decoupling SD write latency from sensor timing). Raw 16-bit register values are converted to physical units on-device using fixed sensitivity constants (`0.000244 × 9.80665 m/s²/LSB` for accel, `0.035 deg/s/LSB` for gyro), then mapped from chip axes to a standard body frame before being packed into 28-byte `IMURecord` structs and written to SD card over SPI (16MHz). No BLE data streaming — BLE is a control interface only (start/stop recording, clock sync, trigger upload). CPU runs at 80MHz during recording; scales to 240MHz for WiFi upload. Battery ADC on GPIO 4 through a 100K/100K divider tapping the TP4057 charger output before the Schottky isolation diode; 8-sample averaging with empirical calibration factor.

@@ -1,6 +1,7 @@
 import { inngest } from '@/inngest/client'
 import { createClient } from '@supabase/supabase-js'
 import FitParser from 'fit-file-parser'
+import { buildRoutePath } from '@/lib/utils/route-path'
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -290,7 +291,14 @@ export const parseFitFile = inngest.createFunction(
         // so the per-point arrays don't cross the step boundary.
         const ridingAnalysis = FitRidingTimeFilter.filterRidingTime(dataPoints)
 
+        // Prerendered route shape, so list thumbnails never re-parse the FIT.
+        // Returns null for a ride with no drawable track, which is stored as
+        // NULL and renders as no thumbnail.
+        const routeShape = buildRoutePath(dataPoints)
+
         return {
+          routePath: routeShape?.path ?? null,
+          routeBounds: routeShape?.bounds ?? null,
           metadata: {
             start_time: startTime,
             end_time: endTime,
@@ -386,6 +394,10 @@ export const parseFitFile = inngest.createFunction(
           duration_seconds: rideDurationSeconds,
           distance_meters: distanceMeters,
           elevation_gain_meters: elevationGainMeters,
+          // Refreshed on re-parse too: if a ride is re-parsed after the track
+          // changed, a stale shape would otherwise persist indefinitely.
+          route_path: extractedData.routePath,
+          route_bounds: extractedData.routeBounds,
         }
 
         // Is this recording already linked to a ride? Use limit(1) rather than

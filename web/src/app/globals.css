@@ -280,6 +280,53 @@
     box-shadow: 0 1px 0 0 rgba(0, 0, 0, 0.4);
   }
 
+  /*
+   * Frosted overlay for a list whose contents are being replaced (a page
+   * fetch). The rows underneath stay in place and legible-but-blurred, so the
+   * list reads as momentarily stale rather than gone — same treatment as
+   * .glass-header, which is why the blur radius and alphas match it.
+   *
+   * The wrapper is position:relative; this is the ::after that covers it.
+   */
+  .glass-busy {
+    position: relative;
+  }
+
+  /*
+   * Opt out of browser scroll anchoring for a paged list.
+   *
+   * Pages differ in height (the last one is short), so replacing a short page
+   * with a full one grows the document and the browser slides the viewport to
+   * keep its anchor element in view — you land exactly the height difference
+   * away. Correcting that after the fact is a race; declining the behaviour
+   * outright is not.
+   */
+  .paged-list,
+  .paged-list * {
+    overflow-anchor: none;
+  }
+
+  .glass-busy::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    pointer-events: none;
+    @apply backdrop-blur-md;
+    background: rgba(255, 255, 255, 0.05);
+    /* Fade the frost in rather than snapping, matching card-interactive. */
+    animation: glass-busy-in 300ms ease forwards;
+  }
+
+  .dark .glass-busy::after {
+    background: rgba(0, 0, 0, 0.2);
+  }
+
+  @keyframes glass-busy-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
   /* Leaflet zoom controls - glass effect with transparent until hover */
   .leaflet-control-zoom {
     border: none !important;
