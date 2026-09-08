@@ -134,6 +134,37 @@ class NotificationService {
   }
 
   /**
+   * Dismiss the recording notification and release the foreground service.
+   *
+   * On Android, cancelNotification() alone is NOT enough: a notification
+   * created with asForegroundService:true is bound to a running service, and
+   * Android re-posts it because a foreground service must display one. The
+   * service has to be stopped, and the runner promise registered in index.js
+   * has to be resolved, or the notification comes straight back.
+   *
+   * Use this everywhere a recording ends. hideRecordingNotification() on its
+   * own is only correct on iOS.
+   */
+  async stopRecordingNotification(): Promise<void> {
+    if (Platform.OS === 'android') {
+      try {
+        await this.stopForegroundService();
+      } catch (error) {
+        console.error('[NotificationService] stopForegroundService failed:', error);
+      }
+      // Resolves the promise returned by the runner registered in index.js.
+      // globalThis rather than `global` — this module does not pull in the RN
+      // global type declarations that RecordingService.ts happens to get.
+      (globalThis as any).__stopForegroundService?.();
+      // Belt and braces: the service should have taken the notification with
+      // it, but cancel explicitly in case it was posted without the service.
+      await this.hideRecordingNotification();
+    } else {
+      await this.hideRecordingNotification();
+    }
+  }
+
+  /**
    * Show connection lost notification (one-time alert)
    */
   async showConnectionLostNotification(deviceName: string | null): Promise<void> {

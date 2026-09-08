@@ -277,10 +277,38 @@ No ACK needed — BLE GATT notifications are reliable (link-layer retransmit). I
 - [x] BLE file deletion (CMD_DELETE_FILE)
 - [x] BLE device reset (CMD_RESET)
 - [x] VTX files validated end-to-end: device → SD card → web app upload → chart display
+- [x] **FIFO reads**: LSM6DS3 FIFO runs in continuous mode at 104Hz ODR
+      (`FIFO_CTRL5 = 0x26`, no decimation). `readFIFO()` drains whatever is
+      queued each `loop()` iteration.
+
+      **Measured behavior: ~1 sample per read, not ~10.** `loop()` runs with
+      no delay, so it out-runs sample production and normally finds a single
+      sample waiting. Across 6.6M samples in the V2 corpus, 98.9% of samples
+      carry a unique timestamp; multi-sample reads account for 1.1% and appear
+      only when the loop stalls (SD write, BLE status push, WiFi tick) and a
+      backlog accumulates. Longest observed run: 25 samples.
+
+      So the FIFO is a **stall safety net, not the batching mechanism**. It
+      decouples SD-write latency from sensor timing by absorbing backlogs; it
+      does not reduce I2C traffic in steady state, because the reads happen one
+      sample at a time regardless.
+
+      `IMU_FIFO_THRESHOLD` (60 samples, `config.h`) documents the intended
+      watermark and sizes the headroom argument — 60 samples is ~577ms of data
+      against a worst-case loop of tens of ms. Note it is **not currently
+      referenced by any code**: continuous mode plus an unconditional drain
+      means nothing waits for the watermark. The run-length distribution of
+      duplicate timestamps is therefore a direct measurement of loop-stall
+      frequency and duration.
+
+      Because one `millis()` value is stamped on every sample in a read
+      (`sensor_manager.cpp:107,121`), multi-sample reads produce duplicate
+      timestamps. These are reconstructed in post-processing rather than
+      fabricated on-device — see `reconstructTimestamps()` in
+      `packages/vtx-parser`.
 
 ### TODO
 
-- [ ] **FIFO batch reads**: Currently polling one sample per loop iteration. Should configure LSM6DS3 FIFO (watermark threshold, continuous mode) and burst-read batches of ~10 samples. This reduces I2C overhead and prevents sample drops if the loop stalls.
 - [ ] **Battery ADC**: Voltage divider (100K/100K from BAT+ to GPIO4) is documented in BUILD.md. Set `BATTERY_ADC_PIN` to `4` in config.h once wired, implement `getBatteryVoltage()` in power_manager. Note: tap BAT+ before the Schottky diode so the reading reflects true battery voltage.
 - [ ] **App-side BLE client**: Update companion app to discover V2, send commands, receive file transfers, upload to cloud.
 - [ ] **File transfer validation**: Test full BLE transfer of a real recording and verify byte-for-byte match with SD card file.

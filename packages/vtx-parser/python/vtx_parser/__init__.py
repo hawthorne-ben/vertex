@@ -11,6 +11,16 @@ from .clock_drift import (
     detect_clock_steps,
     to_observation,
 )
+from .timestamp_reconstruction import (
+    BatchRun,
+    TimestampGap,
+    TimestampQualityReport,
+    TimestampReconstructionResult,
+    find_batch_runs,
+    reconstruct_and_correct,
+    reconstruct_record_timestamps,
+    reconstruct_timestamps,
+)
 from .types import (
     VTXHeader,
     VTXMetadata,
@@ -21,7 +31,7 @@ from .types import (
     VTX_CONSTANTS,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     "VTXDecoder",
@@ -38,6 +48,14 @@ __all__ = [
     "compute_clock_drift",
     "detect_clock_steps",
     "to_observation",
+    "BatchRun",
+    "TimestampGap",
+    "TimestampQualityReport",
+    "TimestampReconstructionResult",
+    "find_batch_runs",
+    "reconstruct_timestamps",
+    "reconstruct_record_timestamps",
+    "reconstruct_and_correct",
     "RecordFormatFlags",
     "VTX_CONSTANTS",
 ]

@@ -61,8 +61,7 @@ bool isClockSynced() {
 // drive it deterministically. Only the pin read and the clock stay here.
 static ButtonState _button = {0, false, false};
 
-// Returns: 0 = no press, 1 = short press, 2 = long press
-int checkButtonPress() {
+ButtonEvent checkButtonPress() {
   bool pressed = (digitalRead(USER_BUTTON_PIN) == LOW);
   return vtxButtonUpdate(&_button, pressed, millis());
 }
@@ -127,8 +126,32 @@ uint32_t getRecordingElapsedSecs() {
 void startRecording() {
   if (state != STATE_IDLE) return;
 
+  // Fail fast rather than producing an empty file. A dead IMU used to let a
+  // recording start, blink the LED for two hours, and yield a valid .vtx
+  // containing zero records — a silent failure discovered only after the ride.
+  if (!sensor.isHealthy() || !storage.isReady()) {
+    Serial.printf("[REC] Refused — IMU %s, SD %s\n",
+                  sensor.isHealthy() ? "ok" : "FAILED",
+                  storage.isReady() ? "ok" : "FAILED");
+    state = STATE_FAULT;
+    return;
+  }
+
   if (!_clockSynced) {
     Serial.println("[REC] Clock not synced — using default epoch");
+  }
+
+  // Capacity is predictable: 10.0 MB/hour. Refuse to start a session there is
+  // not room to finish rather than cutting it off mid-ride.
+  if (!storage.hasSpaceToStart()) {
+    Serial.printf("[REC] Refused — %lu MB free, need %d MB (~%lu min of recording left)\n",
+                  (unsigned long)storage.getFreeSpaceMBCached(), SD_MIN_START_MB,
+                  (unsigned long)storage.getRemainingSecondsCached() / 60);
+    return;
+  }
+  if (storage.isSpaceLow()) {
+    Serial.printf("[REC] Warning — only ~%lu min of space left\n",
+                  (unsigned long)storage.getRemainingSecondsCached() / 60);
   }
 
   sensor.resetTimestamp();
@@ -153,6 +176,14 @@ void stopRecording() {
   Serial.println("[REC] Stopped");
 }
 
+// Stop any active recording, then power down. Single path so the battery
+// cutoff and the long press cannot diverge — closing a file before cutting
+// power is the part that must never be skipped.
+static void shutdownWith(const char* reason) {
+  stopRecording();          // safe unconditionally: no-ops unless recording
+  power.shutdown(reason);
+}
+
 // ===== Setup & Loop =====
 
 void setup() {
@@ -172,45 +203,63 @@ void setup() {
   ble.init();
   wifiManager.init();
 
-  if (!sensorOk) {
-    Serial.println("[WARN] IMU init failed — check LSM6DS3 wiring");
-  }
-  if (!sdOk) {
-    Serial.println("[WARN] SD init failed — check card/wiring");
+  // Critical path: without the IMU there is nothing to record, without the SD
+  // card there is nowhere to put it. Either one means recording cannot succeed,
+  // so enter STATE_FAULT and show red rather than logging to a serial port
+  // nobody is watching.
+  //
+  // BLE and WiFi are deliberately NOT gated here: they are auxiliary. Losing
+  // BLE costs remote control (the button still works); WiFi only matters at
+  // upload time, long after the ride. Note their init() calls return void, so
+  // their failures are currently invisible — see notes/firmware-deep-dive.md.
+  if (!sensorOk || !sdOk) {
+    if (!sensorOk) Serial.println("[FAULT] IMU init failed — check LSM6DS3 wiring");
+    if (!sdOk)     Serial.println("[FAULT] SD init failed — check card/wiring");
+    state = STATE_FAULT;
   }
 
   // NOTE: setCpuFrequencyMhz(80) after BLE init kills NimBLE advertising
   // on ESP32-S3 with core 3.3.6. Leave at 240MHz until root-caused.
   // setCpuFrequencyMhz(CPU_MHZ_NORMAL);
-  Serial.println("[READY] Idle — press BOOT button or send BLE command to record\n");
+  if (state == STATE_FAULT) {
+    Serial.println("[FAULT] Recording disabled. LED red. Fix hardware and reset,");
+    Serial.println("        or long-press to shut down.\n");
+  } else {
+    Serial.println("[READY] Idle — press BOOT button or send BLE command to record\n");
+  }
 }
 
 void loop() {
   // Check battery / shutdown
   if (power.shouldShutdown()) {
-    if (state == STATE_RECORDING) {
-      stopRecording();
-    }
-    power.shutdown();
+    shutdownWith("Battery cutoff");
     return;
   }
 
   // Button: short press = toggle recording, long press = shutdown
-  int btn = checkButtonPress();
-  if (btn == 2) {
-    Serial.println("[PWR] Long press — shutting down");
-    if (state == STATE_RECORDING) {
-      stopRecording();
-    }
-    power.shutdown("Long press");
-    return;
-  }
-  if (btn == 1) {
-    if (state == STATE_IDLE) {
-      startRecording();
-    } else if (state == STATE_RECORDING) {
-      stopRecording();
-    }
+  switch (checkButtonPress()) {
+    case BTN_LONG:
+      // Works from every state, STATE_FAULT included — powering down must
+      // never depend on the device being healthy.
+      Serial.println("[PWR] Long press — shutting down");
+      shutdownWith("Long press");
+      return;
+
+    case BTN_SHORT:
+      switch (state) {
+        case STATE_IDLE:      startRecording(); break;
+        case STATE_RECORDING: stopRecording();  break;
+        case STATE_FAULT:
+          Serial.println("[FAULT] Recording unavailable — IMU or SD card failed");
+          break;
+        case STATE_UPLOADING:
+          Serial.println("[BTN] Ignored — upload in progress");
+          break;
+      }
+      break;
+
+    case BTN_NONE:
+      break;
   }
 
   // Process BLE commands
@@ -220,6 +269,25 @@ void loop() {
   int samplesRead = sensor.readFIFO();
 
   switch (state) {
+    case STATE_FAULT: {
+      power.updateFaultLED(LED_BLINK_FAULT);
+
+      // Allow recovery without a reset: an SD card seated after boot, or an
+      // IMU that answers WHO_AM_I on a retry, clears the fault. The IMU is
+      // re-probed at a slow cadence so a hard failure does not spam I2C.
+      static unsigned long lastRetry = 0;
+      if (millis() - lastRetry >= 5000) {
+        lastRetry = millis();
+        bool sdNow = storage.isReady() || storage.init();
+        bool imuNow = sensor.isHealthy() || sensor.init();
+        if (sdNow && imuNow) {
+          Serial.println("[FAULT] Cleared — subsystems healthy, returning to idle");
+          state = STATE_IDLE;
+        }
+      }
+      break;
+    }
+
     case STATE_IDLE: {
       power.updateLED(LED_BLINK_IDLE);
 
@@ -242,9 +310,24 @@ void loop() {
       // sample batch is never delayed behind it.
       serviceClockSync();
 
+      // Stop on our own terms while there is still room to close the file.
+      // Waiting for a write to fail risks failing *inside* patchHeader(),
+      // which would leave an inconsistent header — the one storage failure
+      // that costs the whole recording rather than the tail of it.
+      if (storage.isSpaceCritical()) {
+        Serial.printf("[REC] SD nearly full (%lu MB) — closing file cleanly\n",
+                      (unsigned long)storage.getFreeSpaceMBCached());
+        stopRecording();
+        break;
+      }
+
       if (samplesRead > 0) {
         if (!storage.writeSamples(sensor.getSampleBuffer(), samplesRead)) {
-          Serial.println("[REC] SD write failed — stopping recording");
+          // Either the card filled faster than the 30 s poll saw, or the write
+          // genuinely failed. Both end the recording; the log distinguishes
+          // them so the cause is not guesswork afterwards.
+          Serial.printf("[REC] SD write failed (%lu MB free) — stopping\n",
+                        (unsigned long)storage.getFreeSpaceMB());
           stopRecording();
         }
       }
@@ -261,7 +344,7 @@ void loop() {
         lastStatusPush = millis();
         SyncProgress sp = wifiManager.getProgress();
         int fileCount = storage.listFiles(nullptr, 0);
-        uint16_t freeMb = (uint16_t)storage.getFreeSpaceMB();
+        uint16_t freeMb = (uint16_t)storage.getFreeSpaceMBCached();
         float ax, ay, az;
         sensor.getLatestAccel(ax, ay, az);
         ble.sendStatus(state, power.getBatteryVoltage(), fileCount, freeMb,
@@ -272,7 +355,7 @@ void loop() {
         // Send final status with result before transitioning to idle
         SyncProgress sp = wifiManager.getProgress();
         int fileCount = storage.listFiles(nullptr, 0);
-        uint16_t freeMb = (uint16_t)storage.getFreeSpaceMB();
+        uint16_t freeMb = (uint16_t)storage.getFreeSpaceMBCached();
         float ax2, ay2, az2;
         sensor.getLatestAccel(ax2, ay2, az2);
         ble.sendStatus(STATE_IDLE, power.getBatteryVoltage(), fileCount, freeMb,

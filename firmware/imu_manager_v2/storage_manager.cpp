@@ -54,6 +54,17 @@ bool StorageManager::openNewFile(int64_t wallClockMs) {
 
   _recordCount = 0;
   _syncCount = 0;  // Sync records are per-recording
+
+  // Re-baseline the free-space prediction. _recordCount restarts at 0 here,
+  // but _recordCountAtReconcile still holds the count from the PREVIOUS
+  // recording, and getFreeSpaceMBCached() differences the two in unsigned
+  // arithmetic. Without this, (0 - 30000) wraps to a huge value, usedMb
+  // swamps the cache, and the prediction returns 0 — so the recording stops
+  // instantly with "SD nearly full (0 MB)" on a nearly empty card.
+  _freeMbCacheAt = millis();
+  _freeMbCache = getFreeSpaceMB();
+  _recordCountAtReconcile = 0;
+
   writeVTXHeader(wallClockMs);
 
   Serial.printf("[SD] Recording to %s\n", _currentFileName);
@@ -185,20 +196,35 @@ int StorageManager::listFiles(FileEntry* entries, int maxEntries) {
   File dir = SD.open(LOG_DIR);
   if (!dir || !dir.isDirectory()) return 0;
 
-  int count = 0;
+  // Returns the number of entries WRITTEN, not the number on disk. The two
+  // used to differ: count advanced past maxEntries while only maxEntries slots
+  // were filled, so a caller iterating to the returned count read uninitialised
+  // memory. Callers that need the disk total pass entries=nullptr.
+  int written = 0;
+  int onDisk = 0;
   File file = dir.openNextFile();
   while (file) {
     if (!file.isDirectory()) {
-      if (entries && count < maxEntries) {
-        strncpy(entries[count].name, file.name(), sizeof(entries[count].name) - 1);
-        entries[count].size = file.size();
+      onDisk++;
+      if (entries && written < maxEntries) {
+        // SD.open(LOG_DIR) yields names that may carry the directory prefix
+        // ("/vtx/9_6_2026_123.vtx") depending on core version. Strip it here so
+        // every consumer — BLE, the app's filename date parser, delete-by-name
+        // — sees the same bare form.
+        const char* n = file.name();
+        const char* slash = strrchr(n, '/');
+        if (slash) n = slash + 1;
+        strncpy(entries[written].name, n, sizeof(entries[written].name) - 1);
+        entries[written].name[sizeof(entries[written].name) - 1] = '\0';
+        entries[written].size = file.size();
+        written++;
       }
-      count++;
     }
+    file.close();
     file = dir.openNextFile();
   }
   dir.close();
-  return count;
+  return entries ? written : onDisk;
 }
 
 bool StorageManager::openFileForRead(const char* name) {
@@ -255,6 +281,44 @@ uint32_t StorageManager::getFreeSpaceMB() const {
   if (!_sdReady) return 0;
   return (SD.totalBytes() - SD.usedBytes()) / (1024 * 1024);
 }
+
+uint32_t StorageManager::getFreeSpaceMBCached() {
+  if (!_sdReady) return 0;
+  unsigned long now = millis();
+
+  // Reconcile against the FAT on first call, and periodically thereafter.
+  // The prediction below ignores cluster and directory overhead, so it runs
+  // optimistic; this bounds that error.
+  if (_freeMbCacheAt == 0 || now - _freeMbCacheAt >= SD_SPACE_RECONCILE_MS) {
+    _freeMbCacheAt = now;
+    _freeMbCache = getFreeSpaceMB();
+    _recordCountAtReconcile = _recordCount;
+    return _freeMbCache;
+  }
+
+  // Not recording: nothing is consuming space, so the cached value stands.
+  if (!_writeFile) return _freeMbCache;
+
+  // Recording: predict from bytes written since the last reconciliation. The
+  // device is the only writer while a file is open, and the rate is exact.
+  // Guard the subtraction rather than trusting every caller to keep the two
+  // counters in step: unsigned wrap here is silent and looks like a full card.
+  const uint32_t since = (_recordCount >= _recordCountAtReconcile)
+                             ? (_recordCount - _recordCountAtReconcile)
+                             : 0;
+  uint64_t written = (uint64_t)since * VTX_IMU_RECORD_SIZE;
+  uint32_t usedMb = (uint32_t)(written / (1024ULL * 1024ULL));
+  return usedMb >= _freeMbCache ? 0 : _freeMbCache - usedMb;
+}
+
+uint32_t StorageManager::getRemainingSecondsCached() {
+  uint64_t bytes = (uint64_t)getFreeSpaceMBCached() * 1024ULL * 1024ULL;
+  return (uint32_t)(bytes / SD_BYTES_PER_SECOND);
+}
+
+bool StorageManager::isSpaceLow()      { return getFreeSpaceMBCached() < SD_WARN_MB; }
+bool StorageManager::isSpaceCritical() { return getFreeSpaceMBCached() < SD_CRITICAL_MB; }
+bool StorageManager::hasSpaceToStart() { return getFreeSpaceMBCached() >= SD_MIN_START_MB; }
 
 uint32_t StorageManager::getCurrentFileSize() const {
   return _recordCount * VTX_IMU_RECORD_SIZE;

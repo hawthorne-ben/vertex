@@ -54,13 +54,17 @@ export interface V2RecordingInfo {
 }
 
 export interface V2Status {
-  state: 'idle' | 'recording' | 'uploading';
+  state: 'idle' | 'recording' | 'uploading' | 'fault';
   batteryMv: number;
   fileCount: number;
   freeMb: number;
   clockSynced: boolean;
   sdOk: boolean;
   imuOk: boolean;
+  /** Card below SD_WARN_MB (~12 h of recording left at 10 MB/hour). */
+  spaceLow: boolean;
+  /** Card below SD_CRITICAL_MB — the device stops recording at this point. */
+  spaceCritical: boolean;
   accel?: { x: number; y: number; z: number }; // milli-g
   syncProgress?: V2SyncProgress;
   recordingInfo?: V2RecordingInfo;
@@ -1161,7 +1165,12 @@ class BleService {
    */
   private parseV2Status(data: Uint8Array): V2Status {
     const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
-    const stateMap: Record<number, V2Status['state']> = { 0: 'idle', 1: 'recording', 2: 'uploading' };
+    // 3 = STATE_FAULT: IMU or SD failed init, recording refused (firmware
+    // config.h DeviceState). Without this entry an unmapped value falls
+    // through to 'idle', which would show a faulted device as healthy.
+    const stateMap: Record<number, V2Status['state']> = {
+      0: 'idle', 1: 'recording', 2: 'uploading', 3: 'fault',
+    };
     const status: V2Status = {
       state: stateMap[data[0]] || 'idle',
       batteryMv: dv.getUint16(1, true),
@@ -1170,12 +1179,19 @@ class BleService {
       clockSynced: data[7] === 1,
       sdOk: true,
       imuOk: true,
+      spaceLow: false,
+      spaceCritical: false,
     };
 
     if (data.length >= 15) {
       const flags = data[8];
       status.sdOk = (flags & 0x01) !== 0;
       status.imuOk = (flags & 0x02) !== 0;
+      // bit2/bit3: card below SD_WARN_MB / SD_CRITICAL_MB. At 10 MB/hour the
+      // device stops itself at critical, so this is advance notice, not an
+      // error — surface it before the ride, not after.
+      status.spaceLow = (flags & 0x04) !== 0;
+      status.spaceCritical = (flags & 0x08) !== 0;
       status.accel = {
         x: dv.getInt16(9, true),
         y: dv.getInt16(11, true),

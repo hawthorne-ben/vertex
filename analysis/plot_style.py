@@ -98,9 +98,10 @@ def figure(
     return fig, axes
 
 
-def save(fig, name: str, subdir: str = "", also_pdf: bool = False) -> Path:
+def save(fig, name: str, subdir: str = "", also_pdf: bool = False,
+         transparent: bool = False) -> Path:
     """
-    Save a figure into analysis/figures/ with deck-ready settings.
+    Save a figure into analysis/figures/.
 
     Args:
         name: filename stem. Prefix with the slide number for ordering,
@@ -108,16 +109,23 @@ def save(fig, name: str, subdir: str = "", also_pdf: bool = False) -> Path:
         subdir: optional subdirectory under figures/.
         also_pdf: additionally write a vector PDF (useful for diagrams that
             may be scaled up, or for print).
+        transparent: pass True for the final slide asset so it drops onto any
+            slide background. Default False writes an opaque white background,
+            which is what you want while reviewing — a transparent PNG in a
+            dark image viewer makes the dark series invisible.
 
     Returns the PNG path.
     """
     out_dir = FIGURES_DIR / subdir if subdir else FIGURES_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    kw = dict(transparent=True) if transparent else dict(
+        transparent=False, facecolor="white", edgecolor="none")
+
     png = out_dir / f"{name}.png"
-    fig.savefig(png, transparent=True)
+    fig.savefig(png, **kw)
     if also_pdf:
-        fig.savefig(out_dir / f"{name}.pdf", transparent=True)
+        fig.savefig(out_dir / f"{name}.pdf", **kw)
 
     print(f"  wrote {png.relative_to(_HERE.parent)}")
     return png

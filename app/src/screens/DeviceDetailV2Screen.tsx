@@ -41,12 +41,56 @@ import { BackButton, Button, Card, ConfirmDialog } from '../components/ui';
 import Inclinometer from '../components/Inclinometer';
 import { API_URL, DEVICE_API_KEY } from '@env';
 import BleService, { V2Status, V2FileEntry, V2SyncProgress } from '../services/BleService';
+import NotificationService from '../services/NotificationService';
 import { useAuth } from '../contexts/AuthContext';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { useDeviceStore } from '../stores/deviceStore';
 
 type DeviceDetailV2RouteProp = RouteProp<RootStackParamList, 'DeviceDetailV2'>;
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
+
+// Sort key from a recording filename: "M_D_YYYY_msInDay.vtx".
+//
+// Mirrors vtxFilenameSortKey() in firmware/imu_manager_v2/vtx_format.h. The
+// previous version split on '_' without stripping the directory prefix, so a
+// name like "/vtx/9_6_2026_123.vtx" still yielded 4 parts and +'/vtx/9' was
+// NaN — every key became NaN, every comparison false, and the list rendered in
+// arbitrary order. Firmware now strips the prefix before sending; this handles
+// it too, so an older device build cannot reintroduce the bug.
+//
+// Returns -1 for unparseable names so they sort last rather than randomly.
+function fileSortKey(name: string): number {
+  const bare = (name.split('/').pop() ?? name).replace(/\.vtx$/i, '');
+  const parts = bare.split('_');
+  if (parts.length !== 4) return -1;
+  const [mon, day, year, ms] = parts.map(Number);
+  if (![mon, day, year, ms].every(Number.isFinite)) return -1;
+  if (mon < 1 || mon > 12 || day < 1 || day > 31 || year < 2000) return -1;
+  return Date.UTC(year, mon - 1, day) + ms;
+}
+
+// mm:ss (or h:mm:ss past an hour) for the recording notification.
+function formatDuration(totalSecs: number): string {
+  const h = Math.floor(totalSecs / 3600);
+  const m = Math.floor((totalSecs % 3600) / 60);
+  const sec = totalSecs % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${pad(m)}:${pad(sec)}`;
+}
+
+// Firmware refuses to record for a handful of reasons; the status flags say
+// which. Without this the UI reports success for a recording that never began.
+function describeRefusal(s: V2Status): string {
+  if (s.state === 'fault') {
+    if (!s.imuOk) return 'Device fault: IMU not responding';
+    if (!s.sdOk) return 'Device fault: SD card not detected';
+    return 'Device fault — recording unavailable';
+  }
+  if (s.spaceCritical) return `SD card full (${s.freeMb} MB free)`;
+  if (s.spaceLow) return `Not enough space to start (${s.freeMb} MB free)`;
+  if (s.state === 'uploading') return 'Upload in progress';
+  return 'Device did not start recording';
+}
 
 const DeviceDetailV2Screen: React.FC = () => {
   const insets = useSafeAreaInsets();
@@ -60,8 +104,13 @@ const DeviceDetailV2Screen: React.FC = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [status, setStatus] = useState<V2Status | null>(null);
+  const timeReqUnsubRef = useRef<(() => void) | null>(null);
   const [files, setFiles] = useState<V2FileEntry[]>([]);
   const [clockSynced, setClockSynced] = useState(false);
+  // Distinguishes "sync has not run yet" from "sync ran and failed". Without
+  // this the warning shows during the normal one-second window between
+  // connecting and syncing, which reads as a fault.
+  const [clockSyncAttempted, setClockSyncAttempted] = useState(false);
 
   // WiFi setup
   const [showWifiModal, setShowWifiModal] = useState(false);
@@ -89,6 +138,76 @@ const DeviceDetailV2Screen: React.FC = () => {
   const statusPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Connection listener
+  // Android needs a foreground service to keep the process alive while the
+  // phone is pocketed, or Doze throttles the BLE callback that answers the
+  // device's 60 s clock-sync requests — the responder dies and the ride loses
+  // drift correction. iOS relies on the `bluetooth-central` background mode
+  // instead. This mirrors what RecordScreen already does for V1; the V2 flow
+  // was built on a new screen and never inherited it.
+  useEffect(() => {
+    const recording = status?.state === 'recording';
+    if (recording) {
+      NotificationService.showRecordingNotification(
+        isConnected,
+        deviceName ?? 'Vertex-V2',
+        formatDuration(displaySecs),
+        status?.recordingInfo?.fileBytes ?? 0,
+        deviceId
+      );
+    } else {
+      // Must stop the service, not just cancel the notification — Android
+      // re-posts a foreground service's notification if the service lives on.
+      NotificationService.stopRecordingNotification();
+    }
+  }, [status?.state, isConnected]);
+
+  // Keep the notification's elapsed time current without restarting the
+  // service — updateRecordingNotification reuses the existing one.
+  //
+  // `status?.state` MUST be in the dependency array even though it is only
+  // read in a guard. With only [displaySecs], this effect closed over a stale
+  // `status` from the previous render: a tick landing just after the state
+  // flipped to idle would still see 'recording', call update(), and recreate
+  // the notification the hide effect had just dismissed. That is the
+  // "notification survives stop" bug.
+  useEffect(() => {
+    if (status?.state !== 'recording') return;
+    NotificationService.updateRecordingNotification(
+      isConnected,
+      deviceName ?? 'Vertex-V2',
+      formatDuration(displaySecs),
+      status?.recordingInfo?.fileBytes ?? 0,
+      deviceId
+    );
+  }, [displaySecs, status?.state, isConnected]);
+
+  // Stop the service if the screen unmounts mid-recording.
+  useEffect(() => () => { NotificationService.stopRecordingNotification(); }, []);
+
+  // Periodic clock-sync responder. The device notifies [0xF0][t1] every 60 s
+  // while recording and needs a reply within CLOCK_SYNC_TIMEOUT_MS (2 s), so
+  // this must be live for the whole session — not just while the record screen
+  // happens to be doing something. Resubscribes on reconnect because the
+  // monitor is bound to the connected device.
+  useEffect(() => {
+    if (!isConnected) {
+      timeReqUnsubRef.current?.();
+      timeReqUnsubRef.current = null;
+      return;
+    }
+    timeReqUnsubRef.current = BleService.subscribeToTimeRequests();
+    return () => {
+      timeReqUnsubRef.current?.();
+      timeReqUnsubRef.current = null;
+    };
+  }, [isConnected]);
+
+  useEffect(() => {
+    NotificationService.requestPermissions().then((granted) => {
+      if (granted) NotificationService.initialize();
+    });
+  }, []);
+
   useEffect(() => {
     isMountedRef.current = true;
 
@@ -198,6 +317,25 @@ const DeviceDetailV2Screen: React.FC = () => {
         setStatus(s);
         setClockSynced(s.clockSynced);
       }
+
+      // Sync the clock if the device has not got one yet. Nothing did this
+      // before: the screen only *read* clockSynced, so a freshly booted device
+      // sat showing "Clock not synced" until the user pressed record — which
+      // fixed it as a side effect, and made the warning look like a reason not
+      // to record. Sync is idempotent and costs one BLE write, so doing it here
+      // is cheap; the pre-record sync stays as the freshness guarantee.
+      if (!s.clockSynced) {
+        try {
+          await BleService.syncClockV2();
+          if (isMountedRef.current) setClockSynced(true);
+        } catch (e: any) {
+          console.warn('[V2] Connect-time clock sync failed:', e?.message);
+        } finally {
+          if (isMountedRef.current) setClockSyncAttempted(true);
+        }
+      } else if (isMountedRef.current) {
+        setClockSyncAttempted(true);
+      }
     } catch (e: any) {
       console.warn('[V2] Status fetch failed:', e?.message);
     }
@@ -222,20 +360,43 @@ const DeviceDetailV2Screen: React.FC = () => {
     }
   };
 
+
+  // A generic block: any state or condition where firmware will refuse.
+  // Keeping this in one place means a new blocking condition needs one edit,
+  // not one per call site.
+  const canRecord =
+    status?.state === 'idle' && status?.sdOk !== false &&
+    status?.imuOk !== false && !status?.spaceCritical;
+
   const handleStartRecording = async () => {
     try {
       // Always sync clock before recording to ensure accurate timestamps
+      // Re-sync before every recording. The connect-time sync may be hours
+      // stale, and the file's start_timestamp is written at open — so this is
+      // the last moment it can be corrected.
       try {
         await BleService.syncClockV2();
         if (isMountedRef.current) setClockSynced(true);
       } catch {
-        // Non-fatal — proceed with recording even if sync fails
+        // Non-fatal: the recording is still worth having, its wall-clock
+        // timestamps just may not be. The banner reflects that.
         console.warn('[V2] Pre-record clock sync failed');
+        if (isMountedRef.current) setClockSynced(false);
       }
       await BleService.startRecordingV2();
-      showToast({ message: 'Recording started', variant: 'success', duration: 2000 });
+
+      // The BLE write resolving only means the command was delivered. Firmware
+      // refuses to start when the IMU or SD card is unhealthy, or when there
+      // is not enough space left for a useful session — so confirm the device
+      // actually entered RECORDING before telling the user it did.
       const s = await BleService.getStatusV2();
       if (isMountedRef.current) setStatus(s);
+
+      if (s.state === 'recording') {
+        showToast({ message: 'Recording started', variant: 'success', duration: 2000 });
+      } else {
+        showToast({ message: describeRefusal(s), variant: 'error' });
+      }
     } catch (e: any) {
       showToast({ message: `Failed to start recording: ${e?.message}`, variant: 'error' });
     }
@@ -244,6 +405,11 @@ const DeviceDetailV2Screen: React.FC = () => {
   const handleStopRecording = async () => {
     try {
       await BleService.stopRecordingV2();
+      // Dismiss straight away. The state-driven effect would also do this once
+      // the next poll reports idle, but that is up to 500 ms of a notification
+      // for a recording the user has already stopped. Idempotent, so the
+      // effect firing afterwards is harmless.
+      NotificationService.stopRecordingNotification();
       showToast({ message: 'Recording stopped', variant: 'success', duration: 2000 });
       // Refresh status and files after a short delay to let firmware finalize
       setTimeout(refreshAll, 500);
@@ -282,6 +448,10 @@ const DeviceDetailV2Screen: React.FC = () => {
     }
   };
 
+  // No longer bound to a button — clock sync runs automatically on connect and
+  // before each recording. Kept as a manual escape hatch for debugging a device
+  // whose clock will not take.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleSyncClock = async () => {
     try {
       await BleService.syncClockV2();
@@ -605,11 +775,13 @@ const DeviceDetailV2Screen: React.FC = () => {
           ) : (
             <View style={{ gap: 12 }}>
               <TouchableOpacity
-                style={[styles.recordButton, { backgroundColor: theme.colors.primary, opacity: status?.state === 'uploading' ? 0.5 : 1 }]}
+                style={[styles.recordButton, { backgroundColor: theme.colors.primary, opacity: canRecord ? 1 : 0.5 }]}
                 onPress={handleStartRecording}
-                disabled={status?.state === 'uploading'}>
-                <Text style={[styles.recordButtonText, { color: theme.colors.primaryForeground }]}>Start Recording</Text>
-                <Clock size={14} color={clockSynced ? '#22c55e' : '#f59e0b'} />
+                disabled={!canRecord}>
+                <Text style={[styles.recordButtonText, { color: theme.colors.primaryForeground }]}>
+                  {status?.state === 'fault' ? 'Device Fault' :
+                   status?.spaceCritical ? 'SD Card Full' : 'Start Recording'}
+                </Text>
               </TouchableOpacity>
               <Button
                 variant="secondary"
@@ -647,7 +819,9 @@ const DeviceDetailV2Screen: React.FC = () => {
           <>
             <View style={styles.sectionHeader}>
               <Text style={[styles.sectionTitle, { color: theme.colors.textPrimary }]}>
-                Files ({files.length})
+                {(status?.fileCount ?? 0) > files.length
+                  ? `Files (${files.length} of ${status?.fileCount} on device)`
+                  : `Files (${files.length})`}
               </Text>
             </View>
 
@@ -658,15 +832,7 @@ const DeviceDetailV2Screen: React.FC = () => {
             ) : (
               <Card variant="default" padding="none" style={styles.card} header={null}>
                 <FlatList
-                  data={[...files].sort((a, b) => {
-                    const parse = (n: string) => {
-                      const m = n.replace('.vtx', '').split('_');
-                      return m.length === 4
-                        ? new Date(+m[2], +m[0] - 1, +m[1]).getTime() + +m[3]
-                        : 0;
-                    };
-                    return parse(b.name) - parse(a.name);
-                  })}
+                  data={[...files].sort((a, b) => fileSortKey(b.name) - fileSortKey(a.name))}
                   renderItem={renderFileItem}
                   keyExtractor={(item) => item.name}
                   scrollEnabled={false}
@@ -679,14 +845,19 @@ const DeviceDetailV2Screen: React.FC = () => {
         {/* Quick Actions — inline row below files */}
         {isConnected && !showWifiModal && !isSyncing && (
           <View style={styles.quickActionsRow}>
-            <TouchableOpacity
-              style={[styles.quickAction, { borderColor: theme.colors.border, flex: 1 }]}
-              onPress={handleSyncClock}>
-              <Clock size={16} color={clockSynced ? theme.colors.success : theme.colors.warning} />
-              <Text style={[styles.quickActionText, { color: theme.colors.textSecondary }]}>
-                {clockSynced ? 'Clock Synced' : 'Sync Clock'}
-              </Text>
-            </TouchableOpacity>
+            {/* Clock sync is plumbing: it runs on connect and again before
+                every recording, so there is nothing for the user to operate.
+                Surface it only when it has never succeeded — that is the one
+                case where it changes what the data means (timestamps fall back
+                to the firmware's default epoch). Passive warning, not a CTA. */}
+            {clockSyncAttempted && !clockSynced && (
+              <View style={[styles.quickAction, { borderColor: theme.colors.warning, flex: 1 }]}>
+                <Clock size={16} color={theme.colors.warning} />
+                <Text style={[styles.quickActionText, { color: theme.colors.warning }]}>
+                  Clock not synced
+                </Text>
+              </View>
+            )}
             <TouchableOpacity
               style={[styles.quickAction, { borderColor: theme.colors.border, flex: 1 }]}
               onPress={() => setShowWifiModal(true)}>

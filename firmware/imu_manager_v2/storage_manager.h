@@ -56,6 +56,9 @@ public:
   uint16_t getSyncRecordCount() const { return _syncCount; }
 
   // File listing and transfer
+  // With entries != nullptr: fills at most maxEntries and returns how many
+  // were written. With entries == nullptr: returns the total count on disk.
+  // Names are returned bare, without the LOG_DIR prefix.
   int listFiles(FileEntry* entries, int maxEntries);
   bool openFileForRead(const char* name);
   int readFileChunk(uint8_t* buffer, int maxBytes);  // Returns bytes read, 0 = EOF
@@ -64,7 +67,26 @@ public:
 
   // Status
   bool isReady() const { return _sdReady; }
+
+ private:
+  uint32_t _freeMbCache = 0;          // last value read from the FAT
+  unsigned long _freeMbCacheAt = 0;   // when that read happened
+  uint32_t _recordCountAtReconcile = 0;  // record count at that moment
+
+ public:
+  // Uncached: walks the FAT. Do not call in the hot loop.
   uint32_t getFreeSpaceMB() const;
+
+  // Safe to call per loop. Outside a recording this is a plain cached read.
+  // During a recording it is predicted from bytes written since the last
+  // reconciliation, and reconciled against the FAT every
+  // SD_SPACE_RECONCILE_MS.
+  uint32_t getFreeSpaceMBCached();
+  // Estimated recording time left at the known fill rate, in seconds.
+  uint32_t getRemainingSecondsCached();
+  bool isSpaceLow();       // below SD_WARN_MB
+  bool isSpaceCritical();  // below SD_CRITICAL_MB — stop recording
+  bool hasSpaceToStart();  // at least SD_MIN_START_MB free
   uint32_t getCurrentFileSize() const;
   uint32_t getOpenFileSize() const;  // Size of currently open read file
   const char* getCurrentFileName() const;

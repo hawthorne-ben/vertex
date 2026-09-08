@@ -12,7 +12,8 @@
 // ===== VTX Format (must match packages/vtx-parser) =====
 #define VTX_FORMAT_MAJOR 1
 #define VTX_FORMAT_MINOR 2
-#define VTX_MAGIC "VTX"                // 3 bytes + null terminator
+#define VTX_MAGIC "VTX"                // 4 bytes on the wire: 'V','T','X','\0'
+#define VTX_MAGIC_SIZE 4               // must match VTX_CONSTANTS.MAGIC in packages/vtx-constants
 #define VTX_HEADER_SIZE 64
 #define VTX_RECORD_FORMAT 0x03         // HAS_ACCEL (0x01) | HAS_GYRO (0x02)
 #define VTX_COMPRESSION_NONE 0
@@ -33,7 +34,6 @@
 #define CMD_STOP_RECORDING  0x03  // Stop current recording
 #define CMD_LIST_FILES      0x04  // List recorded files on SD
 #define CMD_DELETE_FILE     0x06  // Delete a file from SD
-#define CMD_SET_CONFIG      0x07  // Update device settings
 #define CMD_SET_WIFI        0x08  // [0x08][SSID\0PASSWORD] — provision WiFi credentials
 #define CMD_SYNC_CLOCK      0x09  // Sync wall clock from phone (8 bytes: unix ms int64)
 #define CMD_RESET           0x0A  // Soft reset
@@ -41,7 +41,6 @@
 #define CMD_START_SYNC      0x0C  // Trigger WiFi upload of all files
 #define CMD_CANCEL_SYNC     0x0D  // Abort current WiFi upload
 #define CMD_TIME_RESPONSE   0x0E  // Phone's reply to a periodic time request (16 bytes: t2 int64, t3 int64)
-#define CMD_QUERY_CONFIG    0xFF  // Query current configuration
 
 // ===== BLE Notification Opcodes (device → phone, on FILE_LIST characteristic) =====
 // Distinguished from file listings by a leading opcode byte. File listings
@@ -58,6 +57,9 @@
 // I2C (LSM6DS3)
 #define I2C_SDA_PIN 2
 #define I2C_SCL_PIN 1
+// Not wired. The FIFO is drained by polling, not by interrupt — see
+// notes/firmware-deep-dive.md Module 2e for why (~5,980 ms of FIFO headroom
+// against a worst-case loop of tens of ms). Kept so the pin is documented.
 #define IMU_INT1_PIN 3
 
 // SPI (SD Card)
@@ -88,7 +90,14 @@
 #define IMU_ODR_HZ 104             // Output Data Rate (native 104Hz setting)
 #define IMU_ACCEL_RANGE 8          // +/- 8g (sufficient for cycling dynamics)
 #define IMU_GYRO_RANGE 1000        // +/- 1000 dps
-#define IMU_FIFO_THRESHOLD 60      // Samples in FIFO before read (~10 reads per batch)
+// Intended FIFO watermark: 60 samples is ~577ms of data at 104Hz, sized as
+// headroom against a worst-case loop stall of tens of ms. NOTE: not currently
+// referenced by any code — the FIFO runs in continuous mode and readFIFO()
+// drains whatever is queued, which in practice is ~1 sample per read.
+// Documented intent, not enforced: the FIFO runs in continuous mode and
+// loop() drains it unconditionally, so nothing waits for this watermark.
+// The headroom argument rests on FIFO depth (682 samples), not this value.
+#define IMU_FIFO_THRESHOLD 60
 
 // LSM6DS3 scale factors (raw register value → physical units)
 // Accel: at +/-8g range, sensitivity = 0.244 mg/LSB → multiply by 0.000244 * 9.80665 for m/s²
@@ -99,7 +108,6 @@
 // ===== SD Card Configuration =====
 #define SD_SPI_SPEED 16000000      // 16 MHz SPI clock
 #define LOG_DIR "/vtx"             // Directory for log files
-#define MAX_FILE_SIZE_MB 64        // Rotate files at 64MB
 
 // ===== Button Configuration =====
 #define BUTTON_DEBOUNCE_MS 50
@@ -115,11 +123,35 @@
 #define MAX_SYNC_RECORDS 512           // RAM buffer: 512 * 24B = 12KB, ~8.5h at 60s cadence
 
 // ===== Timing =====
-#define FIFO_POLL_INTERVAL_MS 100  // Read FIFO every 100ms (~10 samples per batch)
-#define IDLE_TIMEOUT_MS 300000     // 5 min idle before auto-stop recording
 #define LED_BLINK_IDLE 2000        // Slow blink when idle
 #define LED_BLINK_RECORDING 500    // Medium blink when recording
 #define LED_BLINK_UPLOADING 100    // Fast blink when uploading via WiFi
+// ── Storage capacity policy ────────────────────────────────────────────────
+// Fill rate is exactly known: 28 B/record x 104 Hz = 2912 B/s = 10.0 MB/hour.
+// That makes remaining capacity a predictable resource — report time left,
+// not just bytes left.
+#define SD_BYTES_PER_SECOND (VTX_IMU_RECORD_SIZE * IMU_ODR_HZ)  // 2912 B/s
+#define SD_MIN_START_MB 60         // refuse to start below ~6 h of headroom
+#define SD_WARN_MB 120             // ~12 h — surfaced to the app as a warning
+#define SD_CRITICAL_MB 20          // ~2 h — stop cleanly at this point
+
+// The two thresholds must not invert. startRecording() gates on
+// SD_MIN_START_MB; the recording loop gates on SD_CRITICAL_MB. If critical
+// were the larger of the two, every start would open a file, stop before the
+// first write, and cleanly close a 0-record .vtx — exactly the silent failure
+// the start guard exists to prevent. Found at the bench 2026-09-06 while
+// raising SD_CRITICAL_MB to make the stop path reachable.
+static_assert(SD_CRITICAL_MB < SD_MIN_START_MB,
+              "SD_CRITICAL_MB must be below SD_MIN_START_MB, or every "
+              "recording starts and immediately closes empty");
+// While recording, free space is PREDICTED from elapsed time at the known
+// fill rate rather than measured — nothing else writes to the card mid-ride,
+// and SD.usedBytes() walks the FAT (tens of ms on a large card). The
+// prediction drifts optimistic because it ignores FAT cluster and directory
+// overhead, so it is reconciled against a real read on this interval.
+#define SD_SPACE_RECONCILE_MS 600000   // 10 min
+#define LED_BLINK_FAULT 150        // Urgent blink, red, when a critical
+                                   // subsystem failed init
 
 // ===== WiFi Upload Configuration =====
 #define WIFI_CONNECT_TIMEOUT_MS 10000  // 10s to connect to WiFi
@@ -138,6 +170,7 @@ enum DeviceState : int {
   STATE_IDLE,       // Waiting — BLE advertising, not recording
   STATE_RECORDING,  // Active recording — FIFO reads + SD writes
   STATE_UPLOADING,  // WiFi upload in progress
+  STATE_FAULT,      // IMU or SD failed at init — recording is refused
 };
 
 #endif // CONFIG_H

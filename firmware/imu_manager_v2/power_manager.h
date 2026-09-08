@@ -20,6 +20,9 @@ public:
 
   // LED state: pass blink interval from config (LED_BLINK_IDLE, etc.)
   void updateLED(int blinkIntervalMs);
+  // Fault indication: red, so a failed IMU or SD is visible before a ride
+  // rather than discovered as an empty file afterwards.
+  void updateFaultLED(int blinkIntervalMs);
 
 private:
   unsigned long _lastBatteryRead;

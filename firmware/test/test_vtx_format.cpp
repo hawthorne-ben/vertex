@@ -166,6 +166,48 @@ TEST(metadata_json_matches_expected_shape) {
 }
 
 // ============================================================
+// 1b. Filename sort key
+// ============================================================
+
+TEST(sort_key_orders_chronologically) {
+  // Same day, later ms sorts later.
+  EXPECT_TRUE(vtxFilenameSortKey("9_6_2026_100.vtx") <
+              vtxFilenameSortKey("9_6_2026_200.vtx"));
+  // Across a month boundary.
+  EXPECT_TRUE(vtxFilenameSortKey("3_13_2026_57329777.vtx") <
+              vtxFilenameSortKey("5_14_2026_22110896.vtx"));
+  // Across a year boundary — the case a naive month-major sort gets wrong.
+  EXPECT_TRUE(vtxFilenameSortKey("12_31_2025_1.vtx") <
+              vtxFilenameSortKey("1_1_2026_1.vtx"));
+}
+
+TEST(sort_key_strips_directory_prefix) {
+  // SD.open(LOG_DIR) may hand back names with or without the prefix depending
+  // on core version. Both must produce the same key, or the app's sort breaks
+  // silently after a core upgrade.
+  EXPECT_EQ_INT(vtxFilenameSortKey("/vtx/9_6_2026_42266036.vtx"),
+                vtxFilenameSortKey("9_6_2026_42266036.vtx"));
+}
+
+TEST(sort_key_rejects_unparseable_names) {
+  // -1 sorts unrecognised files to the front rather than scattering them.
+  EXPECT_EQ_INT(vtxFilenameSortKey("garbage.vtx"), -1);
+  EXPECT_EQ_INT(vtxFilenameSortKey(""), -1);
+  EXPECT_EQ_INT(vtxFilenameSortKey(nullptr), -1);
+  EXPECT_EQ_INT(vtxFilenameSortKey("13_1_2026_0.vtx"), -1);   // month 13
+  EXPECT_EQ_INT(vtxFilenameSortKey("1_32_2026_0.vtx"), -1);   // day 32
+}
+
+TEST(sort_key_round_trips_generated_filenames) {
+  // The generator and the parser must agree: build a name with the firmware's
+  // own formatter, then confirm the key recovers the right ordering.
+  char earlier[64], later[64];
+  vtxBuildFilename(earlier, sizeof(earlier), 1772349000000LL);
+  vtxBuildFilename(later, sizeof(later), 1772349000000LL + 3600000LL);
+  EXPECT_TRUE(vtxFilenameSortKey(earlier) < vtxFilenameSortKey(later));
+}
+
+// ============================================================
 // 2. Header patching
 // ============================================================
 
@@ -414,11 +456,11 @@ TEST(button_short_press_fires_once_on_release) {
   ButtonState s;
   vtxButtonInit(&s);
 
-  EXPECT_EQ_INT(vtxButtonUpdate(&s, false, 0), 0);
-  EXPECT_EQ_INT(vtxButtonUpdate(&s, true, 100), 0);   // down
-  EXPECT_EQ_INT(vtxButtonUpdate(&s, true, 200), 0);   // held, under long press
-  EXPECT_EQ_INT(vtxButtonUpdate(&s, false, 300), 1);  // released -> short press
-  EXPECT_EQ_INT(vtxButtonUpdate(&s, false, 400), 0);  // no repeat
+  EXPECT_EQ_INT(vtxButtonUpdate(&s, false, 0), BTN_NONE);
+  EXPECT_EQ_INT(vtxButtonUpdate(&s, true, 100), BTN_NONE);   // down
+  EXPECT_EQ_INT(vtxButtonUpdate(&s, true, 200), BTN_NONE);   // held, under long press
+  EXPECT_EQ_INT(vtxButtonUpdate(&s, false, 300), BTN_SHORT);  // released -> short press
+  EXPECT_EQ_INT(vtxButtonUpdate(&s, false, 400), BTN_NONE);  // no repeat
 }
 
 TEST(button_sub_debounce_press_is_ignored) {
@@ -427,7 +469,7 @@ TEST(button_sub_debounce_press_is_ignored) {
 
   vtxButtonUpdate(&s, true, 1000);
   // Released after 49ms, under the 50ms debounce threshold.
-  EXPECT_EQ_INT(vtxButtonUpdate(&s, false, 1000 + BUTTON_DEBOUNCE_MS - 1), 0);
+  EXPECT_EQ_INT(vtxButtonUpdate(&s, false, 1000 + BUTTON_DEBOUNCE_MS - 1), BTN_NONE);
 }
 
 TEST(button_press_exactly_at_debounce_threshold_fires) {
@@ -436,7 +478,7 @@ TEST(button_press_exactly_at_debounce_threshold_fires) {
 
   vtxButtonUpdate(&s, true, 1000);
   // The comparison is >=, so exactly 50ms counts as a press.
-  EXPECT_EQ_INT(vtxButtonUpdate(&s, false, 1000 + BUTTON_DEBOUNCE_MS), 1);
+  EXPECT_EQ_INT(vtxButtonUpdate(&s, false, 1000 + BUTTON_DEBOUNCE_MS), BTN_SHORT);
 }
 
 TEST(button_long_press_fires_while_still_held) {
@@ -444,10 +486,10 @@ TEST(button_long_press_fires_while_still_held) {
   vtxButtonInit(&s);
 
   vtxButtonUpdate(&s, true, 0);
-  EXPECT_EQ_INT(vtxButtonUpdate(&s, true, BUTTON_LONG_PRESS_MS - 1), 0);
+  EXPECT_EQ_INT(vtxButtonUpdate(&s, true, BUTTON_LONG_PRESS_MS - 1), BTN_NONE);
   // Fires at the threshold without waiting for release — the user gets
   // feedback while their finger is still down.
-  EXPECT_EQ_INT(vtxButtonUpdate(&s, true, BUTTON_LONG_PRESS_MS), 2);
+  EXPECT_EQ_INT(vtxButtonUpdate(&s, true, BUTTON_LONG_PRESS_MS), BTN_LONG);
 }
 
 TEST(button_long_press_does_not_double_fire_while_held) {
@@ -455,10 +497,10 @@ TEST(button_long_press_does_not_double_fire_while_held) {
   vtxButtonInit(&s);
 
   vtxButtonUpdate(&s, true, 0);
-  EXPECT_EQ_INT(vtxButtonUpdate(&s, true, BUTTON_LONG_PRESS_MS), 2);
+  EXPECT_EQ_INT(vtxButtonUpdate(&s, true, BUTTON_LONG_PRESS_MS), BTN_LONG);
   // Still held, well past the threshold — must stay quiet.
-  EXPECT_EQ_INT(vtxButtonUpdate(&s, true, BUTTON_LONG_PRESS_MS + 500), 0);
-  EXPECT_EQ_INT(vtxButtonUpdate(&s, true, BUTTON_LONG_PRESS_MS + 5000), 0);
+  EXPECT_EQ_INT(vtxButtonUpdate(&s, true, BUTTON_LONG_PRESS_MS + 500), BTN_NONE);
+  EXPECT_EQ_INT(vtxButtonUpdate(&s, true, BUTTON_LONG_PRESS_MS + 5000), BTN_NONE);
 }
 
 TEST(button_no_short_press_on_release_after_long_press) {
@@ -466,11 +508,11 @@ TEST(button_no_short_press_on_release_after_long_press) {
   vtxButtonInit(&s);
 
   vtxButtonUpdate(&s, true, 0);
-  EXPECT_EQ_INT(vtxButtonUpdate(&s, true, BUTTON_LONG_PRESS_MS), 2);
+  EXPECT_EQ_INT(vtxButtonUpdate(&s, true, BUTTON_LONG_PRESS_MS), BTN_LONG);
   // Releasing after a long press must not also toggle recording — otherwise
   // a shutdown would start a recording on the way down.
-  EXPECT_EQ_INT(vtxButtonUpdate(&s, false, BUTTON_LONG_PRESS_MS + 100), 0);
-  EXPECT_EQ_INT(vtxButtonUpdate(&s, false, BUTTON_LONG_PRESS_MS + 200), 0);
+  EXPECT_EQ_INT(vtxButtonUpdate(&s, false, BUTTON_LONG_PRESS_MS + 100), BTN_NONE);
+  EXPECT_EQ_INT(vtxButtonUpdate(&s, false, BUTTON_LONG_PRESS_MS + 200), BTN_NONE);
 }
 
 TEST(button_second_press_after_long_press_works) {
@@ -483,7 +525,7 @@ TEST(button_second_press_after_long_press_works) {
 
   // A fresh short press must still register — the handled flag has to reset.
   vtxButtonUpdate(&s, true, 10000);
-  EXPECT_EQ_INT(vtxButtonUpdate(&s, false, 10000 + BUTTON_DEBOUNCE_MS), 1);
+  EXPECT_EQ_INT(vtxButtonUpdate(&s, false, 10000 + BUTTON_DEBOUNCE_MS), BTN_SHORT);
 }
 
 TEST(button_repeated_short_presses_each_fire) {
@@ -493,7 +535,7 @@ TEST(button_repeated_short_presses_each_fire) {
   for (int i = 0; i < 5; i++) {
     unsigned long base = 1000UL * (i + 1);
     vtxButtonUpdate(&s, true, base);
-    EXPECT_EQ_INT(vtxButtonUpdate(&s, false, base + 100), 1);
+    EXPECT_EQ_INT(vtxButtonUpdate(&s, false, base + 100), BTN_SHORT);
   }
 }
 
@@ -501,7 +543,7 @@ TEST(button_never_pressed_stays_silent) {
   ButtonState s;
   vtxButtonInit(&s);
   for (unsigned long t = 0; t < 10000; t += 250) {
-    EXPECT_EQ_INT(vtxButtonUpdate(&s, false, t), 0);
+    EXPECT_EQ_INT(vtxButtonUpdate(&s, false, t), BTN_NONE);
   }
 }
 

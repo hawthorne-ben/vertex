@@ -160,7 +160,7 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
   switch (cmd) {
     case CMD_GET_STATUS: {
       int fileCount = storage.listFiles(nullptr, 0);
-      uint16_t freeMb = (uint16_t)storage.getFreeSpaceMB();
+      uint16_t freeMb = (uint16_t)storage.getFreeSpaceMBCached();
       float battV = power.getBatteryVoltage();
       bool sdOk = storage.isReady();
       bool imuOk = sensor.isHealthy();
@@ -200,19 +200,37 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
 
     case CMD_LIST_FILES: {
       FileEntry entries[32];
-      int totalCount = storage.listFiles(entries, 32);
-      Serial.printf("[BLE] %d files on SD\n", totalCount);
+      const int onDisk = storage.listFiles(nullptr, 0);       // true total
+      const int fetched = storage.listFiles(entries, 32);     // what we hold
+      Serial.printf("[BLE] %d files on SD (%d fetched)\n", onDisk, fetched);
 
-      // Send the 10 most recent files (last 10 from listing)
-      int startIdx = (totalCount > 10) ? totalCount - 10 : 0;
-      int sendCount = totalCount - startIdx;
+      // Directory order is filesystem order, not chronological — FAT reuses
+      // freed entries, so a deletion makes the next file land wherever the
+      // hole was. Sort by the timestamp encoded in the name before taking the
+      // most recent, or "recent" means "wherever FAT put it".
+      // Insertion sort: n <= 32 and the array is nearly ordered in practice.
+      for (int i = 1; i < fetched; i++) {
+        FileEntry key = entries[i];
+        int64_t keyT = vtxFilenameSortKey(key.name);
+        int j = i - 1;
+        while (j >= 0 && vtxFilenameSortKey(entries[j].name) > keyT) {
+          entries[j + 1] = entries[j];
+          j--;
+        }
+        entries[j + 1] = key;
+      }
 
-      // Pack: totalCount(1) + packedCount(1) + [name_len(1) + name(N) + size(4) + synced(1)] per file
+      // Send the 10 most recent of what we fetched.
+      int startIdx = (fetched > 10) ? fetched - 10 : 0;
+      int sendCount = fetched - startIdx;
+
+      // Pack: totalOnDisk(1) + packedCount(1) + [name_len(1) + name(N) + size(4) + synced(1)] per file
       uint8_t buf[512];
       int off = 0;
-      buf[off++] = (uint8_t)totalCount;   // Total files on SD
-      buf[off++] = (uint8_t)sendCount;    // Files in this response
-      for (int i = startIdx; i < totalCount; i++) {
+      // Distinct quantities: the card may hold more than we can enumerate.
+      buf[off++] = (uint8_t)(onDisk > 255 ? 255 : onDisk);
+      buf[off++] = (uint8_t)sendCount;
+      for (int i = startIdx; i < fetched; i++) {
         uint8_t nameLen = strlen(entries[i].name);
         int entrySize = 1 + nameLen + 4 + 1;
         if (off + entrySize > (int)sizeof(buf)) break;
@@ -397,8 +415,13 @@ void BLEManager::sendStatus(DeviceState state, float batteryVoltage, uint32_t fi
   memcpy(buf + 5, &freeMb, 2);
   buf[7] = isClockSynced() ? 1 : 0;
 
-  // Flags: bit0 = SD OK, bit1 = IMU OK
-  buf[8] = (sdOk ? 0x01 : 0x00) | (imuOk ? 0x02 : 0x00);
+  // Flags: bit0 = SD OK, bit1 = IMU OK, bit2 = space low, bit3 = space critical.
+  // Derived from freeMb, which the caller already computed — no extra FAT walk,
+  // and no new parameters threaded through every call site.
+  const bool spaceLow = sdOk && freeMb < SD_WARN_MB;
+  const bool spaceCritical = sdOk && freeMb < SD_CRITICAL_MB;
+  buf[8] = (sdOk ? 0x01 : 0x00) | (imuOk ? 0x02 : 0x00)
+         | (spaceLow ? 0x04 : 0x00) | (spaceCritical ? 0x08 : 0x00);
 
   // Accel as int16 in milli-g (1g ≈ 9.81 m/s², so mg = m/s² * 1000 / 9.80665)
   int16_t axMg = (int16_t)(accelX * (1000.0f / 9.80665f));

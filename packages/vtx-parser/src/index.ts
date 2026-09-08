@@ -24,6 +24,21 @@ export type {
   ClockSyncObservation,
 } from './clock-drift';
 
+// Timestamp reconstruction (opt-in post-processing)
+export {
+  reconstructTimestamps,
+  reconstructRecordTimestamps,
+  reconstructAndCorrect,
+  findBatchRuns,
+} from './timestamp-reconstruction';
+export type {
+  BatchRun,
+  TimestampGap,
+  TimestampQualityReport,
+  TimestampReconstructionResult,
+  TimestampReconstructionOptions,
+} from './timestamp-reconstruction';
+
 // Export types
 export type {
   VTXHeader,

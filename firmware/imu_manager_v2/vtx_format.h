@@ -96,10 +96,10 @@ static inline void vtxWriteHeader(uint8_t* header, uint32_t metadataLength,
                                   int64_t startTimestampMs) {
   memset(header, 0, VTX_HEADER_SIZE);
 
-  header[VTX_OFF_MAGIC + 0] = 'V';
-  header[VTX_OFF_MAGIC + 1] = 'T';
-  header[VTX_OFF_MAGIC + 2] = 'X';
-  header[VTX_OFF_MAGIC + 3] = '\0';
+  // VTX_MAGIC is "VTX" — 3 chars plus C's implicit terminator, which is
+  // exactly the 4 bytes the parsers expect ("VTX\0"). Copying the constant
+  // keeps firmware and config.h from drifting apart.
+  memcpy(header + VTX_OFF_MAGIC, VTX_MAGIC, VTX_MAGIC_SIZE);
 
   vtxPutU16(header + VTX_OFF_VERSION_MAJOR, VTX_FORMAT_MAJOR);
   vtxPutU16(header + VTX_OFF_VERSION_MINOR, VTX_FORMAT_MINOR);
@@ -138,6 +138,34 @@ static inline void vtxBuildFilename(char* out, int outSize, int64_t wallClockMs)
   uint32_t msInDay = (uint32_t)(((secs % 86400) * 1000) + (wallClockMs % 1000));
   snprintf(out, (size_t)outSize, "%s/%d_%d_%d_%lu.vtx", LOG_DIR,
            t.tm_mon + 1, t.tm_mday, t.tm_year + 1900, (unsigned long)msInDay);
+}
+
+// Sort key from a recording filename: "M_D_YYYY_msInDay.vtx" (PST).
+// Returns a monotonically increasing value, or -1 if the name does not parse
+// so unrecognised files sort to the front rather than into arbitrary
+// positions. Lives here so the host tests exercise the same parser the device
+// and the app rely on.
+static inline int64_t vtxFilenameSortKey(const char* name) {
+  if (!name) return -1;
+  const char* slash = strrchr(name, '/');
+  if (slash) name = slash + 1;
+
+  int mon = 0, day = 0, year = 0;
+  long long ms = 0;
+  if (sscanf(name, "%d_%d_%d_%lld", &mon, &day, &year, &ms) != 4) return -1;
+  if (mon < 1 || mon > 12 || day < 1 || day > 31 || year < 2000) return -1;
+
+  // Days-since-epoch by proleptic Gregorian arithmetic — no time.h, no
+  // timezone handling, and monotonic, which is all a sort key needs.
+  int y = year, m = mon;
+  if (m <= 2) { y -= 1; m += 12; }
+  const int64_t era = (y >= 0 ? y : y - 399) / 400;
+  const int64_t yoe = y - era * 400;
+  const int64_t doy = (153 * (m - 3) + 2) / 5 + day - 1;
+  const int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  const int64_t days = era * 146097 + doe - 719468;
+
+  return days * 86400000LL + ms;
 }
 
 // ===== Axis remap and scale conversion =====
@@ -180,7 +208,16 @@ static inline void vtxButtonInit(ButtonState* s) {
   s->longPressHandled = false;
 }
 
-static inline int vtxButtonUpdate(ButtonState* s, bool pressed, unsigned long nowMs) {
+// Button events. Named so loop() reads without a lookup, and so a switch on
+// the result gets an unhandled-case warning from the compiler.
+enum ButtonEvent : int {
+  BTN_NONE  = 0,
+  BTN_SHORT = 1,   // press and release inside the long-press threshold
+  BTN_LONG  = 2,   // fires while still held, once BUTTON_LONG_PRESS_MS elapses
+};
+
+static inline ButtonEvent vtxButtonUpdate(ButtonState* s, bool pressed,
+                                          unsigned long nowMs) {
   if (pressed && !s->wasPressed) {
     s->downTime = nowMs;
     s->wasPressed = true;
@@ -191,20 +228,20 @@ static inline int vtxButtonUpdate(ButtonState* s, bool pressed, unsigned long no
   if (pressed && s->wasPressed && !s->longPressHandled) {
     if (nowMs - s->downTime >= BUTTON_LONG_PRESS_MS) {
       s->longPressHandled = true;
-      return 2;
+      return BTN_LONG;
     }
   }
 
   if (!pressed && s->wasPressed) {
     s->wasPressed = false;
-    if (s->longPressHandled) return 0;  // Already handled as long press
+    if (s->longPressHandled) return BTN_NONE;  // already fired as a long press
     unsigned long held = nowMs - s->downTime;
     if (held >= BUTTON_DEBOUNCE_MS) {
-      return 1;  // Short press — toggle recording
+      return BTN_SHORT;
     }
   }
 
-  return 0;
+  return BTN_NONE;
 }
 
 #endif // VTX_FORMAT_H

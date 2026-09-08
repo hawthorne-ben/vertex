@@ -107,3 +107,15 @@ void PowerManager::updateLED(int blinkIntervalMs) {
     setLED(0, 0, brightness);
   }
 }
+
+// Fault indication: urgent red blink. Used when the IMU or SD card failed to
+// initialise, so the condition is visible before a ride rather than
+// discovered afterwards as an empty file.
+void PowerManager::updateFaultLED(int blinkIntervalMs) {
+  unsigned long now = millis();
+  if (now - _lastLEDUpdate >= (unsigned long)blinkIntervalMs) {
+    _lastLEDUpdate = now;
+    _animStep = !_animStep;
+    setLED(_animStep ? 255 : 0, 0, 0);
+  }
+}
