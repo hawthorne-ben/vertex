@@ -6,6 +6,8 @@ import {
   RECORDING_LIST_PAGE_SIZE,
 } from '@/lib/api/recording-list-fields'
 
+export const metadata = { title: 'Data' }
+
 export default async function RecordingsPage() {
   const supabase = await createClient()
 

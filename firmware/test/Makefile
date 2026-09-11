@@ -1,7 +1,7 @@
 # Host-compiled tests for firmware/imu_manager_v2 pure logic.
 #
 #   make test        build and run the unit suite
-#   make crosscheck  additionally decode firmware-encoded bytes with the
+#   make integration additionally decode firmware-encoded bytes with the
 #                    Python parser in packages/vtx-parser (needs python3)
 #   make all         both
 #   make clean
@@ -29,17 +29,20 @@ GEN_SRC  := gen_vtx_fixture.cpp
 
 DEPS := test_harness.h ../imu_manager_v2/vtx_format.h ../imu_manager_v2/config.h
 
-.PHONY: all test crosscheck clean
+.PHONY: all test integration crosscheck clean
 
 test: $(UNIT_BIN)
 	@./$(UNIT_BIN)
 
 # Encode a .vtx file with the firmware's own code, then decode it with the
 # packages/vtx-parser Python implementation and diff the round trip.
-crosscheck: $(GEN_BIN)
+integration: $(GEN_BIN)
 	@python3 crosscheck.py ./$(GEN_BIN)
 
-all: test crosscheck
+# Retained so older notes and muscle memory keep working.
+crosscheck: integration
+
+all: test integration
 
 $(UNIT_BIN): $(UNIT_SRC) $(DEPS) | $(BUILD)
 	@$(CXX) $(CXXFLAGS) -o $@ $(UNIT_SRC)

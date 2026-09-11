@@ -6,6 +6,15 @@ import { RideVisualizationsClient } from '@/components/ride-visualizations-clien
 import { RideImuManager } from '@/components/ride-imu-manager'
 import { resolveRideDuration } from '@/lib/utils/formatting'
 
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+  const supabase = await createClient()
+  // Deliberately not the page's own select('*') — this runs as its own request
+  // and only needs the name.
+  const { data } = await supabase.from('rides').select('name').eq('id', id).single()
+  return { title: data?.name || 'Ride' }
+}
+
 export default async function RideDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const supabase = await createClient()

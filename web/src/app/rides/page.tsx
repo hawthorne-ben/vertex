@@ -6,6 +6,8 @@ import {
   toRideListRow,
 } from '@/lib/api/ride-list-fields'
 
+export const metadata = { title: 'Rides' }
+
 
 export default async function RidesPage() {
   const supabase = await createClient()

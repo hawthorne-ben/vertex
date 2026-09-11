@@ -8,6 +8,8 @@ import { DashboardMetrics } from '@/components/dashboard-metrics'
 import { LatestRideHero } from '@/components/latest-ride-hero'
 import { computeHeroInsights } from '@/lib/dashboard/hero-insights'
 
+export const metadata = { title: 'Dashboard' }
+
 export default async function DashboardPage() {
   const supabase = await createClient()
 

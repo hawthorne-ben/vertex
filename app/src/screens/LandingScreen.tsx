@@ -26,7 +26,6 @@ const LandingScreen: React.FC = () => {
       contentContainerStyle={styles.content}>
       {/* Logo/Title */}
       <Text style={[styles.logo, { color: theme.colors.textPrimary }]}>VERTEX</Text>
-      <Text style={[styles.tagline, { color: theme.colors.textPrimary }]}>Your ride, unencrypted</Text>
 
       <View style={styles.descriptionContainer}>
         <Text style={[styles.description, { color: theme.colors.textSecondary }]}>
@@ -81,13 +80,9 @@ const styles = StyleSheet.create({
     fontFamily: staticTheme.typography.serif,
     fontWeight: staticTheme.typography.fontWeight.normal,
     letterSpacing: 2,
-    marginBottom: staticTheme.spacing.md,
-  },
-  tagline: {
-    fontSize: 24,
-    fontWeight: staticTheme.typography.fontWeight.light,
+    // Was spacing.md with the tagline below supplying the xxl gap; the logo
+    // now carries that spacing directly.
     marginBottom: staticTheme.spacing.xxl,
-    textAlign: 'center',
   },
   descriptionContainer: {
     marginBottom: staticTheme.spacing.xxl,

@@ -6,6 +6,13 @@ import { Loader2 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { RecordingChartClient } from '@/components/recording-chart-client'
 
+export async function generateMetadata({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+  const supabase = await createClient()
+  const { data } = await supabase.from('recordings').select('filename').eq('id', id).single()
+  return { title: data?.filename || 'Recording' }
+}
+
 export default async function DataDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
   const supabase = await createClient()

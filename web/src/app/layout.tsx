@@ -20,7 +20,12 @@ const jetbrainsMono = JetBrains_Mono({
 })
 
 export const metadata: Metadata = {
-  title: "Vertex - Your ride, unencrypted",
+  // Pages set only their own name; the template appends the product. Routes
+  // with nothing specific to say fall back to `default`.
+  title: {
+    template: "%s · Vertex",
+    default: "Vertex",
+  },
   description: "IMU cycling data analysis platform for detailed riding dynamics insights",
   metadataBase: new URL('https://ridevertex.com'),
   icons: {

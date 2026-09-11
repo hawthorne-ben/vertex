@@ -1,6 +1,8 @@
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 
+export const metadata = { title: 'New Ride' }
+
 export default function CreateRidePage() {
   return (
     <div className="container mx-auto p-6 max-w-2xl">
