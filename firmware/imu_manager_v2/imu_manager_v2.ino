@@ -24,6 +24,7 @@
 #include "ble_manager.h"
 #include "power_manager.h"
 #include "wifi_manager.h"
+#include "log_manager.h"
 
 // Manager instances
 SensorManager sensor;
@@ -49,7 +50,7 @@ int64_t wallClockMs() {
 void syncClock(int64_t unixMs) {
   _clockOffsetMs = unixMs - (int64_t)millis();
   _clockSynced = true;
-  Serial.printf("[CLK] Synced — wall clock: %lld\n", wallClockMs());
+  LOG_I("CLK", "synced — wall clock %lld", wallClockMs());
 }
 
 bool isClockSynced() {
@@ -89,11 +90,14 @@ static void serviceClockSync() {
     rec.t2_phone_unix_ms = t2;
     rec.t3_phone_unix_ms = t3;
     if (!storage.addSyncRecord(rec)) {
-      Serial.println("[CLK] Sync buffer full — no further samples this recording");
+      // WARN: sync records silently stop from here to the end of the ride.
+      // Reachable at 8.5 h; the longest real recording is 6h43m.
+      LOG_W("CLK", "sync buffer full (%u) — no further samples this recording",
+            (unsigned)storage.getSyncRecordCount());
     } else {
       int32_t rtt = (int32_t)(t4 - t1) - (int32_t)(t3 - t2);
-      Serial.printf("[CLK] Sync #%u — rtt=%ldms\n",
-                    (unsigned)storage.getSyncRecordCount(), (long)rtt);
+      LOG_I("CLK", "sync #%u rtt=%ldms",
+            (unsigned)storage.getSyncRecordCount(), (long)rtt);
     }
   }
 
@@ -101,7 +105,11 @@ static void serviceClockSync() {
   //    disconnected for most of a typical ride.
   if (ble.expireStaleTimeRequest()) {
     _syncMissCount++;
-    Serial.printf("[CLK] Sync request timed out (%u missed)\n", (unsigned)_syncMissCount);
+    // WARN: this is the line whose ABSENCE would have settled the 2026-09-07
+    // ride in one read. Present means the device asked and the phone did not
+    // answer; absent (with no "not connected" line either) means it never
+    // asked. Those two hypotheses could not be separated from the .vtx file.
+    LOG_W("CLK", "sync request timed out (%u missed)", (unsigned)_syncMissCount);
   }
 
   // 3. Issue the next request on cadence.
@@ -111,6 +119,14 @@ static void serviceClockSync() {
     _lastSyncRequestMs = millis();
     if (!ble.requestPhoneTime()) {
       _syncMissCount++;
+      // ADDED. Previously this incremented a counter and logged NOTHING — the
+      // exact silent failure path behind the 2.6 h ride with 0 sync records.
+      // The cause is distinguished here because the two have different fixes:
+      // "not connected" is the app's disconnect/re-register defect
+      // (VALIDATION_PLAN.md §C3), "already in flight" would be a firmware bug.
+      LOG_W("CLK", "sync request not sent: %s (%u missed)",
+            ble.isConnected() ? "request already in flight" : "BLE not connected",
+            (unsigned)_syncMissCount);
     }
   }
 }
@@ -130,28 +146,30 @@ void startRecording() {
   // recording start, blink the LED for two hours, and yield a valid .vtx
   // containing zero records — a silent failure discovered only after the ride.
   if (!sensor.isHealthy() || !storage.isReady()) {
-    Serial.printf("[REC] Refused — IMU %s, SD %s\n",
-                  sensor.isHealthy() ? "ok" : "FAILED",
-                  storage.isReady() ? "ok" : "FAILED");
+    LOG_E("REC", "refused — IMU %s, SD %s",
+          sensor.isHealthy() ? "ok" : "FAILED",
+          storage.isReady() ? "ok" : "FAILED");
     state = STATE_FAULT;
     return;
   }
 
   if (!_clockSynced) {
-    Serial.println("[REC] Clock not synced — using default epoch");
+    // WARN: every timestamp in the resulting file is against a default epoch,
+    // which is not visible anywhere in the .vtx itself.
+    LOG_W("REC", "clock not synced — using default epoch");
   }
 
   // Capacity is predictable: 10.0 MB/hour. Refuse to start a session there is
   // not room to finish rather than cutting it off mid-ride.
   if (!storage.hasSpaceToStart()) {
-    Serial.printf("[REC] Refused — %lu MB free, need %d MB (~%lu min of recording left)\n",
-                  (unsigned long)storage.getFreeSpaceMBCached(), SD_MIN_START_MB,
-                  (unsigned long)storage.getRemainingSecondsCached() / 60);
+    LOG_E("REC", "refused — %lu MB free, need %d MB (~%lu min left)",
+          (unsigned long)storage.getFreeSpaceMBCached(), SD_MIN_START_MB,
+          (unsigned long)storage.getRemainingSecondsCached() / 60);
     return;
   }
   if (storage.isSpaceLow()) {
-    Serial.printf("[REC] Warning — only ~%lu min of space left\n",
-                  (unsigned long)storage.getRemainingSecondsCached() / 60);
+    LOG_W("REC", "only ~%lu min of space left",
+          (unsigned long)storage.getRemainingSecondsCached() / 60);
   }
 
   sensor.resetTimestamp();
@@ -162,9 +180,13 @@ void startRecording() {
     _lastSyncRequestMs = millis();
     _syncMissCount = 0;
     state = STATE_RECORDING;
-    Serial.println("[REC] Started");
+    // INFO: a successful start is a major event, not a failure. It was briefly
+    // ERROR to make it survive a raised level, which conflated "important" with
+    // "something went wrong" — filtering to ERROR to find problems is useless
+    // if normal operation is mixed in.
+    LOG_I("REC", "started %s", storage.getCurrentFileName());
   } else {
-    Serial.println("[REC] Failed to open file");
+    LOG_E("REC", "failed to open file");
   }
 }
 
@@ -173,7 +195,11 @@ void stopRecording() {
 
   storage.closeFile(wallClockMs());
   state = STATE_IDLE;
-  Serial.println("[REC] Stopped");
+  LOG_I("REC", "stopped — %u sync records, %u sync misses",
+        (unsigned)storage.getSyncRecordCount(), (unsigned)_syncMissCount);
+  // The ride ends here, so flush rather than leaving the closing lines in RAM
+  // until a 30 s timer that a power-off may beat.
+  logger.flush();
 }
 
 // Stop any active recording, then power down. Single path so the battery
@@ -181,6 +207,7 @@ void stopRecording() {
 // power is the part that must never be skipped.
 static void shutdownWith(const char* reason) {
   stopRecording();          // safe unconditionally: no-ops unless recording
+  logger.flush();           // the last lines written are the ones explaining why
   power.shutdown(reason);
 }
 
@@ -200,6 +227,9 @@ void setup() {
   power.init();
   bool sensorOk = sensor.init();
   bool sdOk = storage.init();
+  // Immediately after the SD card: the ring lives on the same card, and any
+  // line logged before this point can only reach serial.
+  if (sdOk) logger.init();
   ble.init();
   wifiManager.init();
 
@@ -213,8 +243,8 @@ void setup() {
   // upload time, long after the ride. Note their init() calls return void, so
   // their failures are currently invisible — see notes/firmware-deep-dive.md.
   if (!sensorOk || !sdOk) {
-    if (!sensorOk) Serial.println("[FAULT] IMU init failed — check LSM6DS3 wiring");
-    if (!sdOk)     Serial.println("[FAULT] SD init failed — check card/wiring");
+    if (!sensorOk) LOG_E("FAULT", "IMU init failed — check LSM6DS3 wiring");
+    if (!sdOk)     LOG_E("FAULT", "SD init failed — check card/wiring");
     state = STATE_FAULT;
   }
 
@@ -241,7 +271,7 @@ void loop() {
     case BTN_LONG:
       // Works from every state, STATE_FAULT included — powering down must
       // never depend on the device being healthy.
-      Serial.println("[PWR] Long press — shutting down");
+      LOG_I("PWR", "long press — shutting down");
       shutdownWith("Long press");
       return;
 
@@ -250,10 +280,10 @@ void loop() {
         case STATE_IDLE:      startRecording(); break;
         case STATE_RECORDING: stopRecording();  break;
         case STATE_FAULT:
-          Serial.println("[FAULT] Recording unavailable — IMU or SD card failed");
+          LOG_W("FAULT", "recording unavailable — IMU or SD card failed");
           break;
         case STATE_UPLOADING:
-          Serial.println("[BTN] Ignored — upload in progress");
+          LOG_I("BTN", "ignored — upload in progress");
           break;
       }
       break;
@@ -264,6 +294,10 @@ void loop() {
 
   // Process BLE commands
   ble.processCommands(state, sensor, storage, wifiManager, power);
+
+  // Time-based log flush (30 s). The WARN+ and half-capacity triggers fire
+  // inline at the call site; this is the one that needs a clock.
+  logger.tick();
 
   // Poll IMU regardless of state (for debug logging in IDLE)
   int samplesRead = sensor.readFIFO();
@@ -281,7 +315,8 @@ void loop() {
         bool sdNow = storage.isReady() || storage.init();
         bool imuNow = sensor.isHealthy() || sensor.init();
         if (sdNow && imuNow) {
-          Serial.println("[FAULT] Cleared — subsystems healthy, returning to idle");
+          // Recovery is good news; the fault itself is logged at ERROR above.
+          LOG_I("FAULT", "cleared — subsystems healthy, returning to idle");
           state = STATE_IDLE;
         }
       }
@@ -296,9 +331,11 @@ void loop() {
       if (samplesRead > 0 && millis() - lastPrint >= 500) {
         lastPrint = millis();
         const IMURecord& s = sensor.getSampleBuffer()[0];
-        Serial.printf("[IMU] ax=%+7.2f ay=%+7.2f az=%+7.2f  gx=%+7.1f gy=%+7.1f gz=%+7.1f\n",
-                      s.accel_x, s.accel_y, s.accel_z,
-                      s.gyro_x, s.gyro_y, s.gyro_z);
+        // DEBUG: a 2 Hz idle sample dump. Useful on a bench serial monitor,
+        // ruinous in a 10 MB ring — filtered out at the default WARN.
+        LOG_D("IMU", "ax=%+7.2f ay=%+7.2f az=%+7.2f  gx=%+7.1f gy=%+7.1f gz=%+7.1f",
+              s.accel_x, s.accel_y, s.accel_z,
+              s.gyro_x, s.gyro_y, s.gyro_z);
       }
       break;
     }
@@ -315,8 +352,8 @@ void loop() {
       // which would leave an inconsistent header — the one storage failure
       // that costs the whole recording rather than the tail of it.
       if (storage.isSpaceCritical()) {
-        Serial.printf("[REC] SD nearly full (%lu MB) — closing file cleanly\n",
-                      (unsigned long)storage.getFreeSpaceMBCached());
+        LOG_W("REC", "SD nearly full (%lu MB) — closing file cleanly",
+              (unsigned long)storage.getFreeSpaceMBCached());
         stopRecording();
         break;
       }
@@ -326,8 +363,8 @@ void loop() {
           // Either the card filled faster than the 30 s poll saw, or the write
           // genuinely failed. Both end the recording; the log distinguishes
           // them so the cause is not guesswork afterwards.
-          Serial.printf("[REC] SD write failed (%lu MB free) — stopping\n",
-                        (unsigned long)storage.getFreeSpaceMB());
+          LOG_E("REC", "SD write failed (%lu MB free) — stopping",
+                (unsigned long)storage.getFreeSpaceMB());
           stopRecording();
         }
       }
@@ -363,7 +400,7 @@ void loop() {
 
         setCpuFrequencyMhz(CPU_MHZ_NORMAL);
         state = STATE_IDLE;
-        Serial.println("[MAIN] WiFi sync finished, CPU → 80MHz");
+        LOG_I("MAIN", "WiFi sync finished, CPU → 80MHz");
       }
       break;
     }

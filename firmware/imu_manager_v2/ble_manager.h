@@ -51,6 +51,15 @@ public:
   // Returns true if a request was actually timed out (for logging).
   bool expireStaleTimeRequest();
 
+  // ===== Diagnostic log readout =====
+  // Readers read from the FILE, not from a second RAM buffer: one buffer, one
+  // retention policy, so live tail and backfill are the same operation. The
+  // reader's position lives here, expressed against total_written rather than
+  // a raw ring offset, and survives a disconnect so a reconnect backfills from
+  // where it left off.
+  void sendLogChunk(class LogManager& log);
+  void sendLogStatus(class LogManager& log);
+
   // Send status notification (battery, recording state, file count, free space, health, accel)
   // When state == STATE_UPLOADING, syncProgress is included in the notification
   // When state == STATE_RECORDING, recordingSecs and recordingBytes are included
@@ -76,6 +85,12 @@ private:
   volatile uint32_t _timeRespT4;    // millis() at reply receipt (set in callback)
   volatile int64_t _timeRespT2;     // phone time at request receipt
   volatile int64_t _timeRespT3;     // phone time at reply send
+
+  // Diagnostic log reader position, in total_written space. Deliberately NOT
+  // reset on disconnect: a transient BLE drop mid-ride is exactly the event
+  // being diagnosed, and resetting would discard the backfill that explains it.
+  uint64_t _logReaderPos;
+  bool _logReaderPosValid;  // false until the app sets a position
 
   // Pending command from BLE write callback
   volatile uint8_t _pendingCmd;

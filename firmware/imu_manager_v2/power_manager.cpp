@@ -9,6 +9,7 @@
  */
 
 #include "power_manager.h"
+#include "log_manager.h"
 #include "esp_sleep.h"
 
 PowerManager::PowerManager()
@@ -50,6 +51,23 @@ float PowerManager::getBatteryVoltage() {
   if (now - _lastBatteryRead >= BATTERY_READ_INTERVAL_MS) {
     _lastVoltage = readBatteryVoltage();
     _lastBatteryRead = now;
+
+    // ADDED — a MISSING signal, not a re-levelled one. The battery was read
+    // every 5 s and logged nowhere, so a ride that ended early carried no
+    // evidence of whether the pack sagged. Logged on crossing into the warning
+    // band rather than on a timer: a periodic INFO at 5 s is 720 lines/hour of
+    // near-constant values, while the edge is the event worth keeping.
+    const float warnV = BATTERY_CUTOFF_VOLTAGE + 0.2f;
+    if (_lastVoltage > 0.5f && _lastVoltage < warnV && !_lowBatteryLogged) {
+      _lowBatteryLogged = true;
+      LOG_W("PWR", "battery low: %.2fV (cutoff %.2fV)",
+            _lastVoltage, (float)BATTERY_CUTOFF_VOLTAGE);
+    } else if (_lastVoltage >= warnV + 0.05f && _lowBatteryLogged) {
+      // Hysteresis: a charging pack crossing back clears the latch without
+      // chattering a pair of lines per 5 s read at the threshold.
+      _lowBatteryLogged = false;
+      LOG_I("PWR", "battery recovered: %.2fV", _lastVoltage);
+    }
   }
   return _lastVoltage;
 }
@@ -60,7 +78,11 @@ bool PowerManager::shouldShutdown() {
 }
 
 void PowerManager::shutdown(const char* reason) {
-  Serial.printf("[PWR] Shutting down: %s\n", reason);
+  // INFO: shutdown is a normal end to a session. The battery-cutoff case that
+  // forces one is a separate WARN, so an unexpected shutdown is still visible
+  // at ERROR-free levels. shutdownWith() flushes before calling here, so this
+  // reaches the card regardless of severity.
+  LOG_I("PWR", "shutting down: %s", reason);
   setLED(0, 0, 0);
   Serial.flush();
   delay(100);

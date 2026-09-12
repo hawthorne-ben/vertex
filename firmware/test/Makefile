@@ -1,6 +1,6 @@
 # Host-compiled tests for firmware/imu_manager_v2 pure logic.
 #
-#   make test        build and run the unit suite
+#   make test        build and run both unit suites
 #   make integration additionally decode firmware-encoded bytes with the
 #                    Python parser in packages/vtx-parser (needs python3)
 #   make all         both
@@ -24,15 +24,25 @@ endif
 
 UNIT_BIN := $(BUILD)/test_vtx_format
 UNIT_SRC := test_vtx_format.cpp
+LOG_BIN  := $(BUILD)/test_log_ring
+LOG_SRC  := test_log_ring.cpp
 GEN_BIN  := $(BUILD)/gen_vtx_fixture
 GEN_SRC  := gen_vtx_fixture.cpp
 
-DEPS := test_harness.h ../imu_manager_v2/vtx_format.h ../imu_manager_v2/config.h
+DEPS     := test_harness.h ../imu_manager_v2/vtx_format.h ../imu_manager_v2/config.h
+LOG_DEPS := test_harness.h ../imu_manager_v2/log_ring.h ../imu_manager_v2/config.h
 
-.PHONY: all test integration crosscheck clean
+.PHONY: all test test-vtx test-log integration crosscheck clean
 
-test: $(UNIT_BIN)
+# Both suites run even if the first fails, so one red area does not hide the
+# other -- the same reason assertions record and continue rather than abort.
+test: test-vtx test-log
+
+test-vtx: $(UNIT_BIN)
 	@./$(UNIT_BIN)
+
+test-log: $(LOG_BIN)
+	@./$(LOG_BIN)
 
 # Encode a .vtx file with the firmware's own code, then decode it with the
 # packages/vtx-parser Python implementation and diff the round trip.
@@ -46,6 +56,9 @@ all: test integration
 
 $(UNIT_BIN): $(UNIT_SRC) $(DEPS) | $(BUILD)
 	@$(CXX) $(CXXFLAGS) -o $@ $(UNIT_SRC)
+
+$(LOG_BIN): $(LOG_SRC) $(LOG_DEPS) | $(BUILD)
+	@$(CXX) $(CXXFLAGS) -o $@ $(LOG_SRC)
 
 $(GEN_BIN): $(GEN_SRC) $(DEPS) | $(BUILD)
 	@$(CXX) $(CXXFLAGS) -o $@ $(GEN_SRC)

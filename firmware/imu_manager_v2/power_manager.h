@@ -27,6 +27,8 @@ public:
 private:
   unsigned long _lastBatteryRead;
   float _lastVoltage;
+  bool _lowBatteryLogged = false;  // latch, so the warning is logged on the
+                                   // crossing rather than every 5 s read
   unsigned long _lastLEDUpdate;
   uint8_t _animStep;
 

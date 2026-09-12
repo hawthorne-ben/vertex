@@ -35,10 +35,23 @@ const CMD_V2_SYNC_CLOCK = 0x09;
 const CMD_V2_SET_USER = 0x0B;
 const CMD_V2_START_SYNC = 0x0C;
 const CMD_V2_CANCEL_SYNC = 0x0D;
+const CMD_V2_LOG_READ = 0x0f;
+const CMD_V2_LOG_SET_LEVEL = 0x10;
+const CMD_V2_LOG_STATUS = 0x11;
+const CMD_V2_LOG_CLEAR = 0x12;
+
+// Diagnostic log severities. Values are the firmware's wire contract
+// (log_ring.h) — persisted in NVS and sent over BLE, so append only.
+export const V2_LOG_LEVELS = ['DEBUG', 'INFO', 'WARN', 'ERROR'] as const;
+export type V2LogLevel = (typeof V2_LOG_LEVELS)[number];
 const CMD_V2_TIME_RESPONSE = 0x0E;
 
 // Device → phone notification opcodes on the file-list characteristic
 const NOTIFY_TIME_REQUEST = 0xf0;
+// [0xF1][next_pos u64][gap u64][total u64][min_level u8][len u8][text] — the
+// device's diagnostic-log reply. Shares the file-list characteristic with
+// listings and time requests, so every consumer must check the leading opcode.
+const NOTIFY_LOG_DATA = 0xf1;
 
 export interface V2SyncProgress {
   currentFile: number;
@@ -68,6 +81,20 @@ export interface V2Status {
   accel?: { x: number; y: number; z: number }; // milli-g
   syncProgress?: V2SyncProgress;
   recordingInfo?: V2RecordingInfo;
+}
+
+/** One chunk of the device's diagnostic ring. */
+export interface V2LogChunk {
+  /** Position to pass to the next read, in total_written space. */
+  nextPos: bigint;
+  /** Bytes overwritten before this reader saw them. Nonzero means data lost. */
+  gap: bigint;
+  /** Bytes the device has ever written — monotonic across reboots and wraps. */
+  totalWritten: bigint;
+  /** Minimum severity the device is currently persisting to SD. */
+  minLevel: number;
+  /** Decoded text. Always ends on a complete line; may be empty. */
+  text: string;
 }
 
 export interface V2FileEntry {
@@ -1258,11 +1285,24 @@ class BleService {
             return;
           }
           if (characteristic?.value) {
+            const data = this.base64ToUint8Array(characteristic.value);
+
+            // This characteristic also carries device-initiated notifications:
+            // 0xF0 time requests (every 60s while recording) and 0xF1 log
+            // replies. Either one arriving mid-listing used to resolve this
+            // promise with whatever it parsed to — a 0xF1 packet reads as
+            // "241 files on SD" with 0 entries, so the caller would see an
+            // empty recording list and no error. Skip and keep listening; the
+            // 5s timeout still bounds the wait.
+            if (data.length >= 1 &&
+                (data[0] === NOTIFY_TIME_REQUEST || data[0] === NOTIFY_LOG_DATA)) {
+              return;
+            }
+
             clearTimeout(timeout);
             isResolved = true;
             subscription?.remove();
 
-            const data = this.base64ToUint8Array(characteristic.value);
             const files: V2FileEntry[] = [];
 
             // Parse: totalCount(1) + packedCount(1) + [name_len(1) + name(N) + size(4)] per file
@@ -1427,6 +1467,188 @@ class BleService {
       CONFIG_CHARACTERISTIC_UUID,
       base64Value
     );
+  }
+
+  /**
+   * Read one chunk of the device's diagnostic log ring.
+   *
+   * Readers hold a position against total_written, not a raw ring offset, so a
+   * stored position stays valid while the writer wraps underneath. Pass 0n to
+   * start from the oldest surviving byte; the device clamps that up to the
+   * oldest survivor and reports the resulting gap.
+   *
+   * A nonzero `gap` means the writer lapped this reader and those bytes are
+   * gone. It is surfaced, never silently skipped — same principle as the
+   * dropped-sample handling in the parser: flag the loss, do not paper over it.
+   */
+  async readLogV2(fromPos: bigint): Promise<V2LogChunk> {
+    if (!this.connectedDevice) {
+      throw new Error('No device connected');
+    }
+
+    return new Promise<V2LogChunk>((resolve, reject) => {
+      let isResolved = false;
+
+      const timeout = setTimeout(() => {
+        if (!isResolved) {
+          isResolved = true;
+          subscription?.remove();
+          reject(new Error('Timeout waiting for log data'));
+        }
+      }, 5000);
+
+      const subscription = this.connectedDevice!.monitorCharacteristicForService(
+        IMU_SERVICE_UUID,
+        V2_FILE_LIST_CHARACTERISTIC_UUID,
+        (error, characteristic) => {
+          if (isResolved) return;
+          if (error) {
+            clearTimeout(timeout);
+            isResolved = true;
+            subscription?.remove();
+            reject(error);
+            return;
+          }
+          if (!characteristic?.value) return;
+
+          const data = this.base64ToUint8Array(characteristic.value);
+          // Shared characteristic: ignore listings and time requests.
+          if (data.length < 1 || data[0] !== NOTIFY_LOG_DATA) return;
+
+          clearTimeout(timeout);
+          isResolved = true;
+          subscription?.remove();
+
+          // [0xF1][next_pos u64][gap u64][total u64][min_level u8][len u8][text]
+          if (data.length < 27) {
+            reject(new Error(`Short log packet: ${data.length} bytes`));
+            return;
+          }
+          const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+          const nextPos = dv.getBigUint64(1, true);
+          const gap = dv.getBigUint64(9, true);
+          const totalWritten = dv.getBigUint64(17, true);
+          const minLevel = data[25];
+          const textLen = data[26];
+          const bytes = data.slice(27, 27 + textLen);
+          // The firmware trims each chunk to the last complete line, so a
+          // decode here never lands mid-record.
+          const text = String.fromCharCode(...bytes);
+
+          resolve({ nextPos, gap, totalWritten, minLevel, text });
+        }
+      );
+
+      const payload = new Uint8Array(9);
+      payload[0] = CMD_V2_LOG_READ;
+      new DataView(payload.buffer).setBigUint64(1, fromPos, true);
+      this.writeConfigCommand(payload).catch(err => {
+        if (!isResolved) {
+          clearTimeout(timeout);
+          isResolved = true;
+          subscription?.remove();
+          reject(err);
+        }
+      });
+    });
+  }
+
+  /**
+   * Query log position and level without transferring any log data.
+   */
+  async getLogStatusV2(): Promise<V2LogChunk> {
+    return this.readLogCommandV2(new Uint8Array([CMD_V2_LOG_STATUS]));
+  }
+
+  /**
+   * Set the minimum severity the device persists to SD. Stored in NVS, so it
+   * survives a reboot — raising it to ERROR quiets the ring until it is
+   * lowered again.
+   */
+  async setLogLevelV2(level: number): Promise<V2LogChunk> {
+    if (level < 0 || level > 3) {
+      throw new Error(`Invalid log level: ${level}`);
+    }
+    return this.readLogCommandV2(new Uint8Array([CMD_V2_LOG_SET_LEVEL, level]));
+  }
+
+  /**
+   * Clear the device's diagnostic ring.
+   *
+   * The device rewinds its header to empty and resets this reader's position;
+   * the 10 MB region itself is not erased (that would stall the loop for
+   * minutes over SPI), but nothing can read past total_written, so the stale
+   * bytes are unreachable rather than merely hidden.
+   */
+  async clearLogV2(): Promise<V2LogChunk> {
+    return this.readLogCommandV2(new Uint8Array([CMD_V2_LOG_CLEAR]));
+  }
+
+  /**
+   * Shared request/response for the log commands that reply with a 0xF1 packet
+   * carrying no text (status and set-level).
+   */
+  private async readLogCommandV2(payload: Uint8Array): Promise<V2LogChunk> {
+    if (!this.connectedDevice) {
+      throw new Error('No device connected');
+    }
+
+    return new Promise<V2LogChunk>((resolve, reject) => {
+      let isResolved = false;
+
+      const timeout = setTimeout(() => {
+        if (!isResolved) {
+          isResolved = true;
+          subscription?.remove();
+          reject(new Error('Timeout waiting for log response'));
+        }
+      }, 5000);
+
+      const subscription = this.connectedDevice!.monitorCharacteristicForService(
+        IMU_SERVICE_UUID,
+        V2_FILE_LIST_CHARACTERISTIC_UUID,
+        (error, characteristic) => {
+          if (isResolved) return;
+          if (error) {
+            clearTimeout(timeout);
+            isResolved = true;
+            subscription?.remove();
+            reject(error);
+            return;
+          }
+          if (!characteristic?.value) return;
+
+          const data = this.base64ToUint8Array(characteristic.value);
+          if (data.length < 1 || data[0] !== NOTIFY_LOG_DATA) return;
+
+          clearTimeout(timeout);
+          isResolved = true;
+          subscription?.remove();
+
+          if (data.length < 27) {
+            reject(new Error(`Short log packet: ${data.length} bytes`));
+            return;
+          }
+          const dv = new DataView(data.buffer, data.byteOffset, data.byteLength);
+          resolve({
+            nextPos: dv.getBigUint64(1, true),
+            gap: dv.getBigUint64(9, true),
+            totalWritten: dv.getBigUint64(17, true),
+            minLevel: data[25],
+            text: '',
+          });
+        }
+      );
+
+      this.writeConfigCommand(payload).catch(err => {
+        if (!isResolved) {
+          clearTimeout(timeout);
+          isResolved = true;
+          subscription?.remove();
+          reject(err);
+        }
+      });
+    });
   }
 
   /**

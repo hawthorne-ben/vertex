@@ -4,6 +4,7 @@
  */
 
 #include "storage_manager.h"
+#include "log_manager.h"
 
 StorageManager::StorageManager()
   : _spi(HSPI),
@@ -15,12 +16,16 @@ StorageManager::StorageManager()
 }
 
 bool StorageManager::init() {
+  // These two run BEFORE logger.init() by construction — the ring lives on the
+  // card being mounted here — so they stay Serial-only. A mount failure is
+  // still recorded: setup() logs [FAULT] SD init failed once the ring is up,
+  // and on a failed mount there is nowhere to write it anyway.
   Serial.println("[SD] Initializing...");
 
   _spi.begin(SD_SCK_PIN, SD_MISO_PIN, SD_MOSI_PIN, SD_CS_PIN);
 
   if (!SD.begin(SD_CS_PIN, _spi, SD_SPI_SPEED)) {
-    Serial.println("[SD] Card mount failed");
+    Serial.println("[SD] Card mount failed");  // pre-logger; see above
     return false;
   }
 
@@ -48,7 +53,7 @@ bool StorageManager::openNewFile(int64_t wallClockMs) {
 
   _writeFile = SD.open(_currentFileName, FILE_WRITE);
   if (!_writeFile) {
-    Serial.printf("[SD] Failed to open %s\n", _currentFileName);
+    LOG_E("SD", "failed to open %s", _currentFileName);
     return false;
   }
 
@@ -67,7 +72,12 @@ bool StorageManager::openNewFile(int64_t wallClockMs) {
 
   writeVTXHeader(wallClockMs);
 
-  Serial.printf("[SD] Recording to %s\n", _currentFileName);
+  // The storage-layer half of the pair: the file is open and the header is
+  // written. [REC] started reports the state transition a moment later. Kept
+  // distinct because a file that opens but never transitions to RECORDING is a
+  // real failure mode, and two lines make it visible.
+  LOG_I("SD", "file open %s (%lu MB free)", _currentFileName,
+        (unsigned long)getFreeSpaceMBCached());
   return true;
 }
 
@@ -95,7 +105,7 @@ bool StorageManager::writeSamples(const IMURecord* samples, int count) {
   size_t written = _writeFile.write((const uint8_t*)samples, bytes);
 
   if (written != bytes) {
-    Serial.printf("[SD] Write error: %d/%d bytes\n", written, bytes);
+    LOG_E("SD", "write error: %u/%u bytes", (unsigned)written, (unsigned)bytes);
     return false;
   }
 
@@ -135,8 +145,11 @@ void StorageManager::writeSyncSection() {
   size_t bytes = (size_t)_syncCount * sizeof(ClockSyncRecord);
   size_t written = _writeFile.write((const uint8_t*)_syncBuffer, bytes);
   if (written != bytes) {
-    Serial.printf("[SD] Sync section write failed: %u/%u bytes\n",
-                  (unsigned)written, (unsigned)bytes);
+    // ERROR: the recording keeps its IMU data but loses every sync record —
+    // the same end state as the 2026-09-07 ride, reached a different way. The
+    // two are indistinguishable in the .vtx file; this line separates them.
+    LOG_E("SD", "sync section write failed: %u/%u bytes — sync records lost",
+          (unsigned)written, (unsigned)bytes);
     return;  // Header offset/count stay 0 — file reads as having no sync stream
   }
   _writeFile.flush();
@@ -148,8 +161,8 @@ void StorageManager::writeSyncSection() {
   _writeFile.write((const uint8_t*)&_syncCount, 2);
   _writeFile.flush();
 
-  Serial.printf("[SD] Wrote %u sync records at offset %lu\n",
-                (unsigned)_syncCount, (unsigned long)syncOffset);
+  LOG_I("SD", "wrote %u sync records at offset %lu",
+        (unsigned)_syncCount, (unsigned long)syncOffset);
 }
 
 void StorageManager::closeFile(int64_t wallClockMs) {
@@ -160,10 +173,13 @@ void StorageManager::closeFile(int64_t wallClockMs) {
   writeSyncSection();
   _writeFile.close();
 
-  Serial.printf("[SD] Closed %s — %lu records, %u sync, %luKB\n",
-                _currentFileName, (unsigned long)_recordCount,
-                (unsigned)_syncCount,
-                (unsigned long)(_recordCount * VTX_IMU_RECORD_SIZE) / 1024);
+  // INFO: the per-file summary. Pairs with [REC] stopped to give record count
+  // and sync count together — the two numbers the 2026-09-07 post-mortem
+  // needed and had to recover from the file itself.
+  LOG_I("SD", "closed %s — %lu records, %u sync, %luKB",
+        _currentFileName, (unsigned long)_recordCount,
+        (unsigned)_syncCount,
+        (unsigned long)(_recordCount * VTX_IMU_RECORD_SIZE) / 1024);
 }
 
 void StorageManager::patchHeader(int64_t endTimestampMs) {
@@ -268,7 +284,7 @@ bool StorageManager::isValidFilename(const char* name) {
 bool StorageManager::deleteFile(const char* name) {
   if (!_sdReady) return false;
   if (!isValidFilename(name)) {
-    Serial.printf("[SD] Invalid filename rejected: %s\n", name);
+    LOG_W("SD", "invalid filename rejected: %s", name);
     return false;
   }
 

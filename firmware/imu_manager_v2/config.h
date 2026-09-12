@@ -41,12 +41,32 @@
 #define CMD_START_SYNC      0x0C  // Trigger WiFi upload of all files
 #define CMD_CANCEL_SYNC     0x0D  // Abort current WiFi upload
 #define CMD_TIME_RESPONSE   0x0E  // Phone's reply to a periodic time request (16 bytes: t2 int64, t3 int64)
+#define CMD_LOG_READ        0x0F  // [0x0F][position uint64] — read diagnostic log from a position
+#define CMD_LOG_SET_LEVEL   0x10  // [0x10][level uint8] — set minimum SD log level, persisted in NVS
+#define CMD_LOG_STATUS      0x11  // Query log position/level without reading any data
+#define CMD_LOG_CLEAR       0x12  // Reset the diagnostic ring to empty
 
 // ===== BLE Notification Opcodes (device → phone, on FILE_LIST characteristic) =====
 // Distinguished from file listings by a leading opcode byte. File listings
 // never begin with 0xF0 (first byte is a file count <= 255 but the packet is
 // only emitted in response to CMD_LIST_FILES).
 #define NOTIFY_TIME_REQUEST 0xF0  // [0xF0][t1 uint32] — device asks phone for the time
+// [0xF1][next_pos u64][gap u64][total_written u64][min_level u8][len u8][text]
+// Reply to CMD_LOG_READ and CMD_LOG_STATUS. `gap` is the number of bytes
+// overwritten before this reader saw them — nonzero means the reader lapped
+// and the loss is reported rather than silently skipped.
+#define NOTIFY_LOG_DATA     0xF1
+// Text bytes per notification. The chunk is sized at send time from the
+// negotiated MTU (BLEServer::getPeerMTU) rather than fixed: a 180-byte chunk
+// against a commonly negotiated 185-517 MTU meant a multi-KB drain took dozens
+// of round trips. LOG_BLE_CHUNK_MIN is the floor used when the MTU is
+// unavailable or implausibly small (the BLE default is 23), and _MAX bounds
+// the stack buffer.
+#define LOG_BLE_CHUNK_MIN 180
+#define LOG_BLE_CHUNK_MAX 480
+// Notification payload = MTU - 3 (ATT opcode + handle). The log preamble is
+// 27 bytes ahead of the text.
+#define LOG_BLE_PREAMBLE 27
 
 // ===== Hardware Pin Assignments (ESP32-S3 Mini) =====
 // Buttons
@@ -121,6 +141,52 @@
 #define CLOCK_SYNC_INTERVAL_MS 60000   // Request phone time every 60s while recording
 #define CLOCK_SYNC_TIMEOUT_MS 2000     // Give up on a response after 2s; skip the sample
 #define MAX_SYNC_RECORDS 512           // RAM buffer: 512 * 24B = 12KB, ~8.5h at 60s cadence
+
+// ===== Diagnostic Log Ring =====
+// An on-device diagnostic log in a fixed-size ring file on the same SD card,
+// separate from the .vtx recordings. Motivated by the 2026-09-07 ride that
+// produced 0 sync records where ~156 were due: the device logged to serial
+// only, so the ride carried no evidence of whether it asked and got no answer
+// or never asked. See notes/VALIDATION_PLAN.md §C3 and log_ring.h.
+#define LOG_FILE_PATH "/vertex.log"    // Outside LOG_DIR: listFiles() enumerates
+                                       // /vtx for BLE sync, and the log is not a
+                                       // recording. Keeping it out of that
+                                       // directory means no filter is needed and
+                                       // it can never be offered for upload.
+#define LOG_MAGIC "VLOG"               // 4 bytes, no terminator (unlike VTX_MAGIC)
+#define LOG_FORMAT_VERSION 1
+#define LOG_HEADER_SIZE 32             // Fixed header ahead of the ring region
+#define LOG_RING_BYTES (10 * 1024 * 1024)  // 10 MB. At the post-audit line rate
+                                       // (~200 B/line, WARN+ plus periodic INFO)
+                                       // this holds many rides; see the audit
+                                       // table in notes/DIAGNOSTIC_LOG.md.
+#define LOG_LINE_MAX 200               // Max formatted line length, excl. newline
+#define LOG_BUFFER_BYTES 2048          // RAM staging buffer (see flush policy)
+#define LOG_FLUSH_INTERVAL_MS 30000    // Time-based flush: every 30 s
+// Flush on whichever comes first: a WARN-or-above record (these are exactly
+// the lines that precede the crash being diagnosed, so a timer that loses the
+// last 30 s loses the interesting content), the buffer reaching half capacity,
+// or LOG_FLUSH_INTERVAL_MS elapsing.
+#define LOG_FLUSH_LEVEL LOG_WARN
+// INFO is the floor, not a default to be raised. Measured volume over a 3 h
+// ride: ~300 INFO lines ≈ 18 KB, so the 10 MB ring holds hundreds of rides —
+// there is no capacity argument for recording less, and a level that hides
+// "recording started" defeats the point of having a log. DEBUG is the only
+// tier that scales with loop rate (~2.3 MB over the same 3 h, wrapping the
+// ring in ~13 h), so it is the only one worth gating.
+#define LOG_DEFAULT_MIN_LEVEL LOG_INFO
+// The most restrictive _minLevel the device will accept. Levels are ordered
+// DEBUG(0) < INFO(1) < WARN(2) < ERROR(3) and the filter is `level >=
+// _minLevel`, so a HIGHER _minLevel records LESS. Capping it at INFO
+// guarantees INFO and above are always captured; the only remaining choice is
+// whether DEBUG (0) is included.
+#define LOG_MAX_MIN_LEVEL LOG_INFO
+
+// The staging buffer must hold at least two maximum-length lines, or the
+// half-capacity flush trigger fires on every single record and the buffer
+// stops being a buffer.
+static_assert(LOG_BUFFER_BYTES >= 2 * (LOG_LINE_MAX + 1),
+              "LOG_BUFFER_BYTES must hold at least two full lines");
 
 // ===== Timing =====
 #define LED_BLINK_IDLE 2000        // Slow blink when idle

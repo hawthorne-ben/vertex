@@ -5,10 +5,15 @@
  */
 
 #include "ble_manager.h"
+// The peer-identifying connect/disconnect overloads are stack-specific: this
+// core builds NimBLE (CONFIG_NIMBLE_ENABLED), which passes ble_gap_conn_desc,
+// while Bluedroid passes esp_ble_gatts_cb_param_t. Both are guarded below so
+// the file compiles either way.
 #include "sensor_manager.h"
 #include "storage_manager.h"
 #include "wifi_manager.h"
 #include "power_manager.h"
+#include "log_manager.h"
 
 // Defined in main sketch
 extern void startRecording();
@@ -21,25 +26,124 @@ extern uint32_t getRecordingElapsedSecs();
 // Global instance for callbacks
 BLEManager* g_ble = nullptr;
 
+// Last 3 bytes of a peer address, as "aa:bb:cc".
+//
+// Identifies WHICH central connected. Without it every connect line is
+// identical, so a phone dropping mid-ride is indistinguishable from a laptop
+// tool session — exactly the ambiguity that makes a log hard to read after the
+// fact. Three bytes tell two devices apart without writing a full MAC to the
+// card.
+static void formatPeer(char* out, size_t n, const uint8_t* bda) {
+  if (!bda) {
+    snprintf(out, n, "unknown");
+    return;
+  }
+  snprintf(out, n, "%02x:%02x:%02x", bda[3], bda[4], bda[5]);
+}
+
 class ServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer* server) {
+  // Shared state updates + logging, called from whichever stack-specific
+  // overload the core dispatches. `peer` identifies WHICH central connected:
+  // without it every connect line is identical, so a phone dropping mid-ride
+  // reads the same as a laptop tool session — exactly the ambiguity that makes
+  // a log hard to interpret after the fact.
+  void handleConnect(const char* peer) {
     if (g_ble) {
       g_ble->_connected = true;
       g_ble->_connectionTime = millis();
-      Serial.println("[BLE] Client connected");
     }
+    // INFO, not DEBUG: connect/disconnect pairs are the primary evidence for
+    // the app's disconnect/re-register defect (VALIDATION_PLAN.md §C3). A drop
+    // mid-ride permanently disables clock sync, and this is where that becomes
+    // visible.
+    LOG_I("BLE", "client connected peer=%s", peer);
   }
-  void onDisconnect(BLEServer* server) {
+
+  // `reason` is the stack's disconnect reason, or 0 when unavailable. It
+  // separates a link that dropped (supervision timeout — range, body blocking,
+  // interference) from one the peer closed deliberately. On a ride those mean
+  // completely different things. The raw code is kept rather than interpreted,
+  // so an unfamiliar value is still recoverable from the log.
+  void handleDisconnect(const char* peer, unsigned reason) {
+    bool droppedInFlight = false;
     if (g_ble) {
       g_ble->_connected = false;
       // Drop any in-flight time request: its reply can never arrive, and a
       // stale t1 would produce a bogus RTT if the phone reconnects.
+      droppedInFlight = g_ble->_timeReqPending;
       g_ble->_timeReqPending = false;
       g_ble->_timeRespReady = false;
-      Serial.println("[BLE] Client disconnected");
+    }
+
+    // WARN when a time request was in flight: that exchange is lost, and the
+    // pairing of this line with the next sync attempt is what separates "app
+    // stopped answering" from "device stopped asking".
+    if (droppedInFlight) {
+      LOG_W("BLE", "client disconnected peer=%s reason=0x%02X (time request in flight)",
+            peer, reason);
+    } else {
+      LOG_I("BLE", "client disconnected peer=%s reason=0x%02X", peer, reason);
     }
     BLEDevice::startAdvertising();
   }
+
+#if defined(CONFIG_NIMBLE_ENABLED)
+  // Last 3 bytes of the peer address — enough to tell two centrals apart in a
+  // log without writing a full MAC to the card.
+  static void formatPeer(char* out, size_t n, const uint8_t* v) {
+    snprintf(out, n, "%02x:%02x:%02x", v[3], v[4], v[5]);
+  }
+
+  void onConnect(BLEServer* server, ble_gap_conn_desc* desc) {
+    char peer[16] = "unknown";
+    if (desc) formatPeer(peer, sizeof(peer), desc->peer_id_addr.val);
+    handleConnect(peer);
+  }
+
+  void onDisconnect(BLEServer* server, ble_gap_conn_desc* desc) {
+    char peer[16] = "unknown";
+    if (desc) formatPeer(peer, sizeof(peer), desc->peer_id_addr.val);
+    handleDisconnect(peer, 0);
+  }
+#endif
+
+#if defined(CONFIG_BLUEDROID_ENABLED)
+  static void formatPeerBd(char* out, size_t n, const uint8_t* v) {
+    snprintf(out, n, "%02x:%02x:%02x", v[3], v[4], v[5]);
+  }
+
+  void onConnect(BLEServer* server, esp_ble_gatts_cb_param_t* param) {
+    char peer[16] = "unknown";
+    if (param) formatPeerBd(peer, sizeof(peer), param->connect.remote_bda);
+    handleConnect(peer);
+  }
+
+  void onDisconnect(BLEServer* server, esp_ble_gatts_cb_param_t* param) {
+    char peer[16] = "unknown";
+    unsigned reason = 0;
+    if (param) {
+      formatPeerBd(peer, sizeof(peer), param->disconnect.remote_bda);
+      reason = (unsigned)param->disconnect.reason;
+    }
+    handleDisconnect(peer, reason);
+  }
+#endif
+
+  // The core dispatches BOTH the no-param and the stack-specific overload for
+  // every event, so these must stay silent or each connect/disconnect is
+  // logged twice — once as peer=unknown and once with the real address.
+  // Observed on hardware 2026-09-12. The state updates are idempotent and
+  // already done by the overload above; these exist only to satisfy the
+  // virtual interface when no stack-specific overload is compiled in.
+#if !defined(CONFIG_NIMBLE_ENABLED) && !defined(CONFIG_BLUEDROID_ENABLED)
+  void onConnect(BLEServer* server) {
+    handleConnect("unknown");
+  }
+
+  void onDisconnect(BLEServer* server) {
+    handleDisconnect("unknown", 0);
+  }
+#endif
 };
 
 class ConfigCallbacks : public BLECharacteristicCallbacks {
@@ -93,13 +197,15 @@ BLEManager::BLEManager()
     _timeRespT4(0),
     _timeRespT2(0),
     _timeRespT3(0),
+    _logReaderPos(0),
+    _logReaderPosValid(false),
     _pendingCmd(0),
     _cmdPayloadLen(0) {
   g_ble = this;
 }
 
 void BLEManager::init() {
-  Serial.println("[BLE] Initializing (Bluedroid)...");
+  Serial.println("[BLE] Initializing (Bluedroid)...");  // pre-logger: SD may not be up
 
   BLEDevice::init(BLE_DEVICE_NAME);
   _server = BLEDevice::createServer();
@@ -143,7 +249,7 @@ void BLEManager::init() {
   adv->setMinPreferred(0x06);
   BLEDevice::startAdvertising();
 
-  Serial.printf("[BLE] Advertising as '%s'\n", BLE_DEVICE_NAME);
+  LOG_I("BLE", "advertising as '%s'", BLE_DEVICE_NAME);
 }
 
 bool BLEManager::isConnected() const {
@@ -155,7 +261,27 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
   if (cmd == 0) return;
   _pendingCmd = 0;
 
-  Serial.printf("[BLE] Command: 0x%02X\n", cmd);
+  // Level by cadence, not by category: a command the user triggered is a major
+  // event and belongs at INFO, while anything the app emits on a timer is loop
+  // traffic and belongs at DEBUG.
+  //
+  // CMD_GET_STATUS is the app's ~2 Hz poll — 7,200 lines/hour, enough to
+  // overrun a 10 MB ring on chatter alone during a long ride. It stays DEBUG.
+  // Every other command happens because somebody did something, so it is
+  // visible at the default level.
+  //
+  // The log commands are exempt entirely. Reading the ring used to write to the
+  // ring: every CMD_LOG_READ emitted a line that the next read then fetched, so
+  // a single drain filled the buffer with its own traffic — self-referential
+  // noise injected exactly when the level was lowered to investigate something
+  // else. Observing a system must not perturb it.
+  if (cmd == CMD_LOG_READ || cmd == CMD_LOG_STATUS) {
+    // no trace
+  } else if (cmd == CMD_GET_STATUS) {
+    LOG_D("BLE", "command 0x%02X (status poll)", cmd);
+  } else {
+    LOG_I("BLE", "command 0x%02X", cmd);
+  }
 
   switch (cmd) {
     case CMD_GET_STATUS: {
@@ -193,7 +319,8 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
         memcpy(&phoneTimeMs, _cmdPayload, 8);
         syncClock(phoneTimeMs);
       } else {
-        Serial.println("[BLE] SYNC_CLOCK: need 8-byte payload");
+        LOG_W("BLE", "SYNC_CLOCK: need 8-byte payload, got %u",
+              (unsigned)_cmdPayloadLen);
       }
       break;
     }
@@ -202,7 +329,8 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
       FileEntry entries[32];
       const int onDisk = storage.listFiles(nullptr, 0);       // true total
       const int fetched = storage.listFiles(entries, 32);     // what we hold
-      Serial.printf("[BLE] %d files on SD (%d fetched)\n", onDisk, fetched);
+      // One per CMD_LIST_FILES, which is a user action, not a poll.
+      LOG_I("BLE", "%d files on SD (%d fetched)", onDisk, fetched);
 
       // Directory order is filesystem order, not chronological — FAT reuses
       // freed entries, so a deletion makes the next file land wherever the
@@ -254,7 +382,11 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
         memcpy(filename, _cmdPayload, len);
         filename[len] = '\0';
         bool ok = storage.deleteFile(filename);
-        Serial.printf("[BLE] Delete %s: %s\n", filename, ok ? "OK" : "FAIL");
+        // Deletion is destructive and irreversible — WARN on failure, INFO on
+        // success, never DEBUG. "Where did that recording go" is a question
+        // this line answers months later.
+        if (ok) LOG_I("BLE", "deleted %s", filename);
+        else    LOG_W("BLE", "delete failed: %s", filename);
       }
       break;
     }
@@ -277,7 +409,7 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
           }
           wifi.saveWiFiCredentials(ssid, password);
         } else {
-          Serial.println("[BLE] SET_WIFI: invalid payload format");
+          LOG_W("BLE", "SET_WIFI: invalid payload format");
         }
       }
       break;
@@ -307,10 +439,10 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
             memcpy(serverUrl, _cmdPayload + sep2 + 1, urlLen);
             wifi.saveUserCredentials(userId, apiKey, serverUrl);
           } else {
-            Serial.println("[BLE] SET_USER: field too long");
+            LOG_W("BLE", "SET_USER: field too long");
           }
         } else {
-          Serial.println("[BLE] SET_USER: invalid payload format");
+          LOG_W("BLE", "SET_USER: invalid payload format");
         }
       }
       break;
@@ -322,7 +454,7 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
         state = STATE_UPLOADING;
         wifi.startSync(storage);
       } else {
-        Serial.printf("[BLE] Cannot sync — state=%d\n", state);
+        LOG_W("BLE", "cannot sync — state=%d", state);
       }
       break;
     }
@@ -336,14 +468,57 @@ void BLEManager::processCommands(DeviceState& state, SensorManager& sensor, Stor
       break;
     }
 
+    case CMD_LOG_READ: {
+      // [0x0F][position uint64]. An absent or short payload means "from the
+      // oldest surviving byte" — position 0, which logPlanRead() clamps up to
+      // the oldest survivor and reports the gap for.
+      if (_cmdPayloadLen >= 8) {
+        memcpy(&_logReaderPos, _cmdPayload, 8);
+      } else if (!_logReaderPosValid) {
+        _logReaderPos = 0;
+      }
+      _logReaderPosValid = true;
+      sendLogChunk(logger);
+      break;
+    }
+
+    case CMD_LOG_SET_LEVEL: {
+      if (_cmdPayloadLen >= 1 && _cmdPayload[0] <= LOG_ERROR) {
+        logger.setMinLevel(_cmdPayload[0]);
+      } else {
+        LOG_W("BLE", "LOG_SET_LEVEL: bad level");
+      }
+      sendLogStatus(logger);
+      break;
+    }
+
+    case CMD_LOG_STATUS:
+      sendLogStatus(logger);
+      break;
+
+    case CMD_LOG_CLEAR: {
+      logger.clear();
+      // Rewind this reader too. Its stored position refers to a ring that no
+      // longer exists; leaving it would put the reader far "ahead" of a writer
+      // that restarted at 0, and it would see nothing until the ring caught
+      // back up to where it used to be.
+      _logReaderPos = 0;
+      _logReaderPosValid = true;
+      sendLogStatus(logger);
+      break;
+    }
+
     case CMD_RESET:
-      Serial.println("[BLE] Reset requested");
+      // INFO: a commanded reset is deliberate, not a failure. The flush below
+      // is what guarantees it reaches the card, not the severity.
+      LOG_I("BLE", "reset requested");
+      logger.flush();  // the reboot is imminent; do not lose the reason
       delay(100);
       ESP.restart();
       break;
 
     default:
-      Serial.printf("[BLE] Unknown command: 0x%02X\n", cmd);
+      LOG_W("BLE", "unknown command 0x%02X", cmd);
       break;
   }
 }
@@ -394,6 +569,81 @@ bool BLEManager::expireStaleTimeRequest() {
   // A missed sync is not an error — the phone is usually away during a ride.
   _timeReqPending = false;
   return true;
+}
+
+// ===== Diagnostic log readout =====
+
+// Reply layout, on the file-list characteristic:
+//   [0xF1][next_pos u64][gap u64][total_written u64][min_level u8][len u8][text]
+//
+// `gap` is the number of bytes overwritten before this reader saw them. It is
+// reported rather than silently skipped — same principle as dropped-sample
+// handling in timestamp_reconstruction: flag the loss, do not paper over it.
+// The app shows it as "N bytes of log lost" instead of presenting a clean but
+// incomplete history.
+void BLEManager::sendLogChunk(LogManager& log) {
+  if (!_connected) return;
+
+  // Size the chunk from what this peer actually negotiated. getPeerMTU()
+  // returns the BLE default (23) before the exchange completes and 0 if the
+  // connection id is unknown, so clamp into [MIN, MAX] rather than trusting it
+  // — an over-large notification is silently truncated by the stack, which
+  // would corrupt the text without any error surfacing.
+  int chunk = LOG_BLE_CHUNK_MIN;
+  if (_server) {
+    const uint16_t mtu = _server->getPeerMTU(_server->getConnId());
+    if (mtu > 3) {
+      const int usable = (int)mtu - 3 - LOG_BLE_PREAMBLE;
+      if (usable > chunk) chunk = usable;
+    }
+  }
+  if (chunk > LOG_BLE_CHUNK_MAX) chunk = LOG_BLE_CHUNK_MAX;
+
+  uint8_t text[LOG_BLE_CHUNK_MAX];
+  uint64_t gap = 0;
+  const int n = log.readFrom(_logReaderPos, text, chunk, gap);
+
+  uint8_t buf[LOG_BLE_PREAMBLE + LOG_BLE_CHUNK_MAX];
+  int off = 0;
+  buf[off++] = NOTIFY_LOG_DATA;
+  memcpy(buf + off, &_logReaderPos, 8); off += 8;
+  memcpy(buf + off, &gap, 8);           off += 8;
+  const uint64_t total = log.getTotalWritten();
+  memcpy(buf + off, &total, 8);         off += 8;
+  buf[off++] = log.getMinLevel();
+  buf[off++] = (uint8_t)n;
+  if (n > 0) {
+    memcpy(buf + off, text, (size_t)n);
+    off += n;
+  }
+
+  _fileListChar->setValue(buf, off);
+  _fileListChar->notify();
+
+  if (gap > 0) {
+    LOG_W("LOG", "reader lapped, %llu bytes lost", (unsigned long long)gap);
+  }
+}
+
+// Position and level with no payload — lets the app show how much log is
+// waiting, and resume, without pulling any of it.
+void BLEManager::sendLogStatus(LogManager& log) {
+  if (!_connected) return;
+
+  uint8_t buf[LOG_BLE_PREAMBLE];
+  int off = 0;
+  buf[off++] = NOTIFY_LOG_DATA;
+  const uint64_t pos = _logReaderPosValid ? _logReaderPos : 0;
+  memcpy(buf + off, &pos, 8); off += 8;
+  const uint64_t gap = 0;
+  memcpy(buf + off, &gap, 8); off += 8;
+  const uint64_t total = log.getTotalWritten();
+  memcpy(buf + off, &total, 8); off += 8;
+  buf[off++] = log.getMinLevel();
+  buf[off++] = 0;  // no text
+
+  _fileListChar->setValue(buf, off);
+  _fileListChar->notify();
 }
 
 void BLEManager::sendStatus(DeviceState state, float batteryVoltage, uint32_t fileCount, uint16_t freeMb,

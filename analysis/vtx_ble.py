@@ -10,6 +10,11 @@ Usage:
     python vtx_ble.py list            # files on the SD card
     python vtx_ble.py sync            # trigger the WiFi upload of all files
     python vtx_ble.py watch [SECS]    # stream status until interrupted
+    python vtx_ble.py log             # pull the diagnostic ring, decoded
+    python vtx_ble.py log OUT.txt     # ...and save the raw lines to a file
+    python vtx_ble.py loglevel D|I|W|E  # set the minimum level kept on SD
+    python vtx_ble.py reset           # soft-reset the device (ESP.restart)
+    python vtx_ble.py logclear        # erase the diagnostic ring
 
 Protocol constants mirror firmware/imu_manager_v2/config.h and the packing in
 ble_manager.cpp::sendStatus / CMD_LIST_FILES.
@@ -31,6 +36,17 @@ FILE_LIST_CHAR_UUID = "12345678-1234-5678-1234-56789abcdef3"
 CMD_GET_STATUS = 0x01
 CMD_LIST_FILES = 0x04
 CMD_START_SYNC = 0x0C
+CMD_RESET = 0x0A
+CMD_LOG_READ = 0x0F
+CMD_LOG_SET_LEVEL = 0x10
+CMD_LOG_STATUS = 0x11
+CMD_LOG_CLEAR = 0x12
+
+# Device -> host opcode on the file-list characteristic. See config.h and
+# ble_manager.cpp::sendLogChunk.
+NOTIFY_LOG_DATA = 0xF1
+LOG_LEVEL_CHARS = {0: "DEBUG", 1: "INFO", 2: "WARN", 3: "ERROR"}
+LOG_LEVEL_FROM_ARG = {"D": 0, "I": 1, "W": 2, "E": 3}
 
 # DeviceState in config.h. 3 = STATE_FAULT, added 2026-09-06.
 STATE_NAMES = {0: "IDLE", 1: "RECORDING", 2: "UPLOADING", 3: "FAULT"}
@@ -101,6 +117,30 @@ def decode_file_list(b: bytes) -> dict:
         off += 1
         files.append({"name": name, "size": size, "synced": bool(synced)})
     return {"total_on_sd": total, "listed": packed, "files": files}
+
+
+def decode_log_chunk(b: bytes) -> dict:
+    """[0xF1][next_pos u64][gap u64][total u64][min_level u8][len u8][text]"""
+    # Preamble is 27 bytes: opcode(1) + next_pos/gap/total (3 x u64 = 24)
+    # + min_level(1) + len(1). Text follows at offset 27.
+    if len(b) < 27:
+        return {"error": f"short log packet: {len(b)} bytes", "raw": b.hex()}
+    if b[0] != NOTIFY_LOG_DATA:
+        return {"error": f"not a log packet: opcode 0x{b[0]:02X}", "raw": b.hex()}
+    next_pos, gap, total = struct.unpack_from("<QQQ", b, 1)
+    min_level = b[25]
+    text_len = b[26]
+    text = b[27:27 + text_len]
+    if len(text) != text_len:
+        return {"error": f"truncated: header says {text_len} text bytes, "
+                         f"got {len(text)}", "raw": b.hex()}
+    return {
+        "next_pos": next_pos,
+        "gap": gap,
+        "total_written": total,
+        "min_level": min_level,
+        "text": text,
+    }
 
 
 async def find_device(timeout: float = 10.0):
@@ -216,6 +256,143 @@ async def run(cmd, arg):
             except Exception as e:  # noqa: BLE001 - report, don't mask
                 print(f"\nConnection ended during sync: {e}")
                 print("Check the serial monitor for [WiFi] progress.")
+        elif cmd == "log":
+            # Pull the ring by repeated CMD_LOG_READ, walking the position the
+            # device hands back. Readers hold a position against total_written,
+            # not a raw offset, so this survives the writer wrapping underneath.
+            chunks = []
+
+            def on_log(_, data: bytearray):
+                chunks.append(bytes(data))
+
+            await client.start_notify(FILE_LIST_CHAR_UUID, on_log)
+
+            # Ask for status first: it reports total_written without moving any
+            # data, so we know up front how much there is to fetch.
+            await client.write_gatt_char(
+                CONFIG_CHAR_UUID, bytes([CMD_LOG_STATUS]), response=True)
+            await asyncio.sleep(0.5)
+            if not chunks:
+                print("No log notification received. Is the firmware new enough?")
+                return
+            head = decode_log_chunk(chunks[-1])
+            if "error" in head:
+                print(f"  !! {head['error']}  raw={head.get('raw')}")
+                return
+
+            total = head["total_written"]
+            level = LOG_LEVEL_CHARS.get(head["min_level"], head["min_level"])
+            print(f"Ring: {total:,} bytes written, min level {level}\n")
+            if total == 0:
+                print("Log is empty — nothing has been written at the current "
+                      "level yet.")
+                return
+
+            # Start from the oldest surviving byte. Position 0 is clamped up by
+            # the device, which reports the resulting gap.
+            pos = 0
+            body = bytearray()
+            total_gap = 0
+            stalls = 0
+            while True:
+                chunks.clear()
+                payload = bytes([CMD_LOG_READ]) + struct.pack("<Q", pos)
+                await client.write_gatt_char(CONFIG_CHAR_UUID, payload, response=True)
+                await asyncio.sleep(0.25)
+                if not chunks:
+                    stalls += 1
+                    if stalls >= 3:
+                        print(f"  !! no reply after {stalls} attempts at "
+                              f"position {pos:,}; stopping")
+                        break
+                    continue
+                stalls = 0
+
+                r = decode_log_chunk(chunks[-1])
+                if "error" in r:
+                    print(f"  !! {r['error']}")
+                    break
+                if r["gap"]:
+                    # Report the loss rather than stitching silently — the
+                    # device flagged it, so the tool must surface it.
+                    total_gap += r["gap"]
+                    print(f"  !! GAP: {r['gap']:,} bytes overwritten before "
+                          f"they were read")
+                body += r["text"]
+
+                # The device advances the position only over complete lines, so
+                # an unchanged position means there is nothing further to read.
+                if r["next_pos"] == pos and not r["text"]:
+                    break
+                pos = r["next_pos"]
+                if pos >= r["total_written"]:
+                    break
+
+            text = body.decode("utf-8", "replace")
+            lines = [ln for ln in text.split("\n") if ln.strip()]
+            print(f"{len(lines)} line(s), {len(body):,} bytes"
+                  + (f", {total_gap:,} bytes lost" if total_gap else "") + "\n")
+            for ln in lines:
+                print(f"  {ln}")
+
+            if arg:
+                with open(arg, "w") as fh:
+                    fh.write(text)
+                print(f"\nRaw lines written to {arg}")
+                print(f"Decode with: python decode_log.py --help  "
+                      f"(that tool reads a ring FILE; this output is already "
+                      f"linearised)")
+
+        elif cmd == "loglevel":
+            if not arg or arg.upper()[0] not in LOG_LEVEL_FROM_ARG:
+                raise SystemExit("Usage: vtx_ble.py loglevel D|I|W|E")
+            lv = LOG_LEVEL_FROM_ARG[arg.upper()[0]]
+            got = []
+            await client.start_notify(FILE_LIST_CHAR_UUID,
+                                      lambda _, d: got.append(bytes(d)))
+            await client.write_gatt_char(
+                CONFIG_CHAR_UUID, bytes([CMD_LOG_SET_LEVEL, lv]), response=True)
+            await asyncio.sleep(0.6)
+            if got:
+                r = decode_log_chunk(got[-1])
+                if "error" not in r:
+                    print(f"Minimum SD log level is now "
+                          f"{LOG_LEVEL_CHARS.get(r['min_level'], r['min_level'])} "
+                          f"(persisted in NVS).")
+                    return
+            print("No confirmation received — check the serial monitor.")
+
+        elif cmd == "logclear":
+            got = []
+            await client.start_notify(FILE_LIST_CHAR_UUID,
+                                      lambda _, d: got.append(bytes(d)))
+            await client.write_gatt_char(
+                CONFIG_CHAR_UUID, bytes([CMD_LOG_CLEAR]), response=True)
+            await asyncio.sleep(0.6)
+            if got:
+                r = decode_log_chunk(got[-1])
+                if "error" not in r:
+                    print(f"Ring cleared — total_written now {r['total_written']:,}")
+                    return
+            print("No confirmation received.")
+
+        elif cmd == "reset":
+            # CONFIG_CHAR is declared PROPERTY_WRITE only (no Write Without
+            # Response), so response=False is silently dropped by the stack and
+            # the device never sees the command. Must be response=True.
+            #
+            # The firmware acks, then delay(100) and ESP.restart(), so the write
+            # itself succeeds and the link drops just after -- a disconnect
+            # exception here means the reboot happened, not that it failed.
+            print("Sending soft reset...")
+            try:
+                await client.write_gatt_char(
+                    CONFIG_CHAR_UUID, bytes([CMD_RESET]), response=True)
+                print("  command acknowledged")
+            except Exception as e:  # noqa: BLE001 - a drop after the ack is fine
+                print(f"  link dropped during/after the write: {e}")
+            print("Device is rebooting. Re-advertises in a few seconds.")
+
         else:
             raise SystemExit(f"Unknown command: {cmd}")
 

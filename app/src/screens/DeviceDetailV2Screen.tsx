@@ -14,6 +14,8 @@ import {
   FlatList,
   ScrollView,
   TextInput,
+  ActivityIndicator,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
@@ -33,18 +35,111 @@ import {
   AlertCircle,
   Eye,
   EyeOff,
+  ScrollText,
 } from 'lucide-react-native';
 import { theme as staticTheme } from '../styles/theme';
 import { useTheme } from '../contexts/ThemeContext';
 import { useToast } from '../contexts/ToastContext';
-import { BackButton, Button, Card, ConfirmDialog } from '../components/ui';
+import { BackButton, Button, Card, ConfirmDialog, Modal } from '../components/ui';
 import Inclinometer from '../components/Inclinometer';
 import { API_URL, DEVICE_API_KEY } from '@env';
-import BleService, { V2Status, V2FileEntry, V2SyncProgress } from '../services/BleService';
+import BleService, {
+  V2Status,
+  V2FileEntry,
+  V2SyncProgress,
+  V2_LOG_LEVELS,
+} from '../services/BleService';
 import NotificationService from '../services/NotificationService';
 import { useAuth } from '../contexts/AuthContext';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { useDeviceStore } from '../stores/deviceStore';
+
+// One parsed line from the diagnostic ring.
+// Wire form is "<millis> <L> <tag> <msg>" (firmware/imu_manager_v2/log_ring.h).
+interface ParsedLogLine {
+  millis: number | null;
+  level: number | null; // index into V2_LOG_LEVELS
+  tag: string;
+  message: string;
+  /** Gap markers and unparseable records — always shown, never filtered out. */
+  notice: boolean;
+  /** Index of the boot session this line belongs to. */
+  session: number;
+}
+
+const LEVEL_INDEX: Record<string, number> = { D: 0, I: 1, W: 2, E: 3 };
+
+// Format raw millis() as uptime. The device has no wall clock in the log —
+// millis() is deliberate (it is the same time base as IMU sample timestamps,
+// and it never lies about being unavailable the way an unsynced clock does).
+const formatUptime = (ms: number): string => {
+  const totalSec = Math.floor(ms / 1000);
+  const msPart = ms % 1000;
+  const h = Math.floor(totalSec / 3600);
+  const m = Math.floor((totalSec % 3600) / 60);
+  const sec = totalSec % 60;
+  const mm = String(m).padStart(2, '0');
+  const ss = String(sec).padStart(2, '0');
+  const mmm = String(msPart).padStart(3, '0');
+  return h > 0 ? `${h}:${mm}:${ss}.${mmm}` : `${mm}:${ss}.${mmm}`;
+};
+
+// Parse raw lines and assign each to a boot session.
+//
+// millis() restarts at 0 on every boot, so a ring spanning several rides has
+// timestamps that appear to run backwards. The firmware writes a "SYS boot"
+// line at ERROR on each startup precisely so sessions can be told apart; this
+// splits on that marker, and also on any backwards time jump in case the boot
+// line itself was overwritten by a wrap.
+const parseLogLines = (lines: string[]): ParsedLogLine[] => {
+  const out: ParsedLogLine[] = [];
+  let session = 0;
+  let prevMillis: number | null = null;
+
+  for (const raw of lines) {
+    const m = /^(\d+) ([DIWE]) (\S+) ([\s\S]*)$/.exec(raw);
+    if (!m) {
+      // Gap markers and anything malformed. Never hidden by the view filter:
+      // a suppressed gap notice would misrepresent the history as continuous.
+      out.push({ millis: null, level: null, tag: '', message: raw, notice: true, session });
+      continue;
+    }
+
+    const millis = Number(m[1]);
+    const tag = m[3];
+    const message = m[4];
+    const isBoot = tag === 'SYS' && message.startsWith('boot');
+
+    if (out.length > 0 && (isBoot || (prevMillis !== null && millis < prevMillis))) {
+      session += 1;
+    }
+    prevMillis = millis;
+
+    out.push({
+      millis,
+      level: LEVEL_INDEX[m[2]] ?? null,
+      tag,
+      message,
+      notice: false,
+      session,
+    });
+  }
+  return out;
+};
+
+const logLineColor = (line: ParsedLogLine, theme: any): string => {
+  if (line.notice) return theme.colors.warning;
+  switch (line.level) {
+    case 3:
+      return theme.colors.error;
+    case 2:
+      return theme.colors.warning;
+    case 1:
+      return theme.colors.textPrimary;
+    default:
+      return theme.colors.textSecondary;
+  }
+};
 
 type DeviceDetailV2RouteProp = RouteProp<RootStackParamList, 'DeviceDetailV2'>;
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -114,6 +209,29 @@ const DeviceDetailV2Screen: React.FC = () => {
 
   // WiFi setup
   const [showWifiModal, setShowWifiModal] = useState(false);
+
+  // Diagnostic log streaming. The reader position is held against
+  // total_written (not a raw ring offset), so it stays valid while the device
+  // wraps underneath — the same contract the firmware and vtx_ble.py use.
+  const [showLogModal, setShowLogModal] = useState(false);
+  const [logLines, setLogLines] = useState<string[]>([]);
+  const [logLoading, setLogLoading] = useState(false);
+  const [logError, setLogError] = useState<string | null>(null);
+  const [logLevel, setLogLevel] = useState<number | null>(null);
+  const [logBytesLost, setLogBytesLost] = useState(0);
+  // VIEW filter — what this screen shows. Entirely separate from the device
+  // level below: this one is free and reversible, that one changes what the
+  // firmware persists to SD and cannot recover what it already discarded.
+  const [logViewFilter, setLogViewFilter] = useState(0);
+  const [showLogClearDialog, setShowLogClearDialog] = useState(false);
+  const [logAtBottom, setLogAtBottom] = useState(true);
+  const logPosRef = useRef<bigint>(0n);
+  const logScrollRef = useRef<ScrollView | null>(null);
+  // Set while a programmatic scrollToEnd is animating. onScroll fires
+  // throughout that animation with the offset still far from the bottom, which
+  // would immediately undo the state the tap just set — so those events are
+  // ignored until the animation lands.
+  const logAutoScrollingRef = useRef(false);
   const [wifiSsid, setWifiSsid] = useState('');
   const [wifiPassword, setWifiPassword] = useState('');
   const [wifiSaving, setWifiSaving] = useState(false);
@@ -287,8 +405,13 @@ const DeviceDetailV2Screen: React.FC = () => {
   }, [status?.state, refreshAll]);
 
   // Status polling — 500ms when idle/recording, skip during upload (firmware pushes)
+  //
+  // Also paused while the diagnostic log is open: the 2 Hz status poll and the
+  // log drain share one BLE link, and the poll's notifications compete with the
+  // log chunks for it. Status is not interesting while reading the log, and the
+  // poll resumes as soon as the modal closes.
   useEffect(() => {
-    if (isConnected && !isSyncing) {
+    if (isConnected && !isSyncing && !showLogModal) {
       statusPollRef.current = setInterval(async () => {
         if (!isMountedRef.current || !BleService.isConnected()) return;
         try {
@@ -308,7 +431,7 @@ const DeviceDetailV2Screen: React.FC = () => {
     return () => {
       if (statusPollRef.current) clearInterval(statusPollRef.current);
     };
-  }, [isConnected, isSyncing]);
+  }, [isConnected, isSyncing, showLogModal]);
 
   const refreshAll = useCallback(async () => {
     try {
@@ -431,6 +554,137 @@ const DeviceDetailV2Screen: React.FC = () => {
       setFileToDelete(null);
     }
   };
+
+  // Drain everything the device has from the current reader position. Each
+  // reply carries the position to resume from, so this walks forward until the
+  // device reports nothing further rather than guessing a chunk count.
+  const drainLog = useCallback(async (reset: boolean) => {
+    if (!BleService.isConnected()) {
+      setLogError('Device disconnected');
+      return;
+    }
+    setLogLoading(true);
+    setLogError(null);
+    try {
+      if (reset) {
+        // 0 is clamped up to the oldest surviving byte by the device, which
+        // reports the resulting gap rather than silently resyncing.
+        logPosRef.current = 0n;
+        setLogLines([]);
+        setLogBytesLost(0);
+        // The list is being rebuilt, so any previous scroll position is gone.
+        // Re-pin to the bottom rather than leaving logAtBottom describing a
+        // viewport that no longer exists — otherwise the pill can linger (or
+        // stay hidden) against freshly loaded content.
+        setLogAtBottom(true);
+      }
+
+      const collected: string[] = [];
+      let lost = 0;
+      // Bounded so a device writing faster than we read cannot spin forever.
+      for (let i = 0; i < 200; i++) {
+        const chunk = await BleService.readLogV2(logPosRef.current);
+        setLogLevel(chunk.minLevel);
+
+        if (chunk.gap > 0n) {
+          lost += Number(chunk.gap);
+          collected.push(`--- ${chunk.gap} bytes overwritten before they were read ---`);
+        }
+        if (chunk.text) {
+          collected.push(...chunk.text.split('\n').filter(l => l.trim().length > 0));
+        }
+
+        const done =
+          chunk.nextPos === logPosRef.current && !chunk.text;
+        logPosRef.current = chunk.nextPos;
+        if (done || chunk.nextPos >= chunk.totalWritten) break;
+      }
+
+      if (collected.length > 0) {
+        setLogLines(prev => [...prev, ...collected]);
+      }
+      if (lost > 0) {
+        setLogBytesLost(prev => prev + lost);
+      }
+    } catch (err: any) {
+      setLogError(err?.message ?? 'Failed to read log');
+    } finally {
+      setLogLoading(false);
+    }
+  }, []);
+
+  // Parse once per change, then apply the view filter. Notices (gap markers,
+  // malformed records) always survive the filter: hiding a gap would present
+  // the history as continuous when it is not.
+  const parsedLogLines = React.useMemo(() => parseLogLines(logLines), [logLines]);
+  const visibleLogLines = React.useMemo(
+    () =>
+      parsedLogLines.filter(
+        l => l.notice || (l.level !== null && l.level >= logViewFilter),
+      ),
+    [parsedLogLines, logViewFilter],
+  );
+
+  const handleOpenLog = useCallback(async () => {
+    setShowLogModal(true);
+    await drainLog(true);
+  }, [drainLog]);
+
+  const handleCloseLog = useCallback(() => {
+    setShowLogModal(false);
+  }, []);
+
+  // Write the device's minimum level. This is a DEVICE setting, persisted in
+  // NVS: it changes what the firmware records to SD from now on and survives a
+  // reboot. Distinct from logViewFilter, which only affects this screen.
+  const applyLogLevel = useCallback(async (next: number) => {
+    try {
+      const chunk = await BleService.setLogLevelV2(next);
+      setLogLevel(chunk.minLevel);
+      showToast({
+        message: `Device now records ${V2_LOG_LEVELS[chunk.minLevel]} and above`,
+        variant: 'success',
+        duration: 2500,
+      });
+    } catch (err: any) {
+      showToast({
+        message: err?.message ?? 'Failed to set log level',
+        variant: 'error',
+      });
+    }
+  }, [showToast]);
+
+  // Clear the device ring. Destructive and unrecoverable — the diagnostic
+  // history is the whole point of the feature, so it is confirmed first and
+  // never offered as a bare tap.
+  const handleClearLog = useCallback(async () => {
+    setShowLogClearDialog(false);
+    setLogLoading(true);
+    try {
+      await BleService.clearLogV2();
+      // Reset local view state to match the device's now-empty ring.
+      logPosRef.current = 0n;
+      setLogLines([]);
+      setLogBytesLost(0);
+      setLogError(null);
+      showToast({ message: 'Diagnostic log cleared', variant: 'success', duration: 2000 });
+    } catch (err: any) {
+      showToast({
+        message: err?.message ?? 'Failed to clear log',
+        variant: 'error',
+      });
+    } finally {
+      setLogLoading(false);
+    }
+  }, [showToast]);
+
+  // DEBUG on/off is the only choice: the device always records INFO and above,
+  // and the firmware clamps anything more restrictive. No confirmation needed
+  // in either direction — turning DEBUG off keeps every event-level line, and
+  // turning it on only costs ring capacity.
+  const handleToggleDebug = useCallback(() => {
+    applyLogLevel(logLevel === 0 ? 1 : 0);
+  }, [logLevel, applyLogLevel]);
 
   const handleSaveWifi = async () => {
     if (!wifiSsid.trim()) return;
@@ -844,29 +1098,45 @@ const DeviceDetailV2Screen: React.FC = () => {
 
         {/* Quick Actions — inline row below files */}
         {isConnected && !showWifiModal && !isSyncing && (
-          <View style={styles.quickActionsRow}>
+          <>
             {/* Clock sync is plumbing: it runs on connect and again before
                 every recording, so there is nothing for the user to operate.
                 Surface it only when it has never succeeded — that is the one
                 case where it changes what the data means (timestamps fall back
-                to the firmware's default epoch). Passive warning, not a CTA. */}
+                to the firmware's default epoch). Passive warning, not a CTA.
+
+                On its own row: WiFi Setup and Diagnostic Log are a half-width
+                pair, and adding a third flex child would shrink both to a
+                third whenever this warning happened to be showing. */}
             {clockSyncAttempted && !clockSynced && (
-              <View style={[styles.quickAction, { borderColor: theme.colors.warning, flex: 1 }]}>
-                <Clock size={16} color={theme.colors.warning} />
-                <Text style={[styles.quickActionText, { color: theme.colors.warning }]}>
-                  Clock not synced
-                </Text>
+              <View style={styles.quickActionsRow}>
+                <View style={[styles.quickAction, { borderColor: theme.colors.warning, flex: 1 }]}>
+                  <Clock size={16} color={theme.colors.warning} />
+                  <Text style={[styles.quickActionText, { color: theme.colors.warning }]}>
+                    Clock not synced
+                  </Text>
+                </View>
               </View>
             )}
-            <TouchableOpacity
-              style={[styles.quickAction, { borderColor: theme.colors.border, flex: 1 }]}
-              onPress={() => setShowWifiModal(true)}>
-              <Wifi size={16} color={theme.colors.textSecondary} />
-              <Text style={[styles.quickActionText, { color: theme.colors.textSecondary }]}>
-                WiFi Setup
-              </Text>
-            </TouchableOpacity>
-          </View>
+            <View style={styles.quickActionsRow}>
+              <TouchableOpacity
+                style={[styles.quickAction, { borderColor: theme.colors.border, flex: 1 }]}
+                onPress={() => setShowWifiModal(true)}>
+                <Wifi size={16} color={theme.colors.textSecondary} />
+                <Text style={[styles.quickActionText, { color: theme.colors.textSecondary }]}>
+                  WiFi Setup
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.quickAction, { borderColor: theme.colors.border, flex: 1 }]}
+                onPress={handleOpenLog}>
+                <ScrollText size={16} color={theme.colors.textSecondary} />
+                <Text style={[styles.quickActionText, { color: theme.colors.textSecondary }]}>
+                  Diagnostic Log
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </>
         )}
 
         {/* Secondary Actions */}
@@ -881,6 +1151,224 @@ const DeviceDetailV2Screen: React.FC = () => {
           </Button>
         </View>
       </ScrollView>
+
+      {/* Diagnostic Log — modelled on the Scan for Devices leaf */}
+      <Modal
+        visible={showLogModal}
+        onClose={handleCloseLog}
+        title="Diagnostic Log"
+        // Action row uses the same control shape as the level chips below:
+        // Button's own padding (16/24 at md, 8/16 at sm) forced the two-word
+        // labels to wrap once three sat in one row.
+        footer={
+          <View style={styles.logActions}>
+            <TouchableOpacity
+              style={[styles.logActionChip, { borderColor: theme.colors.border }]}
+              disabled={logLoading}
+              onPress={() => drainLog(false)}>
+              <Text
+                numberOfLines={1}
+                style={[styles.logChipText, { color: theme.colors.textSecondary }]}>
+                Refresh
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.logActionChip, { borderColor: theme.colors.border }]}
+              disabled={logLoading}
+              onPress={() => drainLog(true)}>
+              <Text
+                numberOfLines={1}
+                style={[styles.logChipText, { color: theme.colors.textSecondary }]}>
+                Reload All
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.logActionChip, { borderColor: theme.colors.error }]}
+              disabled={logLoading}
+              onPress={() => setShowLogClearDialog(true)}>
+              <Text
+                numberOfLines={1}
+                style={[styles.logChipText, { color: theme.colors.error }]}>
+                Delete All
+              </Text>
+            </TouchableOpacity>
+          </View>
+        }>
+        {/* VIEW filter — local to this screen. Changing it costs nothing and
+            hides nothing permanently. */}
+        <Text style={[styles.logSectionLabel, { color: theme.colors.textSecondary }]}>
+          Show
+        </Text>
+        <View style={styles.logChipRow}>
+          {V2_LOG_LEVELS.map((name, idx) => {
+            const active = logViewFilter === idx;
+            return (
+              <TouchableOpacity
+                key={`view-${name}`}
+                style={[
+                  styles.logChip,
+                  {
+                    borderColor: active ? theme.colors.primary : theme.colors.border,
+                    backgroundColor: active ? theme.colors.primary : 'transparent',
+                  },
+                ]}
+                onPress={() => setLogViewFilter(idx)}>
+                <Text
+                  style={[
+                    styles.logChipText,
+                    { color: active ? theme.colors.background : theme.colors.textSecondary },
+                  ]}>
+                  {idx === 0 ? 'All' : `${name}+`}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+
+        {/* DEVICE recording level — persisted in NVS.
+            INFO and above is always recorded (~18 KB over a 3 h ride against a
+            10 MB ring), so the only real choice is whether DEBUG is included —
+            it is the one tier that scales with loop rate (~2.3 MB per 3 h). A
+            single toggle, styled as a peer of the Show chips above. */}
+        <TouchableOpacity
+          style={[
+            styles.logDebugToggle,
+            {
+              borderColor: logLevel === 0 ? theme.colors.warning : theme.colors.border,
+              backgroundColor: logLevel === 0 ? theme.colors.warning : 'transparent',
+            },
+          ]}
+          disabled={logLoading || logLevel === null}
+          onPress={handleToggleDebug}>
+          <Text
+            numberOfLines={1}
+            style={[
+              styles.logChipText,
+              { color: logLevel === 0 ? theme.colors.background : theme.colors.textSecondary },
+            ]}>
+            Debug logging
+          </Text>
+        </TouchableOpacity>
+
+        {logLoading && (
+          <View style={[styles.logIndicator, { backgroundColor: theme.colors.muted }]}>
+            <ActivityIndicator size="small" color={theme.colors.primary} />
+            <Text style={[styles.logIndicatorText, { color: theme.colors.textSecondary }]}>
+              Reading log from device...
+            </Text>
+          </View>
+        )}
+
+        {logError && (
+          <View style={[styles.logIndicator, { backgroundColor: theme.colors.muted }]}>
+            <AlertCircle size={16} color={theme.colors.error} />
+            <Text style={[styles.logIndicatorText, { color: theme.colors.error }]}>
+              {logError}
+            </Text>
+          </View>
+        )}
+
+        {/* Overwritten bytes are surfaced, never silently skipped — the ring
+            reports what it lost so a gap in the history is visible rather than
+            reading as a clean but incomplete record. */}
+        {logBytesLost > 0 && (
+          <View style={[styles.logIndicator, { backgroundColor: theme.colors.muted }]}>
+            <AlertCircle size={16} color={theme.colors.warning} />
+            <Text style={[styles.logIndicatorText, { color: theme.colors.warning }]}>
+              {`${logBytesLost.toLocaleString()} bytes overwritten before they were read`}
+            </Text>
+          </View>
+        )}
+
+        <ScrollView
+          ref={logScrollRef}
+          style={styles.logList}
+          // Pin to bottom only when already there: auto-scrolling while the
+          // user has scrolled up to read would fight them.
+          onScroll={e => {
+            // Ignore the events emitted while a "jump to latest" animation is
+            // in flight; they report the in-between offsets, not the user's
+            // intent.
+            if (logAutoScrollingRef.current) return;
+            const { layoutMeasurement, contentOffset, contentSize } = e.nativeEvent;
+            const distanceFromBottom =
+              contentSize.height - (contentOffset.y + layoutMeasurement.height);
+            setLogAtBottom(distanceFromBottom < 40);
+          }}
+          scrollEventThrottle={16}
+          onContentSizeChange={() => {
+            if (logAtBottom) {
+              logScrollRef.current?.scrollToEnd({ animated: false });
+            }
+          }}>
+          {visibleLogLines.length === 0 && !logLoading && !logError && (
+            <Text style={[styles.logEmptyText, { color: theme.colors.textSecondary }]}>
+              {logLines.length > 0
+                ? `Nothing at ${V2_LOG_LEVELS[logViewFilter]} or above. Lower the Show filter to see more.`
+                : 'No entries yet.'}
+            </Text>
+          )}
+          {visibleLogLines.map((line, i) => (
+            <View key={`${line.session}-${i}-${line.millis ?? 'n'}`}>
+              {/* Session break: millis() restarts at each boot, so without this
+                  a multi-ride log looks like time runs backwards. */}
+              {i > 0 && line.session !== visibleLogLines[i - 1].session && (
+                <View style={[styles.logSessionDivider, { borderTopColor: theme.colors.border }]}>
+                  <Text style={[styles.logSessionText, { color: theme.colors.textTertiary }]}>
+                    {`session ${line.session + 1} — device restarted`}
+                  </Text>
+                </View>
+              )}
+              <View style={styles.logRow}>
+                {!line.notice && line.millis !== null && (
+                  <Text style={[styles.logTime, { color: theme.colors.textTertiary }]}>
+                    {formatUptime(line.millis)}
+                  </Text>
+                )}
+                <Text
+                  style={[styles.logMessage, { color: logLineColor(line, theme) }]}
+                  selectable>
+                  {line.notice ? line.message : `${line.tag}  ${line.message}`}
+                </Text>
+              </View>
+            </View>
+          ))}
+        </ScrollView>
+
+        {!logAtBottom && visibleLogLines.length > 0 && (
+          <TouchableOpacity
+            style={[styles.logJumpButton, { backgroundColor: theme.colors.muted, borderColor: theme.colors.border }]}
+            onPress={() => {
+              logAutoScrollingRef.current = true;
+              setLogAtBottom(true);
+              logScrollRef.current?.scrollToEnd({ animated: true });
+              // Re-arm once the animation has landed. Slightly longer than the
+              // ~300ms RN scroll animation so the trailing events are covered.
+              setTimeout(() => {
+                logAutoScrollingRef.current = false;
+              }, 450);
+            }}>
+            <Text style={[styles.logChipText, { color: theme.colors.textSecondary }]}>
+              Jump to latest
+            </Text>
+          </TouchableOpacity>
+        )}
+      </Modal>
+
+      {/* Clearing is unrecoverable — the ring is the only copy. */}
+      <ConfirmDialog
+        visible={showLogClearDialog}
+        onDismiss={() => setShowLogClearDialog(false)}
+        title="Delete Diagnostic Log?"
+        message="Erases the device's entire diagnostic history, including anything recorded on earlier rides. This cannot be undone."
+        icon={<Trash2 size={48} color={theme.colors.error} />}
+        actions={[
+          { label: 'Cancel', onPress: () => setShowLogClearDialog(false), variant: 'default' },
+          { label: 'Delete All', onPress: handleClearLog, variant: 'danger' },
+        ]}
+      />
+
+
 
       {/* Delete File Dialog */}
       <ConfirmDialog
@@ -989,6 +1477,120 @@ const styles = StyleSheet.create({
   inclinometerRow: {
     alignItems: 'center',
     marginBottom: 24,
+  },
+  logSectionLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+  },
+  logChipRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  logChip: {
+    flex: 1,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    alignItems: 'center',
+  },
+  logChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  // Same shape as logChip above, with the top margin that separates it from
+  // the Show row and bottom margin before the log list.
+  logDebugToggle: {
+    marginTop: 12,
+    marginBottom: 12,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  logTime: {
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
+    fontSize: 10,
+    lineHeight: 16,
+    minWidth: 62,
+  },
+  logMessage: {
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
+    fontSize: 11,
+    lineHeight: 16,
+    flex: 1,
+  },
+  logSessionDivider: {
+    borderTopWidth: 1,
+    marginTop: 8,
+    paddingTop: 6,
+    marginBottom: 4,
+  },
+  logSessionText: {
+    fontSize: 10,
+    fontStyle: 'italic',
+  },
+  logJumpButton: {
+    position: 'absolute',
+    bottom: 76,
+    alignSelf: 'center',
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 16,
+    borderWidth: 1,
+  },
+  logIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 12,
+  },
+  logIndicatorText: {
+    fontSize: 13,
+    flexShrink: 1,
+  },
+  logList: {
+    maxHeight: 400,
+  },
+  logEmptyText: {
+    textAlign: 'center',
+    fontSize: 14,
+    padding: 32,
+  },
+  logLine: {
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
+    fontSize: 11,
+    lineHeight: 16,
+    marginBottom: 2,
+  },
+  logActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  // Matches logChip above: same height, radius and text size, so the action row
+  // reads as a peer of the level toggles rather than a heavier control.
+  // numberOfLines={1} on the labels keeps "Reload All" and "Delete All" on one
+  // line at narrow widths instead of wrapping.
+  logActionChip: {
+    flex: 1,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   quickActionsRow: {
     flexDirection: 'row',

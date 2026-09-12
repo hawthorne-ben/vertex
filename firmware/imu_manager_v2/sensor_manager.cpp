@@ -27,6 +27,10 @@ SensorManager::SensorManager()
 }
 
 bool SensorManager::init() {
+  // All of init() runs before logger.init() (setup() brings the SD card up
+  // after the IMU), so these stay Serial-only. The outcome is not lost: a
+  // failure surfaces as [FAULT] IMU init failed once the ring is available,
+  // and re-init attempts from STATE_FAULT recovery log there too.
   Serial.println("[IMU] Initializing LSM6DS3...");
 
   Wire.begin(I2C_SDA_PIN, I2C_SCL_PIN);
@@ -37,7 +41,7 @@ bool SensorManager::init() {
   for (int attempt = 0; attempt < 3; attempt++) {
     whoAmI = readRegister(LSM6DS3_WHO_AM_I);
     if (whoAmI == LSM6DS3_WHO_AM_I_VALUE) break;
-    Serial.printf("[IMU] WHO_AM_I attempt %d: got 0x%02X\n", attempt + 1, whoAmI);
+    Serial.printf("[IMU] WHO_AM_I attempt %d: got 0x%02X\n", attempt + 1, whoAmI);  // pre-logger
     delay(50);
   }
   if (whoAmI != LSM6DS3_WHO_AM_I_VALUE) {
@@ -70,6 +74,7 @@ bool SensorManager::init() {
   uint8_t ctrl3 = readRegister(LSM6DS3_CTRL3_C);
   uint8_t fifo3 = readRegister(LSM6DS3_FIFO_CTRL3);
   uint8_t fifo5 = readRegister(LSM6DS3_FIFO_CTRL5);
+  // Register dump: bench-only detail, kept on serial where it is read.
   Serial.printf("[IMU] CTRL1_XL=0x%02X CTRL2_G=0x%02X CTRL3_C=0x%02X\n", ctrl1, ctrl2, ctrl3);
   Serial.printf("[IMU] FIFO_CTRL3=0x%02X FIFO_CTRL5=0x%02X\n", fifo3, fifo5);
 
