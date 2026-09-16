@@ -1,7 +1,20 @@
+// Dump a Garmin .fit to JSON for the analysis scripts.
+//
+//   node fitdump.mjs <input.fit> <output.json>
+//
+// Output path is an argument rather than hardcoded to /tmp: descent_compare.py
+// consumes this, and a chart in the presentation has to stay reproducible after
+// a reboot clears the temp directory.
 import pkg from 'fit-file-parser';
 const FitParser = pkg.default ?? pkg;
 import { readFileSync, writeFileSync } from 'fs';
-const buf = new Uint8Array(readFileSync(process.argv[2]));
+
+const [, , inPath, outPath] = process.argv;
+if (!inPath || !outPath) {
+  console.error('usage: node fitdump.mjs <input.fit> <output.json>');
+  process.exit(2);
+}
+const buf = new Uint8Array(readFileSync(inPath));
 const parser = new FitParser({ force: true, speedUnit: 'm/s', lengthUnit: 'm',
   temperatureUnit: 'celsius', pressureUnit: 'bar', elapsedRecordField: true, mode: 'cascade' });
 parser.parse(buf, (err, data) => {
@@ -15,6 +28,6 @@ parser.parse(buf, (err, data) => {
     lat: r.position_lat ?? null, lon: r.position_long ?? null,
     alt: r.altitude ?? r.enhanced_altitude ?? null,
   }));
-  writeFileSync('/tmp/fit_9_7.json', JSON.stringify(out));
-  console.error('wrote', out.length, 'to /tmp/fit_9_7.json');
+  writeFileSync(outPath, JSON.stringify(out));
+  console.error('wrote', out.length, 'to', outPath);
 });

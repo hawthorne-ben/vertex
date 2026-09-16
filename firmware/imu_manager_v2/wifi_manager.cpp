@@ -13,6 +13,8 @@
 #include "log_manager.h"
 #include "storage_manager.h"
 #include <WiFi.h>
+#include <errno.h>   // socket errno after a failed write
+#include <string.h>  // strerror
 #include <WiFiClientSecure.h>
 
 WiFiUploadManager::WiFiUploadManager()
@@ -231,6 +233,10 @@ bool WiFiUploadManager::tick(StorageManager& storage) {
 
     case WIFI_STREAMING: {
       // Stream chunks in a time-budgeted loop
+      // The budget is checked BETWEEN writes, so one slow write can overrun it
+      // — bounded by WIFI_WRITE_TIMEOUT_MS, not by this. That is the intended
+      // split: this keeps a healthy upload from monopolising loop(), the socket
+      // timeout keeps an unhealthy one from reaching the watchdog.
       unsigned long streamStart = millis();
       while (_fileRemaining > 0 && (millis() - streamStart) < WIFI_STREAM_BUDGET_MS) {
         if (!streamNextChunk(storage)) {
@@ -364,6 +370,15 @@ Client* WiFiUploadManager::connectClient(const String& host, int port, bool useS
   if (useSSL) {
     WiFiClientSecure* ssl = new WiFiClientSecure();
     ssl->setInsecure();  // Skip cert verification (ESP32 has limited CA store)
+    // WiFiClientSecure defaults _timeout to 30000 ms and uses it as
+    // SO_SNDTIMEO. That is 6x the 5 s task watchdog, so a peer that stops
+    // ACKing mid-upload blocks loop() long enough to reboot the device instead
+    // of failing the transfer. Measured at exactly 30,003 ms on 2026-09-12.
+    // setConnectionTimeout() sets _timeout in MILLISECONDS, which
+    // NetworkClientSecure::write() installs as SO_SNDTIMEO. (There is no
+    // setTimeout() on these classes — Stream::setTimeout is unrelated and does
+    // not reach the socket.)
+    ssl->setConnectionTimeout(WIFI_WRITE_TIMEOUT_MS);
     if (!ssl->connect(host.c_str(), port)) {
       LOG_W("WIFI", "SSL connect failed: %s:%d", host.c_str(), port);
       delete ssl;
@@ -518,6 +533,15 @@ bool WiFiUploadManager::beginDirectUpload(StorageManager& storage, const char* f
 
   uint32_t fileSize = storage.getOpenFileSize();
 
+  // Heap instrumentation around the upload path. Each TLS connection allocates
+  // mbedTLS in/out buffers of CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN (16 KB each)
+  // on top of this 16 KB chunk buffer, so upload is by far the most
+  // heap-hungry thing the device does. Without these numbers an allocation
+  // failure inside mbedTLS is indistinguishable from a network drop — both
+  // surface only as write() returning 0.
+  LOG_I("WIFI", "heap before upload: %lu free, %lu largest block",
+        (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMaxAllocHeap());
+
   _uploadBuf = (uint8_t*)malloc(WIFI_UPLOAD_CHUNK_SIZE);
   if (!_uploadBuf) {
     LOG_E("WIFI", "failed to allocate upload buffer (%d bytes)", WIFI_UPLOAD_CHUNK_SIZE);
@@ -562,11 +586,78 @@ bool WiFiUploadManager::streamNextChunk(StorageManager& storage) {
   int bytesRead = storage.readFileChunk(_uploadBuf, toRead);
   if (bytesRead <= 0) return false;
 
+  // Periodic heap trace during streaming. The 2026-09-13 ride showed ~21 KB of
+  // heap consumed and the largest contiguous block shrinking 37% across ~26
+  // chunks of ONE file, which is why uploads die around 200-250 KB rather than
+  // at a fixed offset. A total before/after delta cannot localise that; a rate
+  // can. Every 16 chunks = 128 KB at the 8 KB chunk size, so this costs a
+  // handful of lines per file rather than one per chunk.
+  static uint32_t s_chunkCounter = 0;
+  if ((s_chunkCounter++ % 16) == 0) {
+    // RSSI alongside heap: a link degrading across the stream is the leading
+    // hypothesis now that allocation has been ruled out.
+    LOG_D("WIFI", "stream: sent %lu rssi=%d heap %lu/%lu",
+          (unsigned long)_progress.bytesSent, (int)WiFi.RSSI(),
+          (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMaxAllocHeap());
+  }
+
+  const unsigned long t0 = millis();
+  errno = 0;
   int written = _activeClient->write(_uploadBuf, bytesRead);
   if (written != bytesRead) {
-    LOG_E("WIFI", "write error: %d/%d bytes", (int)written, (int)bytesRead);
+    // Interrogate the SOCKET and the LINK, not the heap.
+    //
+    // write() returning 0 means NetworkClientSecure saw !_connected — the
+    // session was already gone. Heap was chased first on 2026-09-13 and was a
+    // red herring: the largest free block at failure was 24 KB against an 8 KB
+    // chunk, so allocation never failed. What is actually unknown is WHY the
+    // socket died, and these four values separate the candidates:
+    //   errno ECONNRESET  -> peer or AP tore the connection down
+    //   errno ETIMEDOUT   -> no ACK, retransmits exhausted
+    //   wifi != CONNECTED -> the station itself dropped off the AP
+    //   RSSI very negative-> marginal link, expect the above
+    const int e = errno;
+    const int wl = (int)WiFi.status();
+
+    // EAGAIN/EWOULDBLOCK is NOT fatal. It means SO_SNDTIMEO expired with the
+    // peer's receive window still full — the connection is alive and simply
+    // needs time to drain. Measured 2026-09-13 at 20.7 MB into a 42 MB upload:
+    // errno=11, WiFi.status()=WL_CONNECTED, RSSI -60. Treating that as an
+    // error aborted a transfer that would have completed.
+    //
+    // Returning true without consuming the chunk re-offers the SAME bytes on
+    // the next tick(): _fileRemaining and the read position are untouched, and
+    // the SD read is repeated. That yields to loop() between attempts, so the
+    // watchdog is fed and the FIFO is serviced while the window reopens.
+    if (written == 0 && (e == EAGAIN || e == EWOULDBLOCK) && wl == WL_CONNECTED) {
+      if (++_writeRetries <= WIFI_WRITE_MAX_RETRIES) {
+        LOG_W("WIFI", "write would block (retry %u/%u) rssi=%d sent=%lu",
+              (unsigned)_writeRetries, (unsigned)WIFI_WRITE_MAX_RETRIES,
+              (int)WiFi.RSSI(), (unsigned long)_progress.bytesSent);
+        storage.rewindReadFile(bytesRead);  // re-read these bytes next tick
+        return true;
+      }
+      LOG_E("WIFI", "write blocked %u consecutive times — giving up at %lu bytes",
+            (unsigned)_writeRetries, (unsigned long)_progress.bytesSent);
+    }
+
+    // Name the errno explicitly rather than via strerror(): on this toolchain
+    // errno 11 (EAGAIN) prints as "No more processes", a historical Unix
+    // fork()-exhaustion string that is actively misleading for a socket.
+    const char* ename = (e == EAGAIN)     ? "EAGAIN/EWOULDBLOCK"
+                      : (e == ECONNRESET) ? "ECONNRESET"
+                      : (e == ENOTCONN)   ? "ENOTCONN"
+                      : (e == EPIPE)      ? "EPIPE"
+                      : (e == ETIMEDOUT)  ? "ETIMEDOUT"
+                      : (e == 0)          ? "none" : "other";
+    LOG_E("WIFI", "write error: %d/%d after %lums errno=%d (%s) wifi=%d rssi=%d sent=%lu",
+          (int)written, (int)bytesRead, (unsigned long)(millis() - t0),
+          e, ename, wl, (int)WiFi.RSSI(),
+          (unsigned long)_progress.bytesSent);
     return false;
   }
+
+  _writeRetries = 0;  // a successful write clears the streak
 
   _fileRemaining -= bytesRead;
   _progress.bytesSent += bytesRead;

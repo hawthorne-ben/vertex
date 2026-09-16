@@ -96,6 +96,10 @@ private:
   uint32_t _droppedLines;
   uint32_t _writeFailures;
 
+  // millis() of the last reader pull, or 0 if none this session. Drives the
+  // faster flush cadence while somebody is actually watching.
+  unsigned long _lastReadMs;
+
   // Append a formatted line (no newline) to the staging buffer.
   void appendToBuffer(const char* line, int len);
   // Write the ring header in place. Called on every flush.

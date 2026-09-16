@@ -49,6 +49,7 @@ ROWS = [
     ("BLE protocol",              "·●●●", False),
     ("Header patch on power loss","●·●·", False),
     ("Clock sync",                "●●●●", False),
+    ("Diagnostic log ring",       "●●●◐", True),
     ("Fault handling",            "●·✕·", True),
 ]
 
@@ -63,7 +64,7 @@ MARK = {
 def main():
     setup()
     n = len(ROWS)
-    fig, ax = plt.subplots(figsize=(9.6, 0.55 * n + 2.3))
+    fig, ax = plt.subplots(figsize=(9.6, 0.55 * n + 2.7))
 
     # Explicit x positions: label column, then evenly spaced marker columns,
     # then the notes column. Fixed rather than derived so nothing collides.
@@ -100,7 +101,7 @@ def main():
                 ax.plot(COL_X[j], y, marker="o", ms=15, color=color, zorder=3)
 
     ax.set_xlim(-0.15, XMAX)
-    ax.set_ylim(-1.75, n + 1.25)
+    ax.set_ylim(-2.05, n + 1.25)
     ax.axis("off")
 
     ax.text(LABEL_X, n + 1.05, "What is validated, and how",
@@ -108,7 +109,7 @@ def main():
 
     # Legend drawn with the same markers rather than text glyphs — the box
     # characters were missing from the font.
-    ly = -0.62
+    ly = -0.78
     items = [("o", C.PRIMARY, 15, "covered", False),
              ("o", C.ORANGE, 15, "partial", True),
              ("X", C.CONTRAST, 14, "blocked by hardware", False),
@@ -122,9 +123,11 @@ def main():
                 fontsize=11, color=C.TEXT_2)
         x += 0.35 + len(label) * 0.135
 
-    ax.text(LABEL_X, -1.12,
-            "* sealed production unit — fault injection not possible without a "
+    ax.text(LABEL_X, -1.30,
+            "* Fault handling — sealed production unit, fault injection needs a "
             "second build\n"
+            "* Diagnostic log — wrap verified on hardware at 4 KB, not yet at the "
+            "production 10 MB geometry\n"
             "Field = 166 recordings · 30 M samples · 134 h across two hardware "
             "generations",
             ha="left", va="top", fontsize=10.5, color=C.TEXT_3, linespacing=1.6)

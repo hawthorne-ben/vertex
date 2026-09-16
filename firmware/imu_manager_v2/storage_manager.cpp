@@ -259,6 +259,13 @@ int StorageManager::readFileChunk(uint8_t* buffer, int maxBytes) {
   return _readFile.read(buffer, maxBytes);
 }
 
+bool StorageManager::rewindReadFile(uint32_t bytes) {
+  if (!_readFile) return false;
+  const uint32_t pos = (uint32_t)_readFile.position();
+  if (bytes > pos) return false;
+  return _readFile.seek(pos - bytes);
+}
+
 void StorageManager::closeReadFile() {
   if (_readFile) {
     _readFile.close();

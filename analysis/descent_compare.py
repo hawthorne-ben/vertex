@@ -35,9 +35,21 @@ from plot_style import C, figure, save, setup  # noqa: E402
 from vtx_parser import decode_vtx  # noqa: E402
 
 SRC = "data/sample-recordings/9_7_2026_33823744.vtx"
-FIT = "/tmp/fit_9_7.json"   # from web/fitdump.mjs — the same fit-file-parser
-                            # the production API uses, force:true to tolerate
-                            # the malformed developer field Garmin writes
+
+# Paired Garmin track, used only to convert device-clock seconds to metres so
+# the three runs align spatially rather than temporally.
+#
+# Regenerate with:
+#   cd web && node fitdump.mjs \
+#     ../analysis/data/sample-recordings/9_7_hill_repeats.fit \
+#     ../analysis/data/processed/fit_9_7.json
+#
+# Kept under data/processed/ rather than /tmp so the chart stays reproducible —
+# a figure in the deck has to survive a reboot.
+FIT = "data/processed/fit_9_7.json"   # via web/fitdump.mjs — the same
+                            # fit-file-parser the production API uses,
+                            # force:true to tolerate the malformed developer
+                            # field Garmin writes
 
 LPF_HZ = 0.35       # zero-phase; cornering and braking are well under 1 Hz
 BASELINE_HZ = 0.05  # grade baseline, subtracted to isolate braking

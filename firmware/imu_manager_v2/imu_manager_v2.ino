@@ -248,6 +248,30 @@ void setup() {
     state = STATE_FAULT;
   }
 
+  // One IMU health line per boot, with a sample. This is the whole of the
+  // routine IMU record in the ring: enough to tell a live sensor from a dead
+  // or mis-oriented one at a glance, at a cost of one line per session rather
+  // than the 2 Hz idle dump that used to occupy ~95% of the ring.
+  //
+  // At rest on a level surface the magnitude should read ~9.81 m/s2 and the
+  // gyro near zero, so a stuck or unpowered sensor shows up as an obviously
+  // wrong magnitude rather than as plausible-looking noise.
+  if (sensorOk) {
+    // The FIFO needs a moment to accumulate at least one sample after init.
+    delay(20);
+    if (sensor.readFIFO() > 0) {
+      const IMURecord& s = sensor.getSampleBuffer()[0];
+      const float mag = sqrtf(s.accel_x * s.accel_x +
+                              s.accel_y * s.accel_y +
+                              s.accel_z * s.accel_z);
+      LOG_I("IMU", "healthy — |a|=%.2f m/s2 a=%+.2f,%+.2f,%+.2f g=%+.1f,%+.1f,%+.1f",
+            mag, s.accel_x, s.accel_y, s.accel_z,
+            s.gyro_x, s.gyro_y, s.gyro_z);
+    } else {
+      LOG_W("IMU", "healthy but no sample available at boot");
+    }
+  }
+
   // NOTE: setCpuFrequencyMhz(80) after BLE init kills NimBLE advertising
   // on ESP32-S3 with core 3.3.6. Leave at 240MHz until root-caused.
   // setCpuFrequencyMhz(CPU_MHZ_NORMAL);
@@ -326,17 +350,25 @@ void loop() {
     case STATE_IDLE: {
       power.updateLED(LED_BLINK_IDLE);
 
-      // Debug: print IMU values at ~2Hz
+#if IMU_IDLE_SAMPLE_DUMP
+      // A 2 Hz idle sample dump, off by default. It earned its keep during the
+      // axis/orientation validation, so it stays available — but it is a
+      // bench-with-serial-attached tool, not a field diagnostic.
+      //
+      // Left on, it drowns the ring: a 2026-09-13 pull returned 2,417 lines of
+      // which ~120 were not this one, and the flood had already lapped the ring
+      // past the upload trace being investigated. Enabling it costs the ring's
+      // diagnostic value, so it is a compile-time opt-in rather than something
+      // the runtime DEBUG toggle can switch on by accident.
       static unsigned long lastPrint = 0;
       if (samplesRead > 0 && millis() - lastPrint >= 500) {
         lastPrint = millis();
         const IMURecord& s = sensor.getSampleBuffer()[0];
-        // DEBUG: a 2 Hz idle sample dump. Useful on a bench serial monitor,
-        // ruinous in a 10 MB ring — filtered out at the default WARN.
         LOG_D("IMU", "ax=%+7.2f ay=%+7.2f az=%+7.2f  gx=%+7.1f gy=%+7.1f gz=%+7.1f",
               s.accel_x, s.accel_y, s.accel_z,
               s.gyro_x, s.gyro_y, s.gyro_z);
       }
+#endif
       break;
     }
 

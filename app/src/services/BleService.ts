@@ -109,6 +109,23 @@ class BleService {
   private manager: BleManager;
   private connectedDevice: Device | null = null;
   private activeSubscriptions: any[] = [];
+  // The one and only clock-sync responder subscription. Ownership lives here,
+  // in the service, for the lifetime of the connection — NOT in a screen.
+  //
+  // Why this must be a singleton: Subscription.remove() from
+  // react-native-ble-plx calls cancelTransaction(), which tears down the
+  // notification setup for the whole characteristic. There is no refcounting
+  // across two transactions on the same characteristic, so if two monitors are
+  // registered on V2_FILE_LIST_CHARACTERISTIC_UUID, whichever is removed first
+  // silently disables notifications for the survivor too. The survivor's JS
+  // listener stays registered and its subscription object still looks alive,
+  // so nothing reports an error — the device simply stops being heard.
+  //
+  // That is the 2026-09-13 ride: 98 consecutive sync timeouts with BLE
+  // connected and the 2 Hz status poll (a different characteristic) flowing
+  // normally, ending only when a full reconnect rebuilt the CCCD, after which
+  // 101 consecutive syncs succeeded. See notes/VALIDATION_PLAN.md.
+  private timeResponderUnsub: (() => void) | null = null;
   private isHandlingDisconnection: boolean = false;
   private isConnecting: boolean = false;
   private connectionListeners: ConnectionListener[] = [];
@@ -185,9 +202,14 @@ class BleService {
   }
 
   /**
-   * Clean up all active subscriptions
+   * Clean up all active subscriptions.
+   *
+   * Every caller is a connection ending or being replaced, so the clock-sync
+   * responder goes with them — its monitor belongs to the device that is going
+   * away. ensureTimeResponder() re-registers it on the next connect.
    */
   private cleanupSubscriptions(): void {
+    this.teardownTimeResponder();
     for (const subscription of this.activeSubscriptions) {
       try {
         if (subscription && typeof subscription.remove === 'function') {
@@ -373,14 +395,13 @@ class BleService {
         // Answer periodic clock-sync requests for as long as we stay
         // connected (VTX v1.2). Registered here rather than on-demand so a
         // recording started from the device button is still covered.
-        try {
-          const unsubscribeTime = this.subscribeToTimeRequests();
-          this.activeSubscriptions.push({ remove: unsubscribeTime });
-          console.log('[BLE] V2 time-request responder active');
-        } catch (timeError: any) {
-          // Non-fatal: the device treats an unanswered request as a miss.
-          console.warn('[BLE] Time responder setup failed:', timeError?.message);
-        }
+        //
+        // Deliberately NOT pushed onto activeSubscriptions: that array is
+        // cleaned up on several paths that are not true disconnects, and
+        // removing this monitor disables notifications on the characteristic
+        // for any other monitor too. Its lifetime is managed explicitly by
+        // ensureTimeResponder/teardownTimeResponder instead.
+        this.ensureTimeResponder();
       }
 
       // Notify listeners AFTER services discovered and clock synced
@@ -1052,9 +1073,14 @@ class BleService {
    *
    * Timing is the whole point of this handler, so it does as little as
    * possible between the two stamps and never awaits anything before t3.
-   * Returns an unsubscribe function.
+   *
+   * PRIVATE AND IDEMPOTENT. Call ensureTimeResponder() instead — a second
+   * monitor on this characteristic does not add redundancy, it creates a
+   * second transaction whose teardown disables the first (see
+   * timeResponderUnsub). Callers outside the service have no way to know
+   * whether one is already live, which is why this is no longer public.
    */
-  subscribeToTimeRequests(): () => void {
+  private subscribeToTimeRequests(): () => void {
     if (!this.connectedDevice) return () => {};
 
     const subscription = this.connectedDevice.monitorCharacteristicForService(
@@ -1091,6 +1117,44 @@ class BleService {
     );
 
     return () => subscription?.remove();
+  }
+
+  /**
+   * Ensure the clock-sync responder is live. Safe to call any number of times
+   * from anywhere: if one is already registered this is a no-op, so a screen
+   * mounting, remounting, or navigating back never creates a second monitor.
+   *
+   * This is the ONLY supported way to start the responder.
+   */
+  ensureTimeResponder(): void {
+    if (this.timeResponderUnsub) return;   // already live — do not double-subscribe
+    if (!this.connectedDevice) return;     // nothing to subscribe to yet
+    if (!this.isV2Device(this.connectedDevice)) return;
+
+    try {
+      this.timeResponderUnsub = this.subscribeToTimeRequests();
+      console.log('[BLE] V2 time-request responder active');
+    } catch (error: any) {
+      // Non-fatal: the device treats an unanswered request as a normal miss.
+      this.timeResponderUnsub = null;
+      console.warn('[BLE] Time responder setup failed:', error?.message);
+    }
+  }
+
+  /**
+   * Tear down the clock-sync responder. Only the disconnect path should call
+   * this — a screen going away is NOT a reason to stop answering the device,
+   * which keeps asking every 60 s for as long as it is recording.
+   */
+  private teardownTimeResponder(): void {
+    if (!this.timeResponderUnsub) return;
+    try {
+      this.timeResponderUnsub();
+    } catch (error) {
+      // Removing a subscription for an already-dead connection throws; the
+      // connection is going away regardless.
+    }
+    this.timeResponderUnsub = null;
   }
 
   /**

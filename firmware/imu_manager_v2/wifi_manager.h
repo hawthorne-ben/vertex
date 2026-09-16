@@ -86,6 +86,9 @@ private:
   Client* _activeClient;
   bool _clientIsSSL;
   uint8_t* _uploadBuf;
+  // Consecutive EAGAIN write retries for the current chunk. Reset on any
+  // successful write; a sustained streak means the peer really is gone.
+  uint16_t _writeRetries = 0;
   uint32_t _fileRemaining;
   bool _fileSkip[MAX_UPLOAD_FILES];
   bool _responseSuccess;

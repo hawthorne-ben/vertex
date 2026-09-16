@@ -12,7 +12,9 @@ Usage:
     python vtx_ble.py watch [SECS]    # stream status until interrupted
     python vtx_ble.py log             # pull the diagnostic ring, decoded
     python vtx_ble.py log OUT.txt     # ...and save the raw lines to a file
-    python vtx_ble.py loglevel D|I|W|E  # set the minimum level kept on SD
+    python vtx_ble.py loglevel D|I    # D adds debug detail, I is events-only
+                                      # (W/E are accepted but clamped to I:
+                                      #  the firmware never hides event lines)
     python vtx_ble.py reset           # soft-reset the device (ESP.restart)
     python vtx_ble.py logclear        # erase the diagnostic ring
 
@@ -298,7 +300,14 @@ async def run(cmd, arg):
                 chunks.clear()
                 payload = bytes([CMD_LOG_READ]) + struct.pack("<Q", pos)
                 await client.write_gatt_char(CONFIG_CHAR_UUID, payload, response=True)
-                await asyncio.sleep(0.25)
+                # Wait for the notification rather than a fixed interval. The
+                # old 0.25 s sleep dominated transfer time (~700 B/s); the
+                # device replies in a few ms, so this is ~4x faster. The app
+                # was always reply-driven — this only ever affected this tool.
+                for _ in range(200):   # 200 x 5 ms = 1 s ceiling per chunk
+                    if chunks:
+                        break
+                    await asyncio.sleep(0.005)
                 if not chunks:
                     stalls += 1
                     if stalls >= 3:

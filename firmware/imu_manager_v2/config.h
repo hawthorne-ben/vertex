@@ -162,7 +162,27 @@
                                        // table in notes/DIAGNOSTIC_LOG.md.
 #define LOG_LINE_MAX 200               // Max formatted line length, excl. newline
 #define LOG_BUFFER_BYTES 2048          // RAM staging buffer (see flush policy)
-#define LOG_FLUSH_INTERVAL_MS 30000    // Time-based flush: every 30 s
+// Time-based flush. Two intervals, because the right answer depends on whether
+// anyone is looking:
+//
+//   IDLE   — nothing is reading, so the only job is bounding what a crash
+//            loses. 30 s is plenty and keeps SD writes rare on a long ride.
+//   ACTIVE — a reader has pulled the log recently, so buffered lines are lag
+//            the user can see. At INFO the buffer takes ~37 min to reach half
+//            capacity, which means the timer is ALWAYS what flushes and every
+//            event sat up to 30 s before becoming visible.
+//
+// Cost of the 1 s interval, arithmetic from SD_SPI_SPEED: ~250 B per flush =
+// 0.13 ms pure SPI, 2.5 ms even at a 20x pessimistic multiplier for sector and
+// FAT overhead. That is a 0.25% duty cycle and ~2,373x margin against the
+// ~5,980 ms FIFO headroom — and a smaller transaction than the .vtx header
+// patch already running every 10 s.
+#define LOG_FLUSH_INTERVAL_MS 30000        // no reader attached
+#define LOG_FLUSH_INTERVAL_ACTIVE_MS 1000  // reader pulled within the window below
+// How long a reader stays "active" after its last pull. Long enough to cover
+// the gap between app refreshes, short enough that a closed app drops back to
+// the idle cadence on its own.
+#define LOG_READER_ACTIVE_MS 15000
 // Flush on whichever comes first: a WARN-or-above record (these are exactly
 // the lines that precede the crash being diagnosed, so a timer that loses the
 // last 30 s loses the interesting content), the buffer reaching half capacity,
@@ -181,6 +201,17 @@
 // guarantees INFO and above are always captured; the only remaining choice is
 // whether DEBUG (0) is included.
 #define LOG_MAX_MIN_LEVEL LOG_INFO
+
+// The 2 Hz idle IMU sample dump, off by default. It is a bench tool for
+// axis/orientation work with a serial monitor attached, not a field
+// diagnostic: left on it emits ~95% of all ring lines and laps the 10 MB ring
+// fast enough to destroy the history of whatever is actually being
+// investigated. Routine IMU health is covered by the one-line "IMU healthy"
+// record at boot plus the existing FAULT paths.
+//
+// Compile-time rather than runtime so the BLE DEBUG toggle cannot enable it by
+// accident — DEBUG is meant to add event detail, not a sample firehose.
+#define IMU_IDLE_SAMPLE_DUMP 0
 
 // The staging buffer must hold at least two maximum-length lines, or the
 // half-capacity flush trigger fires on every single record and the buffer
@@ -221,7 +252,62 @@ static_assert(SD_CRITICAL_MB < SD_MIN_START_MB,
 
 // ===== WiFi Upload Configuration =====
 #define WIFI_CONNECT_TIMEOUT_MS 10000  // 10s to connect to WiFi
-#define WIFI_UPLOAD_CHUNK_SIZE 16384   // Read SD in 16KB chunks for HTTP upload
+// Read SD in 8KB chunks for HTTP upload. Was 16384, briefly 4096.
+//
+// 16384 also equalled CONFIG_MBEDTLS_SSL_MAX_CONTENT_LEN, so every chunk had
+// to fill a whole TLS record. More importantly, a single blocking write() of
+// one chunk can hold loop() for the socket send timeout — measured at
+// 30,003 ms against a 5 s task watchdog, which is exactly the freeze-then-
+// reboot seen on 2026-09-12. A smaller chunk bounds how much is in flight per
+// call; WIFI_WRITE_TIMEOUT_MS bounds the time.
+//
+// A tempting theory held that the fix was fitting under lwIP's TCP send buffer
+// (CONFIG_LWIP_TCP_SND_BUF_DEFAULT = 5744 B, 4 x MSS), since a write() larger
+// than that cannot complete without blocking for ACKs. The 2026-09-13
+// measurement below does not support it: 8192 is 1.43x the send buffer and
+// stalled zero times across 42 MB. The theory explains why a stall is
+// POSSIBLE, not why stalls became persistent on 2026-09-12 — that remains
+// unexplained, and the retry path is what actually contains it.
+//
+// 8192 is half a TLS record: large enough to keep throughput up, small enough
+// that no single write ever has to fill a complete record before it can drain.
+//
+// Both sizes were measured against the same 42,341,515-byte file on
+// 2026-09-13, back to back on the same network:
+//
+//   8192: 624.7 s, 66.2 KiB/s, 0 EAGAIN retries across 5,168 writes
+//   4096: 607.9 s, 68.0 KiB/s
+//
+// The 2.7% difference is inside run-to-run variance (RSSI swung -74..-54 dBm
+// within a single run), and the two figures are measured slightly differently
+// — device-side presign->PUT-complete vs server-side key-epoch->stored — so
+// the honest conclusion is that chunk size does not move throughput here. The
+// bottleneck is upstream (TLS, link, or server), not chunking.
+//
+// 8192 therefore wins on syscall overhead: 5,168 writes for this file rather
+// than 10,337, for the same wall time.
+//
+// Note this refutes the tidy send-buffer story: 8192 is 1.43x
+// CONFIG_LWIP_TCP_SND_BUF_DEFAULT (5,744 B), so every write should have had to
+// block for ACKs — yet it stalled zero times across 42 MB. Whatever made
+// writes stop draining on 2026-09-12 was not simply "chunk exceeds send
+// buffer". WIFI_WRITE_MAX_RETRIES is what actually buys reliability here; it
+// costs nothing when unused and turns that unexplained stall from a watchdog
+// reboot into a survivable pause.
+#define WIFI_UPLOAD_CHUNK_SIZE 8192
+// Socket send timeout. WiFiClientSecure defaults to 30000 ms, which is six
+// times the task watchdog — a stalled peer therefore reboots the device rather
+// than failing the upload. Fail fast instead and let the sync state machine
+// report a clean error.
+// Kept below the 5 s task watchdog with margin. The streaming loop can issue
+// several writes per tick(), so the budget check in WIFI_STREAMING is what
+// bounds a tick overall — this bounds any single write.
+#define WIFI_WRITE_TIMEOUT_MS 2000
+// Consecutive EAGAIN retries tolerated on one chunk before the upload is
+// abandoned. At WIFI_WRITE_TIMEOUT_MS each, this is the longest the transfer
+// will wait for the peer's receive window to reopen (60 x 2 s = 2 min), with
+// loop() serviced between every attempt so the watchdog is fed.
+#define WIFI_WRITE_MAX_RETRIES 60
 #define WIFI_STREAM_BUDGET_MS 100     // Max ms to spend streaming per tick() before yielding
 
 // ===== CPU Frequency =====

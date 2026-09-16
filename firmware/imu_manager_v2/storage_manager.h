@@ -62,6 +62,10 @@ public:
   int listFiles(FileEntry* entries, int maxEntries);
   bool openFileForRead(const char* name);
   int readFileChunk(uint8_t* buffer, int maxBytes);  // Returns bytes read, 0 = EOF
+  // Step the read cursor back by `bytes`. Used when an upload chunk was read
+  // but could not be sent (socket would block), so the same bytes are offered
+  // again on the next attempt rather than being skipped.
+  bool rewindReadFile(uint32_t bytes);
   void closeReadFile();
   bool deleteFile(const char* name);
 

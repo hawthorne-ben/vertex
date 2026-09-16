@@ -17,7 +17,8 @@ LogManager::LogManager()
     _bufferLen(0),
     _lastFlushMs(0),
     _droppedLines(0),
-    _writeFailures(0) {
+    _writeFailures(0),
+    _lastReadMs(0) {
   _buffer[0] = '\0';
 }
 
@@ -174,8 +175,20 @@ void LogManager::appendToBuffer(const char* line, int len) {
 
 void LogManager::tick() {
   if (!_ready || _bufferLen == 0) return;
-  // Flush trigger 3: every 30 s.
-  if (millis() - _lastFlushMs >= LOG_FLUSH_INTERVAL_MS) {
+
+  // Flush trigger 3: the time-based one, at whichever cadence applies.
+  //
+  // A reader that pulled recently is watching, and at INFO the buffer would
+  // otherwise take ~37 min to hit the half-capacity trigger — so the timer is
+  // the only thing that flushes, and every event sat up to 30 s before
+  // becoming visible. Drop to 1 s while that is true and fall back
+  // automatically once the reader goes away.
+  const bool readerActive =
+      _lastReadMs != 0 && (millis() - _lastReadMs) < LOG_READER_ACTIVE_MS;
+  const unsigned long interval =
+      readerActive ? LOG_FLUSH_INTERVAL_ACTIVE_MS : LOG_FLUSH_INTERVAL_MS;
+
+  if (millis() - _lastFlushMs >= interval) {
     flush();
   }
 }
@@ -248,6 +261,16 @@ int LogManager::readFrom(uint64_t& readerPos, uint8_t* out, int maxBytes,
                          uint64_t& gapBytes) {
   gapBytes = 0;
   if (!_ready || !_file) return 0;
+
+  // Mark the reader active: somebody is watching, so buffered lines are
+  // user-visible lag rather than just crash exposure.
+  _lastReadMs = millis();
+
+  // Flush before serving. Readers read from the FILE — one buffer, one
+  // retention policy — so anything still staged in RAM is invisible to them.
+  // Without this the first pull after an event always misses it and the
+  // adaptive interval above only helps from the second pull onward.
+  if (_bufferLen > 0) flush();
 
   // Everything buffered but unflushed is invisible to a reader by design:
   // readers read from the file, so there is exactly one retention policy. A

@@ -199,7 +199,6 @@ const DeviceDetailV2Screen: React.FC = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [status, setStatus] = useState<V2Status | null>(null);
-  const timeReqUnsubRef = useRef<(() => void) | null>(null);
   const [files, setFiles] = useState<V2FileEntry[]>([]);
   const [clockSynced, setClockSynced] = useState(false);
   // Distinguishes "sync has not run yet" from "sync ran and failed". Without
@@ -303,21 +302,22 @@ const DeviceDetailV2Screen: React.FC = () => {
   useEffect(() => () => { NotificationService.stopRecordingNotification(); }, []);
 
   // Periodic clock-sync responder. The device notifies [0xF0][t1] every 60 s
-  // while recording and needs a reply within CLOCK_SYNC_TIMEOUT_MS (2 s), so
-  // this must be live for the whole session — not just while the record screen
-  // happens to be doing something. Resubscribes on reconnect because the
-  // monitor is bound to the connected device.
+  // while recording and needs a reply within CLOCK_SYNC_TIMEOUT_MS (2 s), so it
+  // must stay live for the whole ride — including while this screen is not
+  // mounted, which is most of a ride with the phone in a pocket.
+  //
+  // It is therefore owned by BleService for the lifetime of the CONNECTION,
+  // not by this screen. This effect only nudges it: ensureTimeResponder() is
+  // idempotent, and there is deliberately no cleanup — unmounting this screen
+  // must not stop answering the device.
+  //
+  // This screen used to register its own monitor here and remove it on unmount.
+  // That was the 2026-09-13 ride bug: two monitors on one characteristic, and
+  // removing either one calls cancelTransaction() and kills notifications for
+  // both. 98 sync requests went unanswered over 98 minutes with BLE connected,
+  // and only a full reconnect restored it. See notes/VALIDATION_PLAN.md.
   useEffect(() => {
-    if (!isConnected) {
-      timeReqUnsubRef.current?.();
-      timeReqUnsubRef.current = null;
-      return;
-    }
-    timeReqUnsubRef.current = BleService.subscribeToTimeRequests();
-    return () => {
-      timeReqUnsubRef.current?.();
-      timeReqUnsubRef.current = null;
-    };
+    if (isConnected) BleService.ensureTimeResponder();
   }, [isConnected]);
 
   useEffect(() => {
