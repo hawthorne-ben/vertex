@@ -48,6 +48,38 @@
  * Newline is the pad byte precisely because it is also the terminator — a
  * decoder splitting on '\n' yields empty strings for padding, which it drops
  * without needing to know where the pad region was.
+ *
+ * ===== Vocabulary =====
+ *
+ * Two coordinate systems appear throughout, and mixing them up is the main way
+ * to misread this file.
+ *
+ *   offset    A physical byte position INSIDE the ring region, always in
+ *             [0, ringBytes). Wraps to 0 at the end. `writeOffset` is where the
+ *             next byte physically lands. Type: uint32_t.
+ *
+ *   position  A logical byte count in `total_written` space — monotonic, never
+ *             wraps, grows forever. Readers hold one of these. Type: uint64_t.
+ *
+ * The bridge between them is logOffsetForPos(): offset = position % ringBytes.
+ * Positions are 64-bit because they must not wrap; offsets are 32-bit because
+ * they cannot exceed the region size.
+ *
+ * Other recurring names:
+ *
+ *   ringBytes    Size of the ring region in bytes, excluding the header.
+ *   lineLen      Length of a formatted line EXCLUDING its newline. A record on
+ *                disk always occupies lineLen + 1 bytes.
+ *   advance      Bytes a write consumes from capacity — what total_written
+ *                grows by. Includes any padding, so it can exceed lineLen + 1.
+ *   lapped       A reader fell more than one full ring behind, so bytes it
+ *                never saw were overwritten.
+ *
+ * ===== Conventions =====
+ *
+ * Output parameters are pointers and are written only on success; a function
+ * returning false leaves them untouched. Functions returning a struct always
+ * fill every field. Nothing here allocates, blocks, or touches hardware.
  */
 
 #ifndef LOG_RING_H
@@ -92,8 +124,13 @@ static inline char logLevelChar(uint8_t level) {
   }
 }
 
-// Parse a severity tag back. Returns false for an unrecognised character,
-// which the decoder reports rather than silently bucketing as DEBUG.
+// Parse a severity tag back.
+//
+//   c        the character from a serialized line
+//   out      [out] LogLevel value, written only on success
+//
+//   returns  false for an unrecognised character, which the decoder reports
+//            rather than silently bucketing as DEBUG.
 static inline bool logLevelFromChar(char c, uint8_t* out) {
   switch (c) {
     case 'D': *out = LOG_DEBUG; break;
@@ -105,8 +142,9 @@ static inline bool logLevelFromChar(char c, uint8_t* out) {
   return true;
 }
 
-// The level filter. Kept as a function rather than an inline `>=` at each call
-// site so the comparison direction is defined in exactly one place.
+// The level filter: does a message at `level` clear the `minLevel` threshold?
+// Kept as a function rather than an inline `>=` at each call site so the
+// comparison direction is defined in exactly one place.
 static inline bool logLevelPasses(uint8_t level, uint8_t minLevel) {
   return level >= minLevel;
 }
@@ -115,6 +153,13 @@ static inline bool logLevelPasses(uint8_t level, uint8_t minLevel) {
 // Mirrors vtx_format.h. The ESP32-S3 is little-endian; these make the byte
 // order explicit so the host tests and the Python decoder agree with the
 // device without depending on the host's native order.
+
+// Each logPut* writes `v` little-endian into `buf` and assumes the caller has
+// provided at least that many bytes — 2, 4, or 8. No bounds check: these are
+// called with fixed offsets into a LOG_HEADER_SIZE buffer.
+//
+//   buf  destination, must have room for the width
+//   v    value to store
 
 static inline void logPutU16(uint8_t* buf, uint16_t v) {
   buf[0] = (uint8_t)(v & 0xFF);
@@ -134,6 +179,9 @@ static inline void logPutU64(uint8_t* buf, uint64_t v) {
   }
 }
 
+// Each logGet* reads a little-endian value of its width back out of `buf`.
+// Same no-bounds-check contract as the stores above.
+
 static inline uint16_t logGetU16(const uint8_t* buf) {
   return (uint16_t)buf[0] | ((uint16_t)buf[1] << 8);
 }
@@ -152,6 +200,12 @@ static inline uint64_t logGetU64(const uint8_t* buf) {
 // ===== Header serialization =====
 
 // Serialize the log header. A fresh ring is write_offset=0, total_written=0.
+//
+//   header        [out] buffer of at least LOG_HEADER_SIZE bytes. Zeroed
+//                 first, so reserved fields are always clean.
+//   writeOffset   next physical write position in the ring, [0, ringBytes)
+//   totalWritten  monotonic lifetime byte count
+//   ringBytes     region size this file is being created with
 static inline void logWriteHeader(uint8_t* header, uint32_t writeOffset,
                                   uint64_t totalWritten, uint32_t ringBytes) {
   memset(header, 0, LOG_HEADER_SIZE);
@@ -164,6 +218,18 @@ static inline void logWriteHeader(uint8_t* header, uint32_t writeOffset,
 
 // Parse and validate a log header. Returns false — leaving the outputs
 // untouched — if the magic, version, or geometry does not check out.
+//
+//   header          [in]  buffer of at least LOG_HEADER_SIZE bytes
+//   writeOffset     [out] written only on success
+//   totalWritten    [out] written only on success
+//   expectRingBytes the region size THIS firmware build uses; the header must
+//                   agree or the file is rejected
+//
+//   returns  true if every check passed and the outputs are populated
+//
+// Five ways to fail, in order checked: wrong magic, wrong version, geometry
+// mismatch, offset outside the region, and the two stored fields disagreeing
+// with each other.
 //
 // The geometry check is the one that matters in practice: a ring written with
 // a different LOG_RING_BYTES has stored offsets that mean something else. It
@@ -191,7 +257,16 @@ static inline bool logReadHeader(const uint8_t* header, uint32_t* writeOffset,
 // ===== Record framing =====
 
 // Format one log line into `out`, WITHOUT the trailing newline.
-// Returns the length written, always < outSize.
+//
+//   out       [out] destination buffer
+//   outSize   capacity of `out`, including room for the NUL snprintf writes
+//   millisNow raw millis() at the call site
+//   level     LogLevel value; anything unrecognised renders as '?'
+//   tag       subsystem string, e.g. "CLK"
+//   msg       already-formatted message text
+//
+//   returns   length written, always < outSize and never negative. The caller
+//             adds the newline — that is why the return excludes it.
 //
 // Layout: "<millis> <L> <tag> <message>"
 //   millis  — raw millis(), the same time base as IMU sample timestamps, so a
@@ -224,7 +299,13 @@ static inline int logFormatLine(char* out, int outSize, uint32_t millisNow,
 
 // ===== Ring offset arithmetic =====
 
-// Bytes from `writeOffset` to the end of the ring region.
+// Bytes from `writeOffset` to the physical end of the ring region.
+//
+//   writeOffset  current write position, [0, ringBytes)
+//   ringBytes    region size
+//
+//   returns      how much room is left before the end. Never zero for a valid
+//                offset, since writeOffset == ringBytes is out of range.
 static inline uint32_t logBytesToEnd(uint32_t writeOffset, uint32_t ringBytes) {
   return ringBytes - writeOffset;
 }
@@ -244,6 +325,19 @@ struct LogPlacement {
   uint32_t advance;     // total bytes consumed — what total_written grows by
 };
 
+//   writeOffset  current write position, [0, ringBytes)
+//   ringBytes    region size
+//   lineLen      formatted line length, EXCLUDING its newline
+//
+//   returns      a fully-populated LogPlacement; never fails
+//
+// Two shapes of result:
+//
+//   Fits     padBytes = 0, lineStart == writeOffset, advance == lineLen + 1.
+//   Wraps    padBytes = space left at the tail, lineStart = 0, and advance
+//            counts the padding too.
+//
+// So `advance` is the field to trust for capacity accounting, not lineLen + 1.
 static inline LogPlacement logPlaceLine(uint32_t writeOffset, uint32_t ringBytes,
                                         uint32_t lineLen) {
   LogPlacement p;
@@ -284,6 +378,23 @@ struct LogReadPlan {
   bool lapped;           // true when gapBytes > 0
 };
 
+//   readerPos     where the reader last left off, in position space
+//   totalWritten  the writer's current position
+//   ringBytes     region size
+//
+//   returns       a fully-populated LogReadPlan; never fails
+//
+// Three outcomes:
+//
+//   Caught up or ahead   available = 0, fromPos = totalWritten. Includes the
+//                        readerPos > totalWritten case, which means the log was
+//                        reset under the reader.
+//   Inside the ring      fromPos = readerPos, nothing lost.
+//   Lapped               lapped = true, fromPos jumps forward to the oldest
+//                        surviving byte, gapBytes says how much was missed.
+//
+// Note `available` is uint32_t while positions are uint64_t: the readable span
+// can never exceed ringBytes, so the narrowing is safe by construction.
 static inline LogReadPlan logPlanRead(uint64_t readerPos, uint64_t totalWritten,
                                       uint32_t ringBytes) {
   LogReadPlan r;
@@ -315,6 +426,12 @@ static inline LogReadPlan logPlanRead(uint64_t readerPos, uint64_t totalWritten,
 }
 
 // Map a total_written position to its byte offset inside the ring region.
+// This is the bridge between the two coordinate systems described at the top.
+//
+//   pos        position-space value, monotonic
+//   ringBytes  region size
+//
+//   returns    the physical offset, always [0, ringBytes)
 static inline uint32_t logOffsetForPos(uint64_t pos, uint32_t ringBytes) {
   return (uint32_t)(pos % ringBytes);
 }
@@ -324,9 +441,15 @@ static inline uint32_t logOffsetForPos(uint64_t pos, uint32_t ringBytes) {
 // After a wrap or a lap skip, a read position lands mid-line. Scan forward to
 // the first newline and report how many bytes to discard.
 //
-// Returns the count of bytes to skip — the fragment plus its terminating
-// newline — or `len` if no newline was found in the window, meaning the whole
-// window is one unterminated fragment and the caller should read more.
+//   buf      [in] window of bytes read from the ring
+//   len      length of that window
+//
+//   returns  bytes to skip — the fragment plus its terminating newline — or
+//            `len` if no newline was found, meaning the whole window is one
+//            unterminated fragment and the caller should read more.
+//
+// A window starting ON a newline returns 1: the fragment is zero-length and
+// only the terminator is consumed.
 //
 // Padding at a wrap boundary is a run of newlines, so this naturally lands on
 // the first byte of real content: each pad newline terminates a zero-length
@@ -341,6 +464,13 @@ static inline uint32_t logSkipPartialLine(const uint8_t* buf, uint32_t len) {
 // Trim a read window to end on the last complete line, returning the length to
 // keep. The complement of logSkipPartialLine(): that drops a fragment at the
 // START of a window, this drops one at the END.
+//
+//   buf      [in] window of bytes read from the ring
+//   len      length of that window
+//
+//   returns  length to keep, INCLUDING the final newline. Equals `len` when the
+//            window already ends on a newline, and 0 when the window holds no
+//            complete line at all.
 //
 // Needed because a chunked read cuts wherever the chunk size falls, which is
 // mid-line most of the time. Without this a reader receives
